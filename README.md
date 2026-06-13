@@ -21,20 +21,26 @@ node packages/cli/bin/run.js --help
 ## Uso rápido
 
 ```bash
-# Inicializa um projeto
-iacmp init meu-projeto
-cd meu-projeto
+# Inicializa com template pronto
+iacmp init meu-projeto --template rds
+iacmp init meu-projeto --template serverless
+iacmp init --list                           # ver todos os templates
 
 # Sintetiza as stacks para CloudFormation
-iacmp synth
+cd meu-projeto && iacmp synth
 
 # Sintetiza para outro provider
 iacmp synth --provider terraform
 
+# Gera diagrama de arquitetura
+iacmp diagram                              # Structurizr DSL
+iacmp diagram --format mermaid            # Mermaid (GitHub/GitLab)
+
+# Audita a infraestrutura
+iacmp audit-all                            # segurança, HA, DR e melhorias
+
 # Gera stack via IA
 iacmp ai "cria uma API serverless com DynamoDB"
-
-# Modo chat interativo
 iacmp ai --chat
 ```
 
@@ -59,6 +65,25 @@ iacmp ai --chat
 | `iacmp audit-dr` | Auditoria de disaster recovery |
 | `iacmp audit-improvements` | Sugestões de melhorias |
 | `iacmp audit-all` | Todas as auditorias de uma vez |
+| `iacmp diagram` | Diagrama de arquitetura (Structurizr/Mermaid) |
+
+## Templates
+
+O `iacmp init --template` cria projetos prontos para usar:
+
+| Template | Constructs |
+|---|---|
+| `default` | Compute.Instance + Storage.Bucket |
+| `rds` | Network.VPC + Database.SQL Multi-AZ + réplica |
+| `webapp` | Network.VPC + bucket público + bucket privado |
+| `network` | Network.VPC + bastion + app server |
+| `serverless` | Network.VPC + Function.Lambda |
+| `fullstack` | Network.VPC + Compute + Database.SQL + Storage.Bucket |
+
+```bash
+iacmp init --list                        # lista todos com descrição
+iacmp init meu-projeto --template rds
+```
 
 ## Providers suportados
 
@@ -87,16 +112,27 @@ export default stack;
 
 ## Auditoria
 
-Os comandos de auditoria analisam as stacks do projeto e geram relatórios Markdown em `audit/`:
+Analisa as stacks e gera relatórios Markdown em `audit/`:
 
 ```bash
-cd meu-projeto
 iacmp audit-all
-# Gera: audit/security-2026-06-13.md
-#        audit/ha-2026-06-13.md
-#        audit/dr-2026-06-13.md
-#        audit/improvements-2026-06-13.md
+# Gera: audit/security-YYYY-MM-DD.md    — acesso público, versionamento, Multi-AZ
+#        audit/ha-YYYY-MM-DD.md          — Single-AZ, redundância de compute
+#        audit/dr-YYYY-MM-DD.md          — score /10, checklist de DR
+#        audit/improvements-YYYY-MM-DD.md — sugestões com impacto e esforço
 ```
+
+## Diagramas
+
+Gera diagramas de arquitetura a partir das stacks, sem redesenho manual:
+
+```bash
+iacmp diagram                    # → diagrams/workspace.dsl (Structurizr C4)
+iacmp diagram --format mermaid   # → diagrams/workspace.md  (GitHub/GitLab/Notion)
+iacmp diagram --stack database   # filtra uma stack
+```
+
+O Mermaid é renderizado automaticamente no GitHub/GitLab. O Structurizr DSL pode ser aberto em https://structurizr.com/dsl com estilos e layout automático.
 
 ## IA
 

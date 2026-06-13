@@ -2,6 +2,31 @@
 
 ---
 
+## [1.1.0] — 2026-06-13
+
+Templates no `init`, auditorias e diagramas de arquitetura.
+
+### Adicionado
+
+- **`iacmp init --template <nome>`** — 6 templates de stack embutidos no CLI: `default`, `rds`, `webapp`, `network`, `serverless`, `fullstack`. O nome do projeto é interpolado automaticamente. Funciona após `npm install -g iacmp` sem dependência de paths externos.
+- **`iacmp init --list`** — lista todos os templates com descrição e constructs incluídos.
+- **`iacmp diagram`** — gera diagramas de arquitetura a partir das stacks do projeto
+  - `--format structurizr` (padrão) — gera `diagrams/workspace.dsl` com styles C4, `autoLayout` e relações inferidas marcadas
+  - `--format mermaid` — gera `diagrams/workspace.md` com blocos `graph TD` por stack, emojis por tipo e legenda de recursos; renderizado automaticamente no GitHub/GitLab/Notion
+  - `--stack <nome>` — filtra uma stack específica
+  - `--out <dir>` — diretório de saída configurável (padrão: `diagrams/`)
+  - Módulo interno `src/diagram/` com `model.ts`, `builder.ts`, `structurizr.ts` e `mermaid.ts`
+  - Inferência conservadora: VPC única → seta tracejada para os demais constructs, rotulada como `[inferred]`
+- **5 comandos de auditoria** com relatórios Markdown em `audit/`
+  - `iacmp audit-security` — acesso público, versionamento, Multi-AZ, memória Lambda, CIDR
+  - `iacmp audit-ha` — Single-AZ em banco/VPC, instância sem redundância, Lambda/S3 como HA nativa
+  - `iacmp audit-dr` — score /10 com checklist, versionamento, Multi-AZ, rede multi-AZ
+  - `iacmp audit-improvements` — sugestões de performance e arquitetura com impacto e esforço
+  - `iacmp audit-all` — roda os 4 em sequência
+- **`docs/plano-diagramas-stacks.md`** — plano de arquitetura revisado com decisões de estrutura, roadmap de formatos e critérios de aceite
+
+---
+
 ## [1.0.0] — 2026-06-13
 
 Fase 5 — Produção.

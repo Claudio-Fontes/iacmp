@@ -245,6 +245,36 @@ Imprime tabela com: Nome | Pacote | Providers | Descrição.
 
 ---
 
+### `iacmp diagram`
+
+Gera diagramas de arquitetura a partir das stacks do projeto.
+
+```bash
+iacmp diagram                              # Structurizr DSL (padrão)
+iacmp diagram --format mermaid             # Mermaid em Markdown
+iacmp diagram --stack database             # apenas uma stack
+iacmp diagram --format mermaid --out docs/diagrams
+```
+
+Gera um único arquivo com todas as stacks em `diagrams/`:
+
+| Formato | Arquivo gerado | Onde abrir |
+|---|---|---|
+| `structurizr` | `diagrams/workspace.dsl` | https://structurizr.com/dsl |
+| `mermaid` | `diagrams/workspace.md` | GitHub, GitLab, Notion (renderizado automaticamente) |
+
+O Structurizr DSL inclui estilos por tipo de construct (Compute, Storage, Network, Database, Function) e `autoLayout`. O Mermaid inclui emojis por tipo e legenda de recursos.
+
+Relações entre constructs são **inferidas** com base na topologia da stack (ex: VPC única → seta tracejada para os demais) e marcadas explicitamente como inferidas. Nenhuma seta funcional é inventada.
+
+| Flag | Descrição | Padrão |
+|------|-----------|--------|
+| `--format`, `-f` | Formato de saída (`structurizr`, `mermaid`) | `structurizr` |
+| `--stack`, `-s` | Nome de uma stack específica | todas |
+| `--out`, `-o` | Diretório de saída | `diagrams` |
+
+---
+
 ### `iacmp doctor`
 
 Verifica se o ambiente tem tudo que o iacmp precisa.
@@ -408,7 +438,8 @@ O `iacmp init` gera automaticamente:
 | Fase 3 | `iacmp ai` — geração de stacks via IA (Claude/Copilot) | Disponível |
 | Fase 4 | Plugin system, watch, dashboard, registry, CI/CD | Disponível |
 | Fase 5 | Testes de integração, documentação, exemplos, publicação npm | Disponível |
+| Fase 6 | Templates no `init`, auditorias, diagramas de arquitetura | Disponível |
 
 ---
 
-*iacmp v1.0.0 — IaC Multi Plataforma*
+*iacmp v1.1.0 — IaC Multi Plataforma*

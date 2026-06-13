@@ -304,6 +304,59 @@
         "destroy.js"
       ]
     },
+    "diagram": {
+      "aliases": [],
+      "args": {},
+      "description": "Gera diagramas de arquitetura a partir das stacks do projeto",
+      "examples": [
+        "$ iacmp diagram",
+        "$ iacmp diagram --format mermaid",
+        "$ iacmp diagram --stack database",
+        "$ iacmp diagram --format mermaid --stack webapp --out docs/diagrams"
+      ],
+      "flags": {
+        "format": {
+          "char": "f",
+          "description": "Formato de saída: structurizr, mermaid",
+          "name": "format",
+          "default": "structurizr",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "stack": {
+          "char": "s",
+          "description": "Nome de uma stack específica (padrão: todas)",
+          "name": "stack",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "out": {
+          "char": "o",
+          "description": "Diretório de saída",
+          "name": "out",
+          "default": "diagrams",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        }
+      },
+      "hasDynamicHelp": false,
+      "hiddenAliases": [],
+      "id": "diagram",
+      "pluginAlias": "iacmp",
+      "pluginName": "iacmp",
+      "pluginType": "core",
+      "strict": true,
+      "enableJsonFlag": false,
+      "isESM": false,
+      "relativePath": [
+        "dist",
+        "commands",
+        "diagram.js"
+      ]
+    },
     "diff": {
       "aliases": [],
       "args": {},
