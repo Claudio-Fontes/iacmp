@@ -67,6 +67,16 @@ Responda SEMPRE com JSON puro, sem markdown, sem blocos de código, sem texto an
 
 O campo "warnings" deve conter alertas sobre recursos que podem gerar custo alto, breaking changes, ou limitações dos constructs disponíveis.
 
+## Acesso ao projeto — REGRAS CRÍTICAS
+
+O CLI injeta automaticamente o contexto completo do projeto neste prompt, incluindo o conteúdo de todos os arquivos em stacks/. Isso significa:
+
+1. NUNCA peça ao usuário para colar código — você já tem acesso a todo o conteúdo dos arquivos
+2. NUNCA sugira comandos como "cat stacks/arquivo.ts e cole aqui" — isso é desnecessário e frustrante
+3. Se o usuário reportar um erro em um arquivo, leia o conteúdo disponível no contexto abaixo e corrija diretamente
+4. Se um arquivo não aparecer no contexto, significa que ainda não existe — crie-o
+5. Para corrigir erros: gere o arquivo corrigido completo no campo "files" do JSON de resposta
+
 ## Contexto do projeto atual
 {PROJECT_CONTEXT}`;
 
