@@ -3,15 +3,23 @@ import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 
-function stackExample(projectName: string): string {
-  const className = projectName
-    .split(/[-_]/)
-    .map(p => p.charAt(0).toUpperCase() + p.slice(1))
-    .join('') + 'Stack';
+// ---------------------------------------------------------------------------
+// Templates de stack — embutidos no CLI, funcionam após npm install -g iacmp
+// ---------------------------------------------------------------------------
 
-  return `import { Stack, Compute, Storage } from '@iacmp/core';
+interface Template {
+  description: string;
+  constructs: string[];    // lista para exibir no --list
+  stackContent: (projectName: string) => string;
+}
 
-const stack = new Stack('${projectName}');
+const TEMPLATES: Record<string, Template> = {
+  default: {
+    description: 'Servidor web simples com bucket de assets',
+    constructs: ['Compute.Instance', 'Storage.Bucket'],
+    stackContent: (name) => `import { Stack, Compute, Storage } from '@iacmp/core';
+
+const stack = new Stack('${name}');
 
 new Compute.Instance(stack, 'Web', {
   instanceType: 'small',
@@ -24,10 +32,150 @@ new Storage.Bucket(stack, 'Assets', {
 });
 
 export default stack;
-`;
-}
+`,
+  },
 
-function testExample(projectName: string, stackFile: string): string {
+  rds: {
+    description: 'Banco de dados RDS (postgres) com VPC Multi-AZ e réplica de leitura',
+    constructs: ['Network.VPC', 'Database.SQL (principal)', 'Database.SQL (replica)'],
+    stackContent: (name) => `import { Stack, Network, Database } from '@iacmp/core';
+
+const stack = new Stack('${name}');
+
+new Network.VPC(stack, 'VPC', {
+  cidr: '10.0.0.0/16',
+  maxAzs: 3,
+});
+
+new Database.SQL(stack, 'Principal', {
+  engine: 'postgres',
+  instanceType: 'medium',
+  multiAz: true,
+});
+
+new Database.SQL(stack, 'Replica', {
+  engine: 'postgres',
+  instanceType: 'small',
+  multiAz: false,
+});
+
+export default stack;
+`,
+  },
+
+  webapp: {
+    description: 'Site estático com VPC, bucket público e bucket privado de assets',
+    constructs: ['Network.VPC', 'Storage.Bucket (site público)', 'Storage.Bucket (assets privados)'],
+    stackContent: (name) => `import { Stack, Network, Storage } from '@iacmp/core';
+
+const stack = new Stack('${name}');
+
+new Network.VPC(stack, 'Rede', {
+  cidr: '10.0.0.0/16',
+});
+
+new Storage.Bucket(stack, 'SiteBucket', {
+  versioning: false,
+  publicAccess: true,
+});
+
+new Storage.Bucket(stack, 'AssetsBucket', {
+  versioning: true,
+  publicAccess: false,
+});
+
+export default stack;
+`,
+  },
+
+  network: {
+    description: 'Infraestrutura de rede completa com VPC multi-AZ, bastion e app server',
+    constructs: ['Network.VPC', 'Compute.Instance (bastion)', 'Compute.Instance (app server)'],
+    stackContent: (name) => `import { Stack, Network, Compute } from '@iacmp/core';
+
+const stack = new Stack('${name}');
+
+new Network.VPC(stack, 'VpcPrincipal', {
+  cidr: '10.0.0.0/8',
+  maxAzs: 3,
+});
+
+new Compute.Instance(stack, 'Bastion', {
+  instanceType: 'small',
+  image: 'ubuntu-22.04',
+});
+
+new Compute.Instance(stack, 'AppServer', {
+  instanceType: 'large',
+  image: 'ubuntu-22.04',
+});
+
+export default stack;
+`,
+  },
+
+  serverless: {
+    description: 'API serverless com Lambda e VPC',
+    constructs: ['Network.VPC', 'Function.Lambda'],
+    stackContent: (name) => `import { Stack, Network, Fn } from '@iacmp/core';
+
+const stack = new Stack('${name}');
+
+new Network.VPC(stack, 'Rede', {
+  cidr: '10.0.0.0/16',
+  maxAzs: 2,
+});
+
+new Fn.Lambda(stack, 'Handler', {
+  runtime: 'nodejs20',
+  handler: 'index.handler',
+  code: 'dist/',
+  memory: 512,
+  timeout: 30,
+});
+
+export default stack;
+`,
+  },
+
+  fullstack: {
+    description: 'Aplicação completa: VPC, compute, banco postgres e bucket',
+    constructs: ['Network.VPC', 'Compute.Instance', 'Database.SQL', 'Storage.Bucket'],
+    stackContent: (name) => `import { Stack, Network, Compute, Database, Storage } from '@iacmp/core';
+
+const stack = new Stack('${name}');
+
+new Network.VPC(stack, 'VPC', {
+  cidr: '10.0.0.0/16',
+  maxAzs: 3,
+});
+
+new Compute.Instance(stack, 'App', {
+  instanceType: 'medium',
+  image: 'ubuntu-22.04',
+});
+
+new Database.SQL(stack, 'DB', {
+  engine: 'postgres',
+  instanceType: 'medium',
+  multiAz: true,
+});
+
+new Storage.Bucket(stack, 'Uploads', {
+  versioning: true,
+  publicAccess: false,
+});
+
+export default stack;
+`,
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Helpers de arquivo
+// ---------------------------------------------------------------------------
+
+function testContent(projectName: string, stackFile: string): string {
   return `import { Stack } from '@iacmp/core';
 import stack from '../stacks/${stackFile}';
 
@@ -53,10 +201,10 @@ function packageJson(projectName: string): string {
     devDependencies: {
       '@types/jest': '^30',
       '@types/node': '^22',
-      'jest': '^30',
+      jest: '^30',
       'ts-jest': '^29',
       'ts-node': '^10',
-      'typescript': '~5.5.0',
+      typescript: '~5.5.0',
     },
     jest: {
       preset: 'ts-jest',
@@ -92,14 +240,7 @@ function tsConfig(corePath: string): string {
 }
 
 function gitignore(): string {
-  return [
-    'node_modules/',
-    'dist/',
-    'synth-out/',
-    '*.js.map',
-    '*.d.ts',
-    '.DS_Store',
-  ].join('\n') + '\n';
+  return ['node_modules/', 'dist/', 'synth-out/', 'audit/', '*.js.map', '*.d.ts', '.DS_Store'].join('\n') + '\n';
 }
 
 function githubActionsYml(): string {
@@ -155,6 +296,10 @@ const PYTHON_PLACEHOLDER = `# iacmp — Stack Python (suporte completo disponív
 # Compute.Instance(stack, "Web", { "instanceType": "small", "image": "ubuntu-22.04" })
 `;
 
+// ---------------------------------------------------------------------------
+// Comando
+// ---------------------------------------------------------------------------
+
 export default class Init extends Command {
   static description = 'Inicializa um novo projeto iacmp. Se um nome for passado, cria a pasta do projeto.';
 
@@ -165,16 +310,40 @@ export default class Init extends Command {
   static flags = {
     language: Flags.string({ char: 'l', description: 'Linguagem (typescript, python)', default: 'typescript' }),
     provider: Flags.string({ char: 'p', description: 'Provider padrão (aws, azure, gcp, terraform)', default: 'aws' }),
+    template: Flags.string({
+      char: 't',
+      description: `Template de stack a usar (default, rds, webapp, network, serverless, fullstack)`,
+      default: 'default',
+    }),
+    list: Flags.boolean({ description: 'Lista os templates disponíveis', default: false }),
   };
 
   static examples = [
     '$ iacmp init meu-projeto',
-    '$ iacmp init meu-projeto --provider azure',
-    '$ iacmp init --language python',
+    '$ iacmp init meu-projeto --template rds',
+    '$ iacmp init meu-projeto --template webapp --provider azure',
+    '$ iacmp init meu-projeto --template serverless',
+    '$ iacmp init meu-projeto --template fullstack',
+    '$ iacmp init --list',
   ];
 
   async run(): Promise<void> {
     const { args, flags } = await this.parse(Init);
+
+    // --list: exibe templates e sai
+    if (flags.list) {
+      this.log('\nTemplates disponíveis:\n');
+      const nameWidth = Math.max(...Object.keys(TEMPLATES).map(k => k.length)) + 2;
+      for (const [name, tpl] of Object.entries(TEMPLATES)) {
+        this.log(`  ${name.padEnd(nameWidth)} ${tpl.description}`);
+        for (const c of tpl.constructs) {
+          this.log(`  ${' '.repeat(nameWidth)}   · ${c}`);
+        }
+        this.log('');
+      }
+      this.log(`Uso: iacmp init meu-projeto --template <nome>`);
+      return;
+    }
 
     const validLanguages = ['typescript', 'python'];
     if (!validLanguages.includes(flags.language)) {
@@ -184,6 +353,12 @@ export default class Init extends Command {
     const validProviders = ['aws', 'azure', 'gcp', 'terraform'];
     if (!validProviders.includes(flags.provider)) {
       this.error(`Provider '${flags.provider}' não suportado. Use: ${validProviders.join(', ')}`);
+    }
+
+    const template = TEMPLATES[flags.template];
+    if (!template) {
+      const available = Object.keys(TEMPLATES).join(', ');
+      this.error(`Template '${flags.template}' não encontrado. Disponíveis: ${available}\n\nUse 'iacmp init --list' para ver todos os templates.`);
     }
 
     const cwd = process.cwd();
@@ -212,33 +387,32 @@ export default class Init extends Command {
     const stacksDir = path.join(projectDir, 'stacks');
     fs.mkdirSync(stacksDir, { recursive: true });
 
+    const stackFileName = `${projectName}-stack.ts`;
+
     if (flags.language === 'typescript') {
       // package.json
       fs.writeFileSync(path.join(projectDir, 'package.json'), packageJson(projectName));
 
-      // tsconfig.json — aponta @iacmp/core para onde o CLI está instalado
+      // tsconfig.json
       const corePkgJson = require.resolve('@iacmp/core/package.json');
       const corePath = path.dirname(corePkgJson);
       fs.writeFileSync(path.join(projectDir, 'tsconfig.json'), tsConfig(corePath));
 
-      // stacks/<nome>-stack.ts
-      const stackFileName = `${projectName}-stack.ts`;
-      fs.writeFileSync(path.join(stacksDir, stackFileName), stackExample(projectName));
+      // stack (usa o template escolhido)
+      fs.writeFileSync(path.join(stacksDir, stackFileName), template.stackContent(projectName));
 
       // test/
       const testDir = path.join(projectDir, 'test');
       fs.mkdirSync(testDir, { recursive: true });
       fs.writeFileSync(
         path.join(testDir, `${projectName}.test.ts`),
-        testExample(projectName, `${projectName}-stack`),
+        testContent(projectName, `${projectName}-stack`),
       );
 
-      // CI/CD — GitHub Actions
+      // CI/CD
       const githubWorkflowsDir = path.join(projectDir, '.github', 'workflows');
       fs.mkdirSync(githubWorkflowsDir, { recursive: true });
       fs.writeFileSync(path.join(githubWorkflowsDir, 'iacmp.yml'), githubActionsYml());
-
-      // CI/CD — GitLab CI
       fs.writeFileSync(path.join(projectDir, '.gitlab-ci.yml'), gitlabCiYml());
     } else {
       fs.writeFileSync(path.join(stacksDir, 'exemplo_stack.py'), PYTHON_PLACEHOLDER);
@@ -250,18 +424,29 @@ export default class Init extends Command {
     } catch {}
 
     const rel = args.name ?? '.';
-    this.log(`\nProjeto '${projectName}' inicializado com sucesso.\n`);
+    const isDefault = flags.template === 'default';
+    const templateLabel = isDefault ? '' : ` (template: ${flags.template})`;
+
+    this.log(`\nProjeto '${projectName}' inicializado${templateLabel}.\n`);
     this.log(`  ${rel}/iacmp.json`);
     if (flags.language === 'typescript') {
       this.log(`  ${rel}/package.json`);
       this.log(`  ${rel}/tsconfig.json`);
-      this.log(`  ${rel}/stacks/${projectName}-stack.ts`);
+      this.log(`  ${rel}/stacks/${stackFileName}`);
       this.log(`  ${rel}/test/${projectName}.test.ts`);
       this.log(`  ${rel}/.github/workflows/iacmp.yml`);
       this.log(`  ${rel}/.gitlab-ci.yml`);
     }
-    this.log('');
-    this.log('Próximos passos:');
+
+    // mostra os constructs do template
+    if (!isDefault) {
+      this.log(`\nRecursos incluídos:`);
+      for (const c of template.constructs) {
+        this.log(`  · ${c}`);
+      }
+    }
+
+    this.log('\nPróximos passos:');
     if (args.name) this.log(`  cd ${args.name}`);
     this.log('  npm install');
     this.log('  iacmp synth');

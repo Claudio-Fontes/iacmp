@@ -381,8 +381,11 @@
       "description": "Inicializa um novo projeto iacmp. Se um nome for passado, cria a pasta do projeto.",
       "examples": [
         "$ iacmp init meu-projeto",
-        "$ iacmp init meu-projeto --provider azure",
-        "$ iacmp init --language python"
+        "$ iacmp init meu-projeto --template rds",
+        "$ iacmp init meu-projeto --template webapp --provider azure",
+        "$ iacmp init meu-projeto --template serverless",
+        "$ iacmp init meu-projeto --template fullstack",
+        "$ iacmp init --list"
       ],
       "flags": {
         "language": {
@@ -402,6 +405,21 @@
           "hasDynamicHelp": false,
           "multiple": false,
           "type": "option"
+        },
+        "template": {
+          "char": "t",
+          "description": "Template de stack a usar (default, rds, webapp, network, serverless, fullstack)",
+          "name": "template",
+          "default": "default",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "list": {
+          "description": "Lista os templates disponíveis",
+          "name": "list",
+          "allowNo": false,
+          "type": "boolean"
         }
       },
       "hasDynamicHelp": false,
