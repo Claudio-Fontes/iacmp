@@ -2,13 +2,13 @@ import * as fs from 'fs';
 import * as path from 'path';
 import chalk from 'chalk';
 import { GeneratedFile } from '../parser/code-extractor';
-import { renderAndConfirm, FileDiff } from './diff-renderer';
+import { renderAndConfirm, FileDiff, AskFn } from './diff-renderer';
 
 export async function writeGeneratedFiles(
   files: GeneratedFile[],
   projectDir: string,
   dryRun: boolean,
-  rl?: import('readline').Interface
+  ask: AskFn
 ): Promise<void> {
   if (dryRun) {
     console.log(chalk.dim('\n[dry-run] Arquivos que seriam gerados:\n'));
@@ -37,7 +37,7 @@ export async function writeGeneratedFiles(
     return { path: file.path, oldContent, newContent: file.content };
   });
 
-  const confirmed = await renderAndConfirm(diffs, rl);
+  const confirmed = await renderAndConfirm(diffs, ask);
 
   if (!confirmed) {
     console.log(chalk.dim('\n  Operação cancelada. Nenhum arquivo foi alterado.\n'));

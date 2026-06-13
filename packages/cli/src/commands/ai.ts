@@ -27,6 +27,9 @@ import {
   clearCache,
 } from '@iacmp/ai';
 
+// Função de leitura centralizada — único consumidor de stdin
+type AskFn = (question: string) => Promise<string>;
+
 function resolveAIProvider(): AIProvider {
   if (process.env['ANTHROPIC_API_KEY']) {
     return new AnthropicProvider(process.env['ANTHROPIC_API_KEY']);
@@ -56,13 +59,45 @@ function resolveIaCProvider(flags: { provider?: string }, cwd: string): string {
   return 'aws';
 }
 
+// Cria um leitor de linha serializado — garante que só uma pergunta está ativa por vez
+function createAskFn(): { ask: AskFn; close: () => void } {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    terminal: process.stdout.isTTY,
+  });
+
+  // Fila de perguntas — processa uma por vez
+  const queue: Array<{ question: string; resolve: (answer: string) => void }> = [];
+  let busy = false;
+
+  function next() {
+    if (busy || queue.length === 0) return;
+    busy = true;
+    const { question, resolve } = queue.shift()!;
+    rl.question(question, answer => {
+      busy = false;
+      resolve(answer.trim());
+      next();
+    });
+  }
+
+  const ask: AskFn = (question: string) =>
+    new Promise(resolve => {
+      queue.push({ question, resolve });
+      next();
+    });
+
+  return { ask, close: () => rl.close() };
+}
+
 async function runGeneration(
   provider: AIProvider,
   session: ChatSession,
   cwd: string,
   dryRun: boolean,
   iacProvider: string,
-  rl: readline.Interface,
+  ask: AskFn,
   lastUserPrompt: string
 ): Promise<AIGeneratedResponse | null> {
   const rawChunks: string[] = [];
@@ -138,15 +173,13 @@ async function runGeneration(
   printWarnings(parsed.warnings);
 
   if (parsed.files.length > 0) {
-    await writeGeneratedFiles(parsed.files, cwd, dryRun, rl);
+    await writeGeneratedFiles(parsed.files, cwd, dryRun, ask);
   }
 
   printNextSteps(parsed.nextSteps);
 
   if (!dryRun && parsed.files.length > 0) {
-    const answer = await new Promise<string>(resolve =>
-      rl.question('Quer rodar `iacmp synth` agora? (y/n) ', ans => resolve(ans.trim()))
-    );
+    const answer = await ask('Quer rodar `iacmp synth` agora? (y/n) ');
     if (answer === 'y') {
       runSynth(cwd, iacProvider);
     }
@@ -198,20 +231,21 @@ export default class AI extends Command {
     }
 
     const session = new ChatSession();
+    const { ask, close } = createAskFn();
 
     if (flags.chat) {
-      await this.runChatMode(aiProvider, session, cwd, dryRun, iacProvider);
+      await this.runChatMode(aiProvider, session, cwd, dryRun, iacProvider, ask);
     } else {
       if (!args.prompt) {
         this.error('Informe o prompt ou use --chat para modo interativo.\nExemplo: iacmp ai "cria uma Lambda com API Gateway"');
       }
-      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
       const projectContext = readProjectContext(cwd);
       const provider = createContextualProvider(aiProvider, projectContext);
       session.addUserMessage(args.prompt);
-      await runGeneration(provider, session, cwd, dryRun, iacProvider, rl, args.prompt);
-      rl.close();
+      await runGeneration(provider, session, cwd, dryRun, iacProvider, ask, args.prompt);
     }
+
+    close();
   }
 
   private async runChatMode(
@@ -219,7 +253,8 @@ export default class AI extends Command {
     session: ChatSession,
     cwd: string,
     dryRun: boolean,
-    iacProvider: string
+    iacProvider: string,
+    ask: AskFn
   ): Promise<void> {
     // Carrega sessão anterior
     const previousMessages = loadSession(cwd);
@@ -234,18 +269,8 @@ export default class AI extends Command {
     console.log(chalk.cyan.bold('\niacmp ai — Modo Chat Interativo'));
     console.log(chalk.dim('Comandos: /sair, /quit — encerra | /limpar — limpa sessão e cache\n'));
 
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-
-    const askLine = (): Promise<string> =>
-      new Promise(resolve => rl.question(chalk.bold('> Você: '), resolve));
-
     while (true) {
-      let input: string;
-      try {
-        input = (await askLine()).trim();
-      } catch {
-        break;
-      }
+      const input = await ask(chalk.bold('> Você: '));
 
       if (!input) continue;
 
@@ -263,23 +288,18 @@ export default class AI extends Command {
       }
 
       session.addUserMessage(input);
-
-      // Salva sessão após cada mensagem do usuário
       saveSession(cwd, session.getMessages());
 
       // Reler contexto a cada turno — captura arquivos gerados nesta sessão
       const freshContext = readProjectContext(cwd);
       const freshProvider = createContextualProvider(aiProvider, freshContext);
 
-      await runGeneration(freshProvider, session, cwd, dryRun, iacProvider, rl, input);
+      await runGeneration(freshProvider, session, cwd, dryRun, iacProvider, ask, input);
 
-      // Salva sessão após resposta da IA
       saveSession(cwd, session.getMessages());
 
       console.log('');
     }
-
-    rl.close();
   }
 }
 

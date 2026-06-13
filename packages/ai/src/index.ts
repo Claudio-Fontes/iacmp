@@ -14,7 +14,7 @@ export {
   printStreamChunk,
 } from './chat/renderer';
 export { writeGeneratedFiles } from './tools/file-writer';
-export { renderAndConfirm, FileDiff } from './tools/diff-renderer';
+export { renderAndConfirm, FileDiff, AskFn } from './tools/diff-renderer';
 export { runSynth } from './tools/synth-runner';
 export { readProjectContext } from './tools/context-reader';
 export { loadSession, saveSession, clearSession } from './tools/session-store';

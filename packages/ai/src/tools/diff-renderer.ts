@@ -1,6 +1,5 @@
 import chalk from 'chalk';
 import * as DiffLib from 'diff';
-import * as readline from 'readline';
 
 export interface FileDiff {
   path: string;
@@ -8,7 +7,9 @@ export interface FileDiff {
   newContent: string;
 }
 
-export async function renderAndConfirm(diffs: FileDiff[], rl?: import('readline').Interface): Promise<boolean> {
+export type AskFn = (question: string) => Promise<string>;
+
+export async function renderAndConfirm(diffs: FileDiff[], ask: AskFn): Promise<boolean> {
   console.log('');
 
   for (const file of diffs) {
@@ -51,23 +52,6 @@ export async function renderAndConfirm(diffs: FileDiff[], rl?: import('readline'
   if (newCount > 0) parts.push(`${newCount} novo(s)`);
   console.log(chalk.dim('\n  ' + parts.join(' · ') + '\n'));
 
-  return prompt('Aplicar mudanças? [y/n] ', rl);
-}
-
-async function prompt(question: string, existingRl?: import('readline').Interface): Promise<boolean> {
-  if (existingRl) {
-    return new Promise(resolve => {
-      existingRl.question(question, answer => {
-        resolve(answer.trim().toLowerCase() === 'y');
-      });
-    });
-  }
-
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise(resolve => {
-    rl.question(question, answer => {
-      rl.close();
-      resolve(answer.trim().toLowerCase() === 'y');
-    });
-  });
+  const answer = await ask('Aplicar mudanças? [y/n] ');
+  return answer.toLowerCase() === 'y';
 }
