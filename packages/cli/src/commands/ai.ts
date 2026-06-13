@@ -1,7 +1,7 @@
 import { Command, Args, Flags } from '@oclif/core';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as readline from 'readline';
+import * as cp from 'child_process';
 import chalk from 'chalk';
 import ora from 'ora';
 import {
@@ -19,15 +19,10 @@ import {
   printNextSteps,
   buildSystemPrompt,
   AIGeneratedResponse,
-  loadSession,
-  saveSession,
-  clearSession,
   getCached,
   setCache,
-  clearCache,
 } from '@iacmp/ai';
 
-// Função de leitura centralizada — único consumidor de stdin
 type AskFn = (question: string) => Promise<string>;
 
 function resolveAIProvider(): AIProvider {
@@ -38,10 +33,8 @@ function resolveAIProvider(): AIProvider {
     return new CopilotProvider(process.env['GITHUB_TOKEN']);
   }
   throw new Error(
-    'Configure ANTHROPIC_API_KEY ou GITHUB_TOKEN para usar iacmp ai\n' +
-    '  export ANTHROPIC_API_KEY=sk-ant-...\n' +
-    '  ou\n' +
-    '  export GITHUB_TOKEN=ghp_...'
+    'Configure ANTHROPIC_API_KEY no .env do projeto\n' +
+    '  ANTHROPIC_API_KEY=sk-ant-...'
   );
 }
 
@@ -52,53 +45,32 @@ function resolveIaCProvider(flags: { provider?: string }, cwd: string): string {
     try {
       const config = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
       if (typeof config['provider'] === 'string') return config['provider'];
-    } catch {
-      // ignora
-    }
+    } catch { /* ignora */ }
   }
   return 'aws';
 }
 
-// Lê linhas do stdin segurando o event loop com process.stdin.ref()
-function createAskFn(): { ask: AskFn; close: () => void } {
-  // Segura o event loop explicitamente — impede o processo de terminar enquanto aguarda input
-  process.stdin.resume();
-  process.stdin.ref();
-
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    crlfDelay: Infinity,
-    terminal: true,
-  });
-
-  const queue: Array<{ question: string; resolve: (answer: string) => void }> = [];
-  let busy = false;
-  let closed = false;
-
-  function next() {
-    if (busy || queue.length === 0 || closed) return;
-    busy = true;
-    const { question, resolve } = queue.shift()!;
-    rl.question(question, answer => {
-      busy = false;
-      resolve(answer.trim());
-      next();
-    });
-  }
-
-  const ask: AskFn = (question: string) =>
-    new Promise(resolve => {
-      queue.push({ question, resolve });
-      next();
-    });
-
-  return {
-    ask,
-    close: () => {
-      closed = true;
-      process.stdin.unref();
+// Ask simples via readline — apenas para modo direto (sem --chat)
+function createDirectAsk(): AskFn {
+  const readline = require('readline');
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return (question: string) => new Promise(resolve => {
+    rl.question(question, (answer: string) => {
       rl.close();
+      resolve(answer.trim());
+    });
+  });
+}
+
+function createContextualProvider(base: AIProvider, projectContext: string): AIProvider {
+  const systemPrompt = buildSystemPrompt(projectContext);
+  return {
+    name: base.name,
+    async chat(messages) {
+      return base.chat([{ role: 'system' as const, content: systemPrompt }, ...messages]);
+    },
+    async stream(messages, onChunk) {
+      return base.stream([{ role: 'system' as const, content: systemPrompt }, ...messages], onChunk);
     },
   };
 }
@@ -112,9 +84,6 @@ async function runGeneration(
   ask: AskFn,
   lastUserPrompt: string
 ): Promise<AIGeneratedResponse | null> {
-  const rawChunks: string[] = [];
-
-  // Verifica cache antes de chamar a API
   const cached = getCached(cwd, lastUserPrompt);
   let raw: string;
 
@@ -124,18 +93,15 @@ async function runGeneration(
     session.addAssistantMessage(raw);
   } else {
     const spinner = ora({ text: 'Gerando...', spinner: 'dots' }).start();
-
+    const chunks: string[] = [];
     try {
-      await provider.stream(session.getMessages(), chunk => {
-        rawChunks.push(chunk);
-      });
+      await provider.stream(session.getMessages(), chunk => chunks.push(chunk));
     } catch (err) {
       spinner.fail('Erro ao chamar a IA: ' + (err as Error).message);
       return null;
     }
-
     spinner.succeed('Resposta recebida');
-    raw = rawChunks.join('');
+    raw = chunks.join('');
     session.addAssistantMessage(raw);
     setCache(cwd, lastUserPrompt, raw);
   }
@@ -144,39 +110,25 @@ async function runGeneration(
   try {
     parsed = extractResponse(raw);
   } catch (err) {
-    console.error(chalk.red('Erro ao extrair resposta da IA: ' + (err as Error).message));
+    console.error(chalk.red('Erro ao extrair resposta: ' + (err as Error).message));
     return null;
   }
 
-  // Valida TypeScript se houver arquivos .ts
   const tsFiles = parsed.files.filter(f => f.path.endsWith('.ts'));
   if (tsFiles.length > 0) {
     const result = validateTypeScript(tsFiles, cwd);
     if (!result.valid) {
-      const retrySpinner = ora({ text: 'Validação TypeScript falhou — corrigindo...', spinner: 'dots' }).start();
-      const errorMsg = result.errors.join('\n');
-      session.addUserMessage(
-        `O código gerado tem erros TypeScript. Corrija e retorne o JSON completo novamente:\n${errorMsg}`
-      );
-
+      const spinner = ora({ text: 'Validação TypeScript falhou — corrigindo...', spinner: 'dots' }).start();
+      session.addUserMessage(`Erros TypeScript:\n${result.errors.join('\n')}\n\nCorrija e retorne o JSON completo.`);
       const retryChunks: string[] = [];
       try {
-        await provider.stream(session.getMessages(), chunk => {
-          retryChunks.push(chunk);
-        });
+        await provider.stream(session.getMessages(), chunk => retryChunks.push(chunk));
+        spinner.succeed('Código corrigido');
+        const retryRaw = retryChunks.join('');
+        session.addAssistantMessage(retryRaw);
+        try { parsed = extractResponse(retryRaw); } catch { /* usa original */ }
       } catch (err) {
-        retrySpinner.fail('Erro no retry: ' + (err as Error).message);
-        return parsed;
-      }
-
-      retrySpinner.succeed('Código corrigido');
-      const retryRaw = retryChunks.join('');
-      session.addAssistantMessage(retryRaw);
-
-      try {
-        parsed = extractResponse(retryRaw);
-      } catch {
-        // usa o original
+        spinner.fail('Erro no retry: ' + (err as Error).message);
       }
     }
   }
@@ -192,9 +144,7 @@ async function runGeneration(
 
   if (!dryRun && parsed.files.length > 0) {
     const answer = await ask('Quer rodar `iacmp synth` agora? (y/n) ');
-    if (answer === 'y') {
-      runSynth(cwd, iacProvider);
-    }
+    if (answer === 'y') runSynth(cwd, iacProvider);
   }
 
   return parsed;
@@ -208,18 +158,9 @@ export default class AI extends Command {
   };
 
   static flags = {
-    chat: Flags.boolean({
-      description: 'Modo chat interativo',
-      default: false,
-    }),
-    'dry-run': Flags.boolean({
-      description: 'Gera e exibe sem salvar arquivos',
-      default: false,
-    }),
-    provider: Flags.string({
-      char: 'p',
-      description: 'Provider alvo (aws, azure, gcp, terraform)',
-    }),
+    chat: Flags.boolean({ description: 'Modo chat interativo', default: false }),
+    'dry-run': Flags.boolean({ description: 'Gera e exibe sem salvar arquivos', default: false }),
+    provider: Flags.string({ char: 'p', description: 'Provider alvo (aws, azure, gcp, terraform)' }),
   };
 
   static examples = [
@@ -235,6 +176,27 @@ export default class AI extends Command {
     const dryRun = flags['dry-run'];
     const iacProvider = resolveIaCProvider({ provider: flags.provider }, cwd);
 
+    if (flags.chat) {
+      // Modo chat: spawn de processo filho com stdio herdado — oclif não interfere no stdin
+      const chatScript = path.resolve(__dirname, '../../bin/chat.js');
+      const child = cp.spawn(process.execPath, [chatScript], {
+        stdio: 'inherit',
+        env: {
+          ...process.env,
+          IACMP_CWD: cwd,
+          IACMP_PROVIDER: iacProvider,
+          IACMP_DRYRUN: dryRun ? '1' : '0',
+        },
+      });
+      await new Promise<void>(resolve => child.on('close', resolve));
+      return;
+    }
+
+    // Modo direto: prompt único
+    if (!args.prompt) {
+      this.error('Informe o prompt ou use --chat para modo interativo.\nExemplo: iacmp ai "cria uma Lambda com API Gateway"');
+    }
+
     let aiProvider: AIProvider;
     try {
       aiProvider = resolveAIProvider();
@@ -243,90 +205,10 @@ export default class AI extends Command {
     }
 
     const session = new ChatSession();
-    const { ask, close } = createAskFn();
-
-    if (flags.chat) {
-      await this.runChatMode(aiProvider, session, cwd, dryRun, iacProvider, ask);
-    } else {
-      if (!args.prompt) {
-        this.error('Informe o prompt ou use --chat para modo interativo.\nExemplo: iacmp ai "cria uma Lambda com API Gateway"');
-      }
-      const projectContext = readProjectContext(cwd);
-      const provider = createContextualProvider(aiProvider, projectContext);
-      session.addUserMessage(args.prompt);
-      await runGeneration(provider, session, cwd, dryRun, iacProvider, ask, args.prompt);
-    }
-
-    close();
+    const ask = createDirectAsk();
+    const projectContext = readProjectContext(cwd);
+    const provider = createContextualProvider(aiProvider, projectContext);
+    session.addUserMessage(args.prompt);
+    await runGeneration(provider, session, cwd, dryRun, iacProvider, ask, args.prompt);
   }
-
-  private async runChatMode(
-    aiProvider: AIProvider,
-    session: ChatSession,
-    cwd: string,
-    dryRun: boolean,
-    iacProvider: string,
-    ask: AskFn
-  ): Promise<void> {
-    // Carrega sessão anterior
-    const previousMessages = loadSession(cwd);
-    if (previousMessages.length > 0) {
-      for (const msg of previousMessages) {
-        if (msg.role === 'user') session.addUserMessage(msg.content);
-        else session.addAssistantMessage(msg.content);
-      }
-      console.log(chalk.dim(`\n  Sessão anterior carregada (${previousMessages.length} mensagens)`));
-    }
-
-    console.log(chalk.cyan.bold('\niacmp ai — Modo Chat Interativo'));
-    console.log(chalk.dim('Comandos: /sair, /quit — encerra | /limpar — limpa sessão e cache\n'));
-
-    while (true) {
-      const input = await ask(chalk.bold('> Você: '));
-
-      if (!input) continue;
-
-      if (input === '/sair' || input === '/quit') {
-        console.log(chalk.dim('Encerrando chat.'));
-        break;
-      }
-
-      if (input === '/limpar') {
-        session.clear();
-        clearSession(cwd);
-        clearCache(cwd);
-        console.log(chalk.dim('Sessão e cache limpos.\n'));
-        continue;
-      }
-
-      session.addUserMessage(input);
-      saveSession(cwd, session.getMessages());
-
-      // Reler contexto a cada turno — captura arquivos gerados nesta sessão
-      const freshContext = readProjectContext(cwd);
-      const freshProvider = createContextualProvider(aiProvider, freshContext);
-
-      await runGeneration(freshProvider, session, cwd, dryRun, iacProvider, ask, input);
-
-      saveSession(cwd, session.getMessages());
-
-      console.log('');
-    }
-  }
-}
-
-function createContextualProvider(base: AIProvider, projectContext: string): AIProvider {
-  const systemPrompt = buildSystemPrompt(projectContext);
-
-  return {
-    name: base.name,
-    async chat(messages) {
-      const withContext = [{ role: 'system' as const, content: systemPrompt }, ...messages];
-      return base.chat(withContext);
-    },
-    async stream(messages, onChunk) {
-      const withContext = [{ role: 'system' as const, content: systemPrompt }, ...messages];
-      return base.stream(withContext, onChunk);
-    },
-  };
 }
