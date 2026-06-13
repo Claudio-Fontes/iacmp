@@ -38,6 +38,7 @@ function describeProps(c: BaseConstruct): string {
   if (c.type === 'Function.Lambda') {
     if (p.runtime) parts.push(`runtime: ${p.runtime}`);
     if (p.memory) parts.push(`memory: ${p.memory}MB`);
+    if (p.handler) parts.push(`handler: ${p.handler}`);
   }
 
   return parts.join(', ');
@@ -56,20 +57,27 @@ function buildStackDiagram(name: string, stack: Stack): DiagramStack {
     };
   });
 
-  // Inferência conservadora: VPC única → seta tracejada para todos os outros
+  // Inferência de relacionamentos
   const relationships: DiagramRelationship[] = [];
   const vpcs = nodes.filter(n => n.constructType === 'Network.VPC');
+  const lambdas = nodes.filter(n => n.constructType === 'Function.Lambda');
+  const databases = nodes.filter(n => n.constructType === 'Database.SQL');
 
+  // VPC única → seta tracejada para todos os outros
   if (vpcs.length === 1) {
     const vpcId = vpcs[0].id;
     for (const node of nodes) {
       if (node.id === vpcId) continue;
-      relationships.push({
-        sourceId: vpcId,
-        targetId: node.id,
-        label: 'inferred',
-        inferred: true,
-      });
+      relationships.push({ sourceId: vpcId, targetId: node.id, label: 'inferred', inferred: true });
+    }
+  }
+
+  // Lambda → Database: se há apenas uma de cada, infere leitura
+  if (lambdas.length > 0 && databases.length > 0) {
+    for (const lambda of lambdas) {
+      for (const db of databases) {
+        relationships.push({ sourceId: lambda.id, targetId: db.id, label: 'reads', inferred: true });
+      }
     }
   }
 

@@ -66,18 +66,49 @@ import { Stack, Fn } from '@iacmp/core';
 const stack = new Stack('nome');
 new Fn.Lambda(stack, 'LogicalId', {
   runtime: 'nodejs20',
-  handler: string,
-  code: string,
-  memory?: number,
-  timeout?: number,
+  handler: 'index.handler',
+  code: './src/handlers/nome',
+  memory: 256,
+  timeout: 10,
+  environment: {
+    TABLE_NAME: 'nome-da-tabela',
+  },
 });
 export default stack;
 \`\`\`
 
 ## Recursos sem equivalente no @iacmp/core
-SQS, SNS, API Gateway, DynamoDB, Kinesis e outros recursos AWS-específicos NÃO têm construct no @iacmp/core.
-Se o usuário pedir um desses recursos, responda no campo "explanation" que o recurso não tem suporte nativo ainda,
-e gere APENAS uma stack válida com os recursos que têm suporte. Nunca invente constructs inexistentes.
+API Gateway, SQS, SNS, Kinesis e outros recursos AWS-específicos NÃO têm construct no @iacmp/core.
+DynamoDB é mapeado via \`Database.SQL\` com \`engine: 'dynamodb'\` (convenção do iacmp).
+Se o usuário pedir API Gateway: gere apenas a Lambda e avise no campo "warnings" que API Gateway não tem suporte nativo ainda.
+Nunca invente constructs, interfaces ou objetos customizados — use SEMPRE os constructs do @iacmp/core.
+
+## Regra de integração entre stacks
+Quando o usuário pedir uma stack que depende de recursos de outra stack já existente (ex: Lambda que lê de um DynamoDB existente):
+- NUNCA recrie o recurso já existente na nova stack
+- Referencie via variável de ambiente (ex: TABLE_NAME) usando o nome lógico do recurso
+- Mencione na "explanation" qual stack existente está sendo referenciada e por quê
+
+### Exemplo: Lambda que lê do DynamoDB existente
+\`\`\`typescript
+import { Stack, Fn } from '@iacmp/core';
+
+// Referencia a tabela do dynamodb-stack via environment — não recria o DynamoDB
+const stack = new Stack('hello-world-api-stack');
+
+new Fn.Lambda(stack, 'HelloWorldFn', {
+  runtime: 'nodejs20',
+  handler: 'index.handler',
+  code: './src/handlers/hello-world',
+  memory: 256,
+  timeout: 10,
+  environment: {
+    TABLE_NAME: 'messages',
+  },
+});
+
+export default stack;
+\`\`\`
 
 ## Tamanhos de instância
 - \`small\` → t3.small (AWS) / B1s (Azure) / e2-small (GCP)

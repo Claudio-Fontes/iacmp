@@ -6,6 +6,7 @@ export interface FunctionLambdaProps {
   code: string;
   memory?: number;
   timeout?: number;
+  environment?: Record<string, string>;
 }
 
 export namespace Fn {
