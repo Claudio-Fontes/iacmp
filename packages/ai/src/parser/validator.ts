@@ -19,7 +19,29 @@ export function validateTypeScript(files: GeneratedFile[], projectDir: string): 
       fs.writeFileSync(filePath, file.content, 'utf-8');
     }
 
+    // Resolve onde @iacmp/core está instalado — tenta monorepo e global
+    const coreTypesPath = (function findCoreTypes() {
+      const candidates = [
+        // monorepo local (dev)
+        path.resolve(__dirname, '..', '..', '..', 'core', 'dist'),
+        // node_modules do CLI instalado globalmente
+        path.resolve(__dirname, '..', '..', 'node_modules', '@iacmp', 'core', 'dist'),
+        // node_modules do projeto do usuário
+        path.join(projectDir, 'node_modules', '@iacmp', 'core', 'dist'),
+      ];
+      for (const c of candidates) {
+        if (fs.existsSync(path.join(c, 'index.d.ts'))) return c;
+      }
+      return null;
+    })();
+
     // Cria tsconfig mínimo no temp dir
+    const tsconfigPaths: Record<string, string[]> = {};
+    if (coreTypesPath) {
+      tsconfigPaths['@iacmp/core'] = [path.join(coreTypesPath, 'index.d.ts')];
+      tsconfigPaths['@iacmp/core/*'] = [path.join(coreTypesPath, '*')];
+    }
+
     const tsconfig = {
       compilerOptions: {
         target: 'ES2022',
@@ -29,10 +51,8 @@ export function validateTypeScript(files: GeneratedFile[], projectDir: string): 
         strict: false,
         skipLibCheck: true,
         noEmit: true,
-        baseUrl: projectDir,
-        paths: {
-          '@iacmp/core': [path.join(projectDir, 'node_modules', '@iacmp', 'core', 'dist', 'index.d.ts')],
-        },
+        baseUrl: '/',
+        paths: tsconfigPaths,
       },
       include: [path.join(tmpDir, '*.ts')],
     };
