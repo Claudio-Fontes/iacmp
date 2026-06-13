@@ -49,7 +49,6 @@ Module._resolveFilename = function(req, parent, isMain, opts) {
 };
 
 const chalk = require('chalk');
-const ora = require('ora');
 const {
   AnthropicProvider, CopilotProvider, ChatSession,
   extractResponse, validateTypeScript, writeGeneratedFiles,
@@ -129,15 +128,14 @@ async function runGeneration(provider, session, lastPrompt) {
     raw = cached;
     session.addAssistantMessage(raw);
   } else {
-    const spinner = ora({ text: 'Gerando...', spinner: 'dots', stream: process.stderr }).start();
+    process.stderr.write(chalk.dim('Gerando...\n'));
     const chunks = [];
     try {
       await provider.stream(session.getMessages(), chunk => chunks.push(chunk));
     } catch (err) {
-      spinner.fail('Erro: ' + err.message);
+      process.stderr.write(chalk.red('Erro: ' + err.message + '\n'));
       return;
     }
-    spinner.succeed('Resposta recebida');
     raw = chunks.join('');
     session.addAssistantMessage(raw);
     setCache(cwd, lastPrompt, raw);
@@ -156,17 +154,16 @@ async function runGeneration(provider, session, lastPrompt) {
   if (tsFiles.length > 0) {
     const result = validateTypeScript(tsFiles, cwd);
     if (!result.valid) {
-      const spinner = ora({ text: 'Validação falhou — corrigindo...', spinner: 'dots', stream: process.stderr }).start();
+      process.stderr.write(chalk.dim('Validação falhou — corrigindo...\n'));
       session.addUserMessage(`Erros TypeScript:\n${result.errors.join('\n')}\n\nCorrija e retorne o JSON completo.`);
       const retryChunks = [];
       try {
         await provider.stream(session.getMessages(), chunk => retryChunks.push(chunk));
-        spinner.succeed('Código corrigido');
         const retryRaw = retryChunks.join('');
         session.addAssistantMessage(retryRaw);
         try { parsed = extractResponse(retryRaw); } catch {}
       } catch (err) {
-        spinner.fail('Erro no retry: ' + err.message);
+        process.stderr.write(chalk.red('Erro no retry: ' + err.message + '\n'));
       }
     }
   }
