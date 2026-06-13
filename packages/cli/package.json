@@ -2,7 +2,18 @@
   "name": "iacmp",
   "version": "1.0.0",
   "description": "IaC Multi Plataforma — CLI inteligente para AWS, Azure, GCP e Terraform com geração de stacks via IA",
-  "keywords": ["iac", "cli", "aws", "azure", "gcp", "terraform", "ai", "devops", "infrastructure", "cdk"],
+  "keywords": [
+    "iac",
+    "cli",
+    "aws",
+    "azure",
+    "gcp",
+    "terraform",
+    "ai",
+    "devops",
+    "infrastructure",
+    "cdk"
+  ],
   "author": "Caio Melo",
   "license": "MIT",
   "repository": {
@@ -43,11 +54,12 @@
     "@oclif/core": "^4.0.0",
     "chalk": "^4.1.2",
     "diff": "^5.2.0",
+    "dotenv": "17.4.2",
     "ora": "^5.4.1"
   },
   "devDependencies": {
-    "@types/diff": "^5.2.1",
     "@oclif/dev-cli": "^1.26.10",
+    "@types/diff": "^5.2.1",
     "oclif": "^4.0.0",
     "typescript": "^5.5.0"
   },

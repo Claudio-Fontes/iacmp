@@ -8,7 +8,7 @@ export interface FileDiff {
   newContent: string;
 }
 
-export async function renderAndConfirm(diffs: FileDiff[]): Promise<boolean> {
+export async function renderAndConfirm(diffs: FileDiff[], rl?: import('readline').Interface): Promise<boolean> {
   console.log('');
 
   for (const file of diffs) {
@@ -51,16 +51,19 @@ export async function renderAndConfirm(diffs: FileDiff[]): Promise<boolean> {
   if (newCount > 0) parts.push(`${newCount} novo(s)`);
   console.log(chalk.dim('\n  ' + parts.join(' · ') + '\n'));
 
-  return prompt('Aplicar mudanças? [y/n] ');
+  return prompt('Aplicar mudanças? [y/n] ', rl);
 }
 
-async function prompt(question: string): Promise<boolean> {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    terminal: false,
-  });
+async function prompt(question: string, existingRl?: import('readline').Interface): Promise<boolean> {
+  if (existingRl) {
+    return new Promise(resolve => {
+      existingRl.question(question, answer => {
+        resolve(answer.trim().toLowerCase() === 'y');
+      });
+    });
+  }
 
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   return new Promise(resolve => {
     rl.question(question, answer => {
       rl.close();

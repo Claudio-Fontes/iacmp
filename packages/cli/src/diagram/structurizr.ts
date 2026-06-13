@@ -14,9 +14,13 @@ function ind(n: number): string {
 
 function containerBlock(node: DiagramNode, depth: number): string {
   const tag = TYPE_TAG[node.constructType] ?? 'Resource';
-  const tech = node.technology;
-  const desc = node.description ? ` "${node.description}"` : '';
-  return `${ind(depth)}${node.id} = container "${node.label}" "${tech}"${desc} {\n${ind(depth + 1)}tags "${tag}"\n${ind(depth)}}`;
+  const desc = node.description || '';
+  const lines = [
+    `${ind(depth)}${node.id} = container "${node.label}" "${desc}" "${node.technology}" {`,
+    `${ind(depth + 1)}tags "${tag}"`,
+    `${ind(depth)}}`,
+  ];
+  return lines.join('\n');
 }
 
 export function renderStructurizr(model: DiagramModel): string {
@@ -25,7 +29,7 @@ export function renderStructurizr(model: DiagramModel): string {
   lines.push(`workspace "${model.projectName}" {`);
   lines.push('');
   lines.push(`${ind(1)}model {`);
-  lines.push(`${ind(2)}${sanitize(model.projectName)} = softwareSystem "${model.projectName}" "Provider: ${model.provider} · Region: ${model.region}" {`);
+  lines.push(`${ind(2)}${sanitize(model.projectName)} = softwareSystem "${model.projectName}" "Provider: ${model.provider}, Region: ${model.region}" {`);
 
   for (const stack of model.stacks) {
     lines.push('');
@@ -65,12 +69,35 @@ export function renderStructurizr(model: DiagramModel): string {
 
   lines.push('');
   lines.push(`${ind(2)}styles {`);
-  lines.push(`${ind(3)}element "Compute"  { background #1168bd; color #ffffff; shape RoundedBox }`);
-  lines.push(`${ind(3)}element "Storage"  { background #f5a623; color #ffffff; shape Folder }`);
-  lines.push(`${ind(3)}element "Network"  { background #6ab04c; color #ffffff; shape Hexagon }`);
-  lines.push(`${ind(3)}element "Database" { background #eb4d4b; color #ffffff; shape Cylinder }`);
-  lines.push(`${ind(3)}element "Function" { background #9b59b6; color #ffffff; shape Component }`);
-  lines.push(`${ind(3)}relationship "Inferred" { style dashed; color #999999 }`);
+  lines.push(`${ind(3)}element "Compute" {`);
+  lines.push(`${ind(4)}background #1168bd`);
+  lines.push(`${ind(4)}color #ffffff`);
+  lines.push(`${ind(4)}shape RoundedBox`);
+  lines.push(`${ind(3)}}`);
+  lines.push(`${ind(3)}element "Storage" {`);
+  lines.push(`${ind(4)}background #f5a623`);
+  lines.push(`${ind(4)}color #ffffff`);
+  lines.push(`${ind(4)}shape Folder`);
+  lines.push(`${ind(3)}}`);
+  lines.push(`${ind(3)}element "Network" {`);
+  lines.push(`${ind(4)}background #6ab04c`);
+  lines.push(`${ind(4)}color #ffffff`);
+  lines.push(`${ind(4)}shape Hexagon`);
+  lines.push(`${ind(3)}}`);
+  lines.push(`${ind(3)}element "Database" {`);
+  lines.push(`${ind(4)}background #eb4d4b`);
+  lines.push(`${ind(4)}color #ffffff`);
+  lines.push(`${ind(4)}shape Cylinder`);
+  lines.push(`${ind(3)}}`);
+  lines.push(`${ind(3)}element "Function" {`);
+  lines.push(`${ind(4)}background #9b59b6`);
+  lines.push(`${ind(4)}color #ffffff`);
+  lines.push(`${ind(4)}shape Component`);
+  lines.push(`${ind(3)}}`);
+  lines.push(`${ind(3)}relationship "Inferred" {`);
+  lines.push(`${ind(4)}dashed true`);
+  lines.push(`${ind(4)}colour #999999`);
+  lines.push(`${ind(3)}}`);
   lines.push(`${ind(2)}}`);
   lines.push(`${ind(1)}}`);
   lines.push('}');

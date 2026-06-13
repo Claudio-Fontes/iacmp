@@ -7,7 +7,8 @@ import { renderAndConfirm, FileDiff } from './diff-renderer';
 export async function writeGeneratedFiles(
   files: GeneratedFile[],
   projectDir: string,
-  dryRun: boolean
+  dryRun: boolean,
+  rl?: import('readline').Interface
 ): Promise<void> {
   if (dryRun) {
     console.log(chalk.dim('\n[dry-run] Arquivos que seriam gerados:\n'));
@@ -36,7 +37,7 @@ export async function writeGeneratedFiles(
     return { path: file.path, oldContent, newContent: file.content };
   });
 
-  const confirmed = await renderAndConfirm(diffs);
+  const confirmed = await renderAndConfirm(diffs, rl);
 
   if (!confirmed) {
     console.log(chalk.dim('\n  Operação cancelada. Nenhum arquivo foi alterado.\n'));

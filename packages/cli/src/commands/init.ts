@@ -240,7 +240,16 @@ function tsConfig(corePath: string): string {
 }
 
 function gitignore(): string {
-  return ['node_modules/', 'dist/', 'synth-out/', 'audit/', '*.js.map', '*.d.ts', '.DS_Store'].join('\n') + '\n';
+  return ['node_modules/', 'dist/', 'synth-out/', 'audit/', '*.js.map', '*.d.ts', '.DS_Store', '.env'].join('\n') + '\n';
+}
+
+function dotenv(): string {
+  return `# Chave da API Anthropic — necessária para usar iacmp ai
+ANTHROPIC_API_KEY=
+
+# Token do GitHub Copilot (alternativa ao Anthropic)
+# GITHUB_TOKEN=
+`;
 }
 
 function githubActionsYml(): string {
@@ -383,6 +392,9 @@ export default class Init extends Command {
     // .gitignore
     fs.writeFileSync(path.join(projectDir, '.gitignore'), gitignore());
 
+    // .env
+    fs.writeFileSync(path.join(projectDir, '.env'), dotenv());
+
     // stacks/
     const stacksDir = path.join(projectDir, 'stacks');
     fs.mkdirSync(stacksDir, { recursive: true });
@@ -429,6 +441,7 @@ export default class Init extends Command {
 
     this.log(`\nProjeto '${projectName}' inicializado${templateLabel}.\n`);
     this.log(`  ${rel}/iacmp.json`);
+    this.log(`  ${rel}/.env`);
     if (flags.language === 'typescript') {
       this.log(`  ${rel}/package.json`);
       this.log(`  ${rel}/tsconfig.json`);

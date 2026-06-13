@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';
 import chalk from 'chalk';
+import ora from 'ora';
 import {
   AIProvider,
   AnthropicProvider,
@@ -16,7 +17,6 @@ import {
   printExplanation,
   printWarnings,
   printNextSteps,
-  printStreamChunk,
   buildSystemPrompt,
   AIGeneratedResponse,
 } from '@iacmp/ai';
@@ -50,39 +50,29 @@ function resolveIaCProvider(flags: { provider?: string }, cwd: string): string {
   return 'aws';
 }
 
-async function promptLine(question: string): Promise<string> {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise(resolve => {
-    rl.question(question, answer => {
-      rl.close();
-      resolve(answer.trim());
-    });
-  });
-}
-
 async function runGeneration(
   provider: AIProvider,
   session: ChatSession,
   cwd: string,
   dryRun: boolean,
-  iacProvider: string
+  iacProvider: string,
+  rl: readline.Interface
 ): Promise<AIGeneratedResponse | null> {
   const rawChunks: string[] = [];
 
-  console.log('\n' + chalk.dim('─'.repeat(50)));
+  // Spinner durante o stream — sem mostrar JSON cru
+  const spinner = ora({ text: 'Gerando...', spinner: 'dots' }).start();
 
   try {
     await provider.stream(session.getMessages(), chunk => {
       rawChunks.push(chunk);
-      printStreamChunk(chunk);
     });
   } catch (err) {
-    const error = err as Error;
-    console.error('\n' + chalk.red('Erro ao chamar a IA: ' + error.message));
+    spinner.fail('Erro ao chamar a IA: ' + (err as Error).message);
     return null;
   }
 
-  console.log('\n' + chalk.dim('─'.repeat(50)) + '\n');
+  spinner.succeed('Resposta recebida');
 
   const raw = rawChunks.join('');
   session.addAssistantMessage(raw);
@@ -91,8 +81,7 @@ async function runGeneration(
   try {
     parsed = extractResponse(raw);
   } catch (err) {
-    const error = err as Error;
-    console.error(chalk.red('Erro ao extrair resposta da IA: ' + error.message));
+    console.error(chalk.red('Erro ao extrair resposta da IA: ' + (err as Error).message));
     return null;
   }
 
@@ -101,7 +90,7 @@ async function runGeneration(
   if (tsFiles.length > 0) {
     const result = validateTypeScript(tsFiles, cwd);
     if (!result.valid) {
-      console.log(chalk.yellow('\nValidação TypeScript falhou. Tentando corrigir...'));
+      const retrySpinner = ora({ text: 'Validação TypeScript falhou — corrigindo...', spinner: 'dots' }).start();
       const errorMsg = result.errors.join('\n');
       session.addUserMessage(
         `O código gerado tem erros TypeScript. Corrija e retorne o JSON completo novamente:\n${errorMsg}`
@@ -111,15 +100,13 @@ async function runGeneration(
       try {
         await provider.stream(session.getMessages(), chunk => {
           retryChunks.push(chunk);
-          printStreamChunk(chunk);
         });
       } catch (err) {
-        const error = err as Error;
-        console.error('\n' + chalk.red('Erro no retry: ' + error.message));
-        return parsed; // retorna o original mesmo com erros
+        retrySpinner.fail('Erro no retry: ' + (err as Error).message);
+        return parsed;
       }
 
-      console.log('\n');
+      retrySpinner.succeed('Código corrigido');
       const retryRaw = retryChunks.join('');
       session.addAssistantMessage(retryRaw);
 
@@ -135,13 +122,16 @@ async function runGeneration(
   printWarnings(parsed.warnings);
 
   if (parsed.files.length > 0) {
-    await writeGeneratedFiles(parsed.files, cwd, dryRun);
+    await writeGeneratedFiles(parsed.files, cwd, dryRun, rl);
   }
 
   printNextSteps(parsed.nextSteps);
 
   if (!dryRun && parsed.files.length > 0) {
-    const answer = await promptLine('Quer rodar `iacmp synth` agora? (y/n) ');
+    // Usa o rl compartilhado do chat para não fechar o stdin
+    const answer = await new Promise<string>(resolve =>
+      rl.question('Quer rodar `iacmp synth` agora? (y/n) ', ans => resolve(ans.trim()))
+    );
     if (answer === 'y') {
       runSynth(cwd, iacProvider);
     }
@@ -192,28 +182,26 @@ export default class AI extends Command {
       this.error((err as Error).message);
     }
 
-    // Lê contexto do projeto para injetar no system prompt
     const projectContext = readProjectContext(cwd);
-
-    // Substitui o system prompt nos providers que aceitam o contexto dinâmico
-    // Criamos um wrapper que injeta o contexto correto
     const contextualProvider = createContextualProvider(aiProvider, projectContext);
-
     const session = new ChatSession();
 
     if (flags.chat) {
-      await this.runChatMode(contextualProvider, session, cwd, dryRun, iacProvider);
+      await this.runChatMode(aiProvider, session, cwd, dryRun, iacProvider);
     } else {
       if (!args.prompt) {
         this.error('Informe o prompt ou use --chat para modo interativo.\nExemplo: iacmp ai "cria uma Lambda com API Gateway"');
       }
+      // Modo direto: cria rl só para a pergunta de synth e fecha depois
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
       session.addUserMessage(args.prompt);
-      await runGeneration(contextualProvider, session, cwd, dryRun, iacProvider);
+      await runGeneration(contextualProvider, session, cwd, dryRun, iacProvider, rl);
+      rl.close();
     }
   }
 
   private async runChatMode(
-    provider: AIProvider,
+    aiProvider: AIProvider,
     session: ChatSession,
     cwd: string,
     dryRun: boolean,
@@ -222,6 +210,7 @@ export default class AI extends Command {
     console.log(chalk.cyan.bold('\niacmp ai — Modo Chat Interativo'));
     console.log(chalk.dim('Comandos: /sair, /quit — encerra | /limpar — limpa histórico\n'));
 
+    // rl único para toda a sessão — não fecha entre turnos
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
     const askLine = (): Promise<string> =>
@@ -249,21 +238,26 @@ export default class AI extends Command {
       }
 
       session.addUserMessage(input);
-      await runGeneration(provider, session, cwd, dryRun, iacProvider);
+
+      // Reler contexto do projeto a cada turno — captura arquivos gerados na sessão
+      const freshContext = readProjectContext(cwd);
+      const freshProvider = createContextualProvider(aiProvider, freshContext);
+
+      await runGeneration(freshProvider, session, cwd, dryRun, iacProvider, rl);
+
+      console.log('');
     }
 
     rl.close();
   }
 }
 
-// Cria um provider que injeta o contexto do projeto no system prompt
 function createContextualProvider(base: AIProvider, projectContext: string): AIProvider {
   const systemPrompt = buildSystemPrompt(projectContext);
 
   return {
     name: base.name,
     async chat(messages) {
-      // Injeta o system prompt como primeira mensagem system
       const withContext = [{ role: 'system' as const, content: systemPrompt }, ...messages];
       return base.chat(withContext);
     },

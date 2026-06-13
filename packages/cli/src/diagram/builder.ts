@@ -40,7 +40,7 @@ function describeProps(c: BaseConstruct): string {
     if (p.memory) parts.push(`memory: ${p.memory}MB`);
   }
 
-  return parts.join(' · ');
+  return parts.join(', ');
 }
 
 function buildStackDiagram(name: string, stack: Stack): DiagramStack {
