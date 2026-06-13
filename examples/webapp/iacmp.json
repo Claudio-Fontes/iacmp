@@ -1,0 +1,1 @@
+{ "name": "webapp", "provider": "aws", "region": "us-east-1", "language": "typescript" }

@@ -1,0 +1,63 @@
+{
+  "name": "iacmp",
+  "version": "1.0.0",
+  "description": "IaC Multi Plataforma — CLI inteligente para AWS, Azure, GCP e Terraform com geração de stacks via IA",
+  "keywords": ["iac", "cli", "aws", "azure", "gcp", "terraform", "ai", "devops", "infrastructure", "cdk"],
+  "author": "Caio Melo",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cmelo/iacmp"
+  },
+  "homepage": "https://github.com/cmelo/iacmp#readme",
+  "bugs": {
+    "url": "https://github.com/cmelo/iacmp/issues"
+  },
+  "bin": {
+    "iacmp": "./bin/run.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "/bin",
+    "/dist",
+    "/oclif.manifest.json"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "manifest": "oclif manifest",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist oclif.manifest.json",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@iacmp/ai": "*",
+    "@iacmp/core": "*",
+    "@iacmp/dashboard": "*",
+    "@iacmp/plugin-sdk": "*",
+    "@iacmp/provider-aws": "*",
+    "@iacmp/provider-azure": "*",
+    "@iacmp/provider-gcp": "*",
+    "@iacmp/provider-terraform": "*",
+    "@iacmp/registry": "*",
+    "@oclif/core": "^4.0.0",
+    "chalk": "^4.1.2",
+    "diff": "^5.2.0",
+    "ora": "^5.4.1"
+  },
+  "devDependencies": {
+    "@types/diff": "^5.2.1",
+    "@oclif/dev-cli": "^1.26.10",
+    "oclif": "^4.0.0",
+    "typescript": "^5.5.0"
+  },
+  "oclif": {
+    "bin": "iacmp",
+    "dirname": "iacmp",
+    "commands": "./dist/commands",
+    "plugins": []
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "@iacmp/registry",
+  "version": "1.0.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist", "src/registry.json"],
+  "scripts": {
+    "build": "tsc && cp src/registry.json dist/registry.json",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  }
+}

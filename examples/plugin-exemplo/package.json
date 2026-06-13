@@ -1,0 +1,10 @@
+{
+  "name": "iacmp-plugin-digitalocean",
+  "version": "1.0.0",
+  "description": "Exemplo de plugin iacmp — provider Digital Ocean simulado",
+  "main": "index.js",
+  "keywords": ["iacmp", "plugin", "digitalocean"],
+  "peerDependencies": {
+    "@iacmp/plugin-sdk": "*"
+  }
+}

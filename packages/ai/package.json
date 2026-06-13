@@ -1,0 +1,23 @@
+{
+  "name": "@iacmp/ai",
+  "version": "1.0.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.30.0",
+    "@iacmp/core": "*",
+    "chalk": "^4.1.2",
+    "diff": "^5.2.0",
+    "ora": "^5.4.1"
+  },
+  "devDependencies": {
+    "@types/diff": "^5.2.1",
+    "typescript": "^5.5.0"
+  }
+}

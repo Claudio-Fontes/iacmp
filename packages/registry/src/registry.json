@@ -1,0 +1,29 @@
+{
+  "version": "1",
+  "constructs": [
+    {
+      "name": "WebApp.Static",
+      "package": "@iacmp-community/webapp",
+      "description": "S3 + CloudFront para sites estáticos",
+      "providers": ["aws"],
+      "version": "1.0.0",
+      "author": "comunidade"
+    },
+    {
+      "name": "Queue.SQS",
+      "package": "@iacmp-community/queue",
+      "description": "Fila SQS com DLQ configurada",
+      "providers": ["aws"],
+      "version": "1.0.0",
+      "author": "comunidade"
+    },
+    {
+      "name": "Auth.Cognito",
+      "package": "@iacmp-community/auth",
+      "description": "User pool Cognito com OAuth2",
+      "providers": ["aws"],
+      "version": "1.0.0",
+      "author": "comunidade"
+    }
+  ]
+}
