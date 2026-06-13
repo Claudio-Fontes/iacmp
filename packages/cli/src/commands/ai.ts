@@ -59,20 +59,25 @@ function resolveIaCProvider(flags: { provider?: string }, cwd: string): string {
   return 'aws';
 }
 
-// Cria um leitor de linha serializado — garante que só uma pergunta está ativa por vez
+// Lê linhas do stdin segurando o event loop com process.stdin.ref()
 function createAskFn(): { ask: AskFn; close: () => void } {
+  // Segura o event loop explicitamente — impede o processo de terminar enquanto aguarda input
+  process.stdin.resume();
+  process.stdin.ref();
+
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
-    terminal: process.stdout.isTTY,
+    crlfDelay: Infinity,
+    terminal: true,
   });
 
-  // Fila de perguntas — processa uma por vez
   const queue: Array<{ question: string; resolve: (answer: string) => void }> = [];
   let busy = false;
+  let closed = false;
 
   function next() {
-    if (busy || queue.length === 0) return;
+    if (busy || queue.length === 0 || closed) return;
     busy = true;
     const { question, resolve } = queue.shift()!;
     rl.question(question, answer => {
@@ -88,7 +93,14 @@ function createAskFn(): { ask: AskFn; close: () => void } {
       next();
     });
 
-  return { ask, close: () => rl.close() };
+  return {
+    ask,
+    close: () => {
+      closed = true;
+      process.stdin.unref();
+      rl.close();
+    },
+  };
 }
 
 async function runGeneration(
