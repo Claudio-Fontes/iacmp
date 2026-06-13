@@ -240,7 +240,7 @@ function tsConfig(corePath: string): string {
 }
 
 function gitignore(): string {
-  return ['node_modules/', 'dist/', 'synth-out/', 'audit/', '*.js.map', '*.d.ts', '.DS_Store', '.env'].join('\n') + '\n';
+  return ['node_modules/', 'dist/', 'synth-out/', 'audit/', '*.js.map', '*.d.ts', '.DS_Store', '.env', '.iacmp/'].join('\n') + '\n';
 }
 
 function dotenv(): string {

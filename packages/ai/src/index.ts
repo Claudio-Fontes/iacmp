@@ -17,3 +17,5 @@ export { writeGeneratedFiles } from './tools/file-writer';
 export { renderAndConfirm, FileDiff } from './tools/diff-renderer';
 export { runSynth } from './tools/synth-runner';
 export { readProjectContext } from './tools/context-reader';
+export { loadSession, saveSession, clearSession } from './tools/session-store';
+export { getCached, setCache, clearCache } from './tools/response-cache';

@@ -19,6 +19,12 @@ import {
   printNextSteps,
   buildSystemPrompt,
   AIGeneratedResponse,
+  loadSession,
+  saveSession,
+  clearSession,
+  getCached,
+  setCache,
+  clearCache,
 } from '@iacmp/ai';
 
 function resolveAIProvider(): AIProvider {
@@ -56,26 +62,36 @@ async function runGeneration(
   cwd: string,
   dryRun: boolean,
   iacProvider: string,
-  rl: readline.Interface
+  rl: readline.Interface,
+  lastUserPrompt: string
 ): Promise<AIGeneratedResponse | null> {
   const rawChunks: string[] = [];
 
-  // Spinner durante o stream — sem mostrar JSON cru
-  const spinner = ora({ text: 'Gerando...', spinner: 'dots' }).start();
+  // Verifica cache antes de chamar a API
+  const cached = getCached(cwd, lastUserPrompt);
+  let raw: string;
 
-  try {
-    await provider.stream(session.getMessages(), chunk => {
-      rawChunks.push(chunk);
-    });
-  } catch (err) {
-    spinner.fail('Erro ao chamar a IA: ' + (err as Error).message);
-    return null;
+  if (cached) {
+    console.log(chalk.dim('  ↩ resposta do cache'));
+    raw = cached;
+    session.addAssistantMessage(raw);
+  } else {
+    const spinner = ora({ text: 'Gerando...', spinner: 'dots' }).start();
+
+    try {
+      await provider.stream(session.getMessages(), chunk => {
+        rawChunks.push(chunk);
+      });
+    } catch (err) {
+      spinner.fail('Erro ao chamar a IA: ' + (err as Error).message);
+      return null;
+    }
+
+    spinner.succeed('Resposta recebida');
+    raw = rawChunks.join('');
+    session.addAssistantMessage(raw);
+    setCache(cwd, lastUserPrompt, raw);
   }
-
-  spinner.succeed('Resposta recebida');
-
-  const raw = rawChunks.join('');
-  session.addAssistantMessage(raw);
 
   let parsed: AIGeneratedResponse;
   try {
@@ -128,7 +144,6 @@ async function runGeneration(
   printNextSteps(parsed.nextSteps);
 
   if (!dryRun && parsed.files.length > 0) {
-    // Usa o rl compartilhado do chat para não fechar o stdin
     const answer = await new Promise<string>(resolve =>
       rl.question('Quer rodar `iacmp synth` agora? (y/n) ', ans => resolve(ans.trim()))
     );
@@ -182,8 +197,6 @@ export default class AI extends Command {
       this.error((err as Error).message);
     }
 
-    const projectContext = readProjectContext(cwd);
-    const contextualProvider = createContextualProvider(aiProvider, projectContext);
     const session = new ChatSession();
 
     if (flags.chat) {
@@ -192,10 +205,11 @@ export default class AI extends Command {
       if (!args.prompt) {
         this.error('Informe o prompt ou use --chat para modo interativo.\nExemplo: iacmp ai "cria uma Lambda com API Gateway"');
       }
-      // Modo direto: cria rl só para a pergunta de synth e fecha depois
       const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      const projectContext = readProjectContext(cwd);
+      const provider = createContextualProvider(aiProvider, projectContext);
       session.addUserMessage(args.prompt);
-      await runGeneration(contextualProvider, session, cwd, dryRun, iacProvider, rl);
+      await runGeneration(provider, session, cwd, dryRun, iacProvider, rl, args.prompt);
       rl.close();
     }
   }
@@ -207,10 +221,19 @@ export default class AI extends Command {
     dryRun: boolean,
     iacProvider: string
   ): Promise<void> {
-    console.log(chalk.cyan.bold('\niacmp ai — Modo Chat Interativo'));
-    console.log(chalk.dim('Comandos: /sair, /quit — encerra | /limpar — limpa histórico\n'));
+    // Carrega sessão anterior
+    const previousMessages = loadSession(cwd);
+    if (previousMessages.length > 0) {
+      for (const msg of previousMessages) {
+        if (msg.role === 'user') session.addUserMessage(msg.content);
+        else session.addAssistantMessage(msg.content);
+      }
+      console.log(chalk.dim(`\n  Sessão anterior carregada (${previousMessages.length} mensagens)`));
+    }
 
-    // rl único para toda a sessão — não fecha entre turnos
+    console.log(chalk.cyan.bold('\niacmp ai — Modo Chat Interativo'));
+    console.log(chalk.dim('Comandos: /sair, /quit — encerra | /limpar — limpa sessão e cache\n'));
+
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
     const askLine = (): Promise<string> =>
@@ -233,17 +256,25 @@ export default class AI extends Command {
 
       if (input === '/limpar') {
         session.clear();
-        console.log(chalk.dim('Histórico limpo.\n'));
+        clearSession(cwd);
+        clearCache(cwd);
+        console.log(chalk.dim('Sessão e cache limpos.\n'));
         continue;
       }
 
       session.addUserMessage(input);
 
-      // Reler contexto do projeto a cada turno — captura arquivos gerados na sessão
+      // Salva sessão após cada mensagem do usuário
+      saveSession(cwd, session.getMessages());
+
+      // Reler contexto a cada turno — captura arquivos gerados nesta sessão
       const freshContext = readProjectContext(cwd);
       const freshProvider = createContextualProvider(aiProvider, freshContext);
 
-      await runGeneration(freshProvider, session, cwd, dryRun, iacProvider, rl);
+      await runGeneration(freshProvider, session, cwd, dryRun, iacProvider, rl, input);
+
+      // Salva sessão após resposta da IA
+      saveSession(cwd, session.getMessages());
 
       console.log('');
     }
