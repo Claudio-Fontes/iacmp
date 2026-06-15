@@ -14,6 +14,9 @@ const PROJECT_SIGNALS = [
   'stack existente', 'arquivo existente', 'já tenho', 'já criei',
   'stacks/', 'corrigir', 'atualizar', 'modificar', 'remover', 'deletar',
   'adicionar à', 'adicionar na', 'alterar', 'mudar',
+  // Referências a arquivos específicos do projeto
+  'meu arquivo', 'minha função', 'minha tabela', 'meu serviço',
+  'no projeto', 'no meu projeto', 'da minha stack',
 ];
 
 // Termos que sinalizam que a query é sobre a API dos constructs iacmp
@@ -25,6 +28,9 @@ const DOCS_SIGNALS = [
   'messaging.', 'events.', 'workflow.', 'policy.', 'secret.',
   'certificate.', 'monitoring.', 'logging.',
   'stack.', '@iacmp/core',
+  // Perguntas sobre "o que é" e "como funciona" um construct iacmp
+  'explica o construct', 'explica a stack', 'o que é o construct',
+  'como funciona o construct', 'como funciona a stack',
 ];
 
 // Termos que sinalizam que a query é sobre conhecimento de plataforma
@@ -41,6 +47,21 @@ const KNOWLEDGE_SIGNALS = [
   'vpc', 'subnet', 'cidr', 'nat gateway', 'private endpoint',
   'timeout', 'concorrência', 'throughput', 'iops', 'latência',
   'backup', 'replicação', 'consistência',
+  // Serviços Azure
+  'azure functions', 'blob storage', 'cosmos db', 'aks', 'app service',
+  'service bus', 'event grid', 'event hubs', 'key vault', 'vnet', 'nsg',
+  'application gateway', 'azure front door', 'azure sql', 'managed identity',
+  // Serviços GCP
+  'cloud run', 'cloud functions', 'gke', 'cloud sql', 'bigtable', 'firestore',
+  'pub/sub', 'pubsub', 'cloud storage', 'spanner', 'bigquery', 'cloud armor',
+  'compute engine', 'cloud build', 'artifact registry', 'cloud run jobs',
+  // Perguntas de equivalência entre clouds (sinal forte de knowledge corpus)
+  'equivalente', 'equivalência', 'igual a', 'similar a', 'parecido com',
+  'como é no', 'como seria no', 'no azure', 'no gcp', 'no google cloud',
+  'na aws', 'na amazon', 'qual é o', 'qual seria o',
+  // Perguntas explicativas sobre serviços de cloud
+  'o que é', 'o que faz', 'para que serve', 'como funciona',
+  'explica', 'explique', 'diferença entre', 'quando usar',
 ];
 
 function containsSignal(query: string, signals: string[]): boolean {
