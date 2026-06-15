@@ -85,13 +85,24 @@ async function runGeneration(
   lastUserPrompt: string
 ): Promise<AIGeneratedResponse | null> {
   const cached = getCached(cwd, lastUserPrompt);
-  let raw: string;
+  let raw: string = '';
+  let fromCache = false;
 
   if (cached) {
-    console.log(chalk.dim('  ↩ resposta do cache'));
-    raw = cached;
-    session.addAssistantMessage(raw);
-  } else {
+    // Só usa o cache se o conteúdo for JSON válido
+    try {
+      extractResponse(cached);
+      console.log(chalk.dim('  ↩ resposta do cache'));
+      raw = cached;
+      fromCache = true;
+      session.addAssistantMessage(raw);
+    } catch {
+      // Cache envenenado — descarta
+      raw = '';
+    }
+  }
+
+  if (!raw) {
     const spinner = ora({ text: 'Gerando...', spinner: 'dots' }).start();
     const chunks: string[] = [];
     try {
@@ -103,15 +114,20 @@ async function runGeneration(
     spinner.succeed('Resposta recebida');
     raw = chunks.join('');
     session.addAssistantMessage(raw);
-    setCache(cwd, lastUserPrompt, raw);
   }
 
   let parsed: AIGeneratedResponse;
   try {
     parsed = extractResponse(raw);
-  } catch (err) {
-    console.error(chalk.red('Erro ao extrair resposta: ' + (err as Error).message));
+  } catch {
+    // Resposta conversacional — exibe como texto sem gravar no cache
+    console.log('\n' + raw.trim() + '\n');
     return null;
+  }
+
+  // Só grava no cache após parse bem-sucedido
+  if (!fromCache) {
+    setCache(cwd, lastUserPrompt, raw);
   }
 
   const tsFiles = parsed.files.filter(f => f.path.endsWith('.ts'));

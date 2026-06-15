@@ -123,12 +123,23 @@ async function runGeneration(provider, session, lastPrompt) {
   let acted = false;
   const cached = getCached(cwd, lastPrompt);
   let raw;
+  let fromCache = false;
 
   if (cached) {
-    console.log(chalk.dim('  ↩ resposta do cache'));
-    raw = cached;
-    session.addAssistantMessage(raw);
-  } else {
+    // Valida antes de usar o cache: só reutiliza se for JSON válido
+    try {
+      extractResponse(cached);
+      process.stderr.write(chalk.dim('  ↩ resposta do cache\n'));
+      raw = cached;
+      fromCache = true;
+      session.addAssistantMessage(raw);
+    } catch {
+      // Cache contém resposta inválida — descarta e chama o modelo
+      clearCache(cwd);
+    }
+  }
+
+  if (!raw) {
     process.stderr.write(chalk.dim('Gerando...\n'));
     const chunks = [];
     try {
@@ -139,15 +150,21 @@ async function runGeneration(provider, session, lastPrompt) {
     }
     raw = chunks.join('');
     session.addAssistantMessage(raw);
-    setCache(cwd, lastPrompt, raw);
   }
 
   let parsed;
   try {
     parsed = extractResponse(raw);
-  } catch (err) {
-    console.error(chalk.red('Erro ao extrair resposta: ' + err.message));
-    return;
+  } catch {
+    // Resposta conversacional (não é JSON) — exibe como texto e segue
+    console.log('\n' + raw.trim() + '\n');
+    // Não grava no cache respostas que não são JSON
+    return false;
+  }
+
+  // Só grava no cache depois de confirmar que o parse teve sucesso
+  if (!fromCache) {
+    setCache(cwd, lastPrompt, raw);
   }
 
   // Valida TypeScript
@@ -184,11 +201,6 @@ async function runGeneration(provider, session, lastPrompt) {
 
   printNextSteps(parsed.nextSteps);
   return acted;
-
-  if (!dryRun && parsed.files.length > 0) {
-    const ans = await ask('Quer rodar `iacmp synth` agora? (y/n) ');
-    if (ans === 'y') runSynth(cwd, iacProvider);
-  }
 }
 
 async function main() {

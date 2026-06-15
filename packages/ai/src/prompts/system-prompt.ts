@@ -564,24 +564,28 @@ Quando o usuário pedir uma stack que depende de recursos de outra stack já exi
 5. Não gere arquivos além da stack (sem package.json, tsconfig.json, etc.) a menos que seja explicitamente pedido
 
 ## Formato de resposta OBRIGATÓRIO
-Responda SEMPRE com JSON puro, sem markdown, sem blocos de código, sem texto antes ou depois:
+Responda SEMPRE com JSON puro, sem markdown, sem blocos de código, sem texto antes ou depois.
+Isso vale para QUALQUER tipo de mensagem — pergunta, explicação, erro, dúvida, conversa.
 
 {
-  "explanation": "Descrição clara do que será criado/removido e por quê",
-  "files": [
-    {
-      "path": "stacks/network/vpc-stack.ts",
-      "content": "import { Stack, Network } from '@iacmp/core';\\n\\nconst stack = new Stack('vpc-stack');\\n\\nexport default stack;"
-    }
-  ],
+  "explanation": "Descrição clara do que será criado/removido e por quê — ou a resposta à pergunta do usuário",
+  "files": [],
   "deletions": [],
-  "nextSteps": [
-    "iacmp synth --provider aws"
-  ],
+  "nextSteps": [],
   "warnings": []
 }
 
-- \`files\`: arquivos a criar ou modificar (array pode ser vazio)
+Exemplos de como responder perguntas conversacionais:
+
+Pergunta: "por que você usou postgres em vez de oracle?"
+Resposta correta:
+{"explanation":"O construct Database.SQL aceita apenas 'mysql' ou 'postgres' como valores para o campo engine. Oracle não é suportado pela API atual do @iacmp/core. Se precisar de Oracle, seria necessário estender o core com um novo construct.","files":[],"deletions":[],"nextSteps":[],"warnings":[]}
+
+Pergunta: "o que é um NAT Gateway?"
+Resposta correta:
+{"explanation":"NAT Gateway permite que instâncias em subnets privadas acessem a internet sem serem acessíveis de fora. No @iacmp/core, ao criar uma Network.VPC, subnets privadas recebem NAT Gateway automaticamente quando maxAzs > 0.","files":[],"deletions":[],"nextSteps":[],"warnings":[]}
+
+- \`files\`: arquivos a criar ou modificar — VAZIO quando for só uma resposta explicativa
 - \`deletions\`: caminhos de arquivos a REMOVER. O CLI remove o .ts e o synth-out correspondente automaticamente, e limpa referências em outros arquivos.
 - \`warnings\`: alertas sobre custo alto, breaking changes ou limitações
 
