@@ -25,6 +25,32 @@ const INSTANCE_TYPE_MAP: Record<string, string> = {
   large: 'Standard_B4ms',
 };
 
+interface AzureImageRef {
+  publisher: string;
+  offer: string;
+  sku: string;
+  version: string;
+  isWindows: boolean;
+}
+
+const IMAGE_MAP: Record<string, AzureImageRef> = {
+  'ubuntu': { publisher: 'Canonical', offer: 'UbuntuServer', sku: '22_04-lts', version: 'latest', isWindows: false },
+  'ubuntu-22.04': { publisher: 'Canonical', offer: 'UbuntuServer', sku: '22_04-lts', version: 'latest', isWindows: false },
+  'ubuntu-20.04': { publisher: 'Canonical', offer: 'UbuntuServer', sku: '20_04-lts', version: 'latest', isWindows: false },
+  'windows-2022': { publisher: 'MicrosoftWindowsServer', offer: 'WindowsServer', sku: '2022-Datacenter', version: 'latest', isWindows: true },
+  'windows-2019': { publisher: 'MicrosoftWindowsServer', offer: 'WindowsServer', sku: '2019-Datacenter', version: 'latest', isWindows: true },
+  'windows-2016': { publisher: 'MicrosoftWindowsServer', offer: 'WindowsServer', sku: '2016-Datacenter', version: 'latest', isWindows: true },
+};
+
+function resolveAzureImage(image: string): { imageReference: Record<string, unknown>; isWindows: boolean } {
+  const mapped = IMAGE_MAP[image];
+  if (mapped) {
+    const { isWindows, ...ref } = mapped;
+    return { imageReference: ref, isWindows };
+  }
+  return { imageReference: { offer: image }, isWindows: false };
+}
+
 const CACHE_SKU_MAP: Record<string, { name: string; family: string; capacity: number }> = {
   small: { name: 'Standard', family: 'C', capacity: 1 },
   medium: { name: 'Standard', family: 'C', capacity: 2 },
@@ -42,7 +68,8 @@ function synthesizeConstruct(construct: BaseConstruct): ARMResource[] {
   switch (construct.type) {
 
     // ── Compute ──────────────────────────────────────────────────────────
-    case 'Compute.Instance':
+    case 'Compute.Instance': {
+      const { imageReference, isWindows } = resolveAzureImage(props.image as string ?? 'ubuntu');
       return [{
         type: 'Microsoft.Compute/virtualMachines',
         apiVersion: '2023-03-01',
@@ -51,12 +78,18 @@ function synthesizeConstruct(construct: BaseConstruct): ARMResource[] {
         tags: tag(construct.id),
         properties: {
           hardwareProfile: { vmSize: INSTANCE_TYPE_MAP[props.instanceType as string] ?? 'Standard_B1s' },
-          storageProfile: { imageReference: { offer: props.image as string } },
-          osProfile: { computerName: construct.id, adminUsername: 'azureuser' },
+          storageProfile: { imageReference },
+          osProfile: {
+            computerName: construct.id,
+            adminUsername: isWindows ? 'adminuser' : 'azureuser',
+            ...(isWindows ? { windowsConfiguration: { provisionVMAgent: true, enableAutomaticUpdates: true } } : { linuxConfiguration: { disablePasswordAuthentication: true } }),
+          },
         },
       }];
+    }
 
     case 'Compute.AutoScaling': {
+      const { imageReference: asImageRef, isWindows: asIsWindows } = resolveAzureImage(props.image as string ?? 'ubuntu');
       const vmssBody: ARMResource = {
         type: 'Microsoft.Compute/virtualMachineScaleSets',
         apiVersion: '2023-03-01',
@@ -72,15 +105,12 @@ function synthesizeConstruct(construct: BaseConstruct): ARMResource[] {
           overprovision: true,
           upgradePolicy: { mode: 'Automatic' },
           virtualMachineProfile: {
-            storageProfile: {
-              imageReference: {
-                publisher: 'Canonical',
-                offer: 'UbuntuServer',
-                sku: '22_04-lts',
-                version: 'latest',
-              },
+            storageProfile: { imageReference: asImageRef },
+            osProfile: {
+              computerNamePrefix: construct.id.slice(0, 9),
+              adminUsername: asIsWindows ? 'adminuser' : 'azureuser',
+              ...(asIsWindows ? { windowsConfiguration: { provisionVMAgent: true, enableAutomaticUpdates: true } } : { linuxConfiguration: { disablePasswordAuthentication: true } }),
             },
-            osProfile: { computerNamePrefix: construct.id.slice(0, 9), adminUsername: 'azureuser' },
           },
         },
       };

@@ -11,6 +11,9 @@ const AMI_MAP: Record<string, string> = {
   'ubuntu-22.04': 'data.aws_ami.ubuntu.id',
   'amazon-linux-2': 'data.aws_ami.amazon_linux.id',
   'amazon-linux-2023': 'data.aws_ami.amazon_linux_2023.id',
+  'windows-2022': 'data.aws_ami.windows_2022.id',
+  'windows-2019': 'data.aws_ami.windows_2019.id',
+  'windows-2016': 'data.aws_ami.windows_2016.id',
 };
 
 const CACHE_NODE_TYPE_MAP: Record<string, string> = {

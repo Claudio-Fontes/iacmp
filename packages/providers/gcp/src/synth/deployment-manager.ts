@@ -16,6 +16,20 @@ const INSTANCE_TYPE_MAP: Record<string, string> = {
   large: 'e2-standard-4',
 };
 
+const GCP_IMAGE_MAP: Record<string, string> = {
+  'ubuntu': 'projects/ubuntu-os-cloud/global/images/family/ubuntu-2204-lts',
+  'ubuntu-22.04': 'projects/ubuntu-os-cloud/global/images/family/ubuntu-2204-lts',
+  'ubuntu-20.04': 'projects/ubuntu-os-cloud/global/images/family/ubuntu-2004-lts',
+  'windows-2022': 'projects/windows-cloud/global/images/family/windows-2022',
+  'windows-2019': 'projects/windows-cloud/global/images/family/windows-2019',
+  'windows-2016': 'projects/windows-cloud/global/images/family/windows-2016',
+};
+
+function resolveGcpImage(image: string | undefined): string {
+  if (!image) return 'projects/ubuntu-os-cloud/global/images/family/ubuntu-2204-lts';
+  return GCP_IMAGE_MAP[image] ?? `global/images/${image}`;
+}
+
 const CACHE_TIER_MAP: Record<string, string> = {
   small: 'BASIC',
   medium: 'STANDARD_HA',
@@ -62,7 +76,7 @@ function synthesizeConstruct(construct: BaseConstruct): GCPResource[] {
             boot: true,
             autoDelete: true,
             initializeParams: {
-              sourceImage: `global/images/${(props.image as string) ?? 'ubuntu-2204-lts'}`,
+              sourceImage: resolveGcpImage(props.image as string),
             },
           }],
           networkInterfaces: [{ network: 'global/networks/default' }],
@@ -83,7 +97,7 @@ function synthesizeConstruct(construct: BaseConstruct): GCPResource[] {
                 boot: true,
                 autoDelete: true,
                 initializeParams: {
-                  sourceImage: `global/images/${(props.image as string) ?? 'ubuntu-2204-lts'}`,
+                  sourceImage: resolveGcpImage(props.image as string),
                 },
               }],
               networkInterfaces: [{ network: 'global/networks/default' }],

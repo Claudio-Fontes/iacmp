@@ -23,7 +23,7 @@ import { Stack, Compute } from '@iacmp/core';
 const stack = new Stack('nome');
 new Compute.Instance(stack, 'LogicalId', {
   instanceType: 'small' | 'medium' | 'large',
-  image: string,
+  image: string,   // ver valores suportados abaixo
   region?: string,
 });
 export default stack;
@@ -33,7 +33,7 @@ export default stack;
 \`\`\`typescript
 new Compute.AutoScaling(stack, 'LogicalId', {
   instanceType: 'small' | 'medium' | 'large',
-  image: string,
+  image: string,   // ver valores suportados abaixo
   minCapacity: number,    // obrigatório
   maxCapacity: number,    // obrigatório
   desiredCapacity?: number,
@@ -41,6 +41,19 @@ new Compute.AutoScaling(stack, 'LogicalId', {
   subnetIds?: string[],
 });
 \`\`\`
+
+**Valores de \`image\` suportados (atalhos automáticos por provider):**
+| image | AWS | Azure | GCP |
+|---|---|---|---|
+| \`ubuntu\` / \`ubuntu-22.04\` | SSM → Ubuntu 22.04 AMI | Canonical UbuntuServer 22_04-lts | ubuntu-os-cloud/ubuntu-2204-lts |
+| \`ubuntu-20.04\` | SSM → Ubuntu 20.04 AMI | Canonical UbuntuServer 20_04-lts | ubuntu-os-cloud/ubuntu-2004-lts |
+| \`amazon-linux-2\` | SSM → Amazon Linux 2 AMI | — | — |
+| \`amazon-linux-2023\` | SSM → AL2023 AMI | — | — |
+| \`windows-2022\` | SSM → Windows Server 2022 AMI | MicrosoftWindowsServer 2022-Datacenter | windows-cloud/windows-2022 |
+| \`windows-2019\` | SSM → Windows Server 2019 AMI | MicrosoftWindowsServer 2019-Datacenter | windows-cloud/windows-2019 |
+| \`windows-2016\` | SSM → Windows Server 2016 AMI | MicrosoftWindowsServer 2016-Datacenter | windows-cloud/windows-2016 |
+
+Para Windows, o Azure configura automaticamente \`adminUsername: 'adminuser'\` e \`windowsConfiguration\` em vez de \`linuxConfiguration\`.
 
 ### Compute.Container — ECS/Fargate, ACI, Cloud Run
 \`\`\`typescript
