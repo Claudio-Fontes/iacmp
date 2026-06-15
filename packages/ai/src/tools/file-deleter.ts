@@ -1,10 +1,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import * as cp from 'child_process';
 import chalk from 'chalk';
 import { AskFn } from './diff-renderer';
 
-// Para cada arquivo a remover, também apaga o artefato gerado correspondente
-// ex: stacks/compute/foo-stack.ts → synth-out/foo-stack.json
 function synthOutPath(filePath: string, projectDir: string): string | null {
   const basename = path.basename(filePath).replace(/\.(ts|js)$/, '');
   const candidates = [
@@ -17,7 +16,6 @@ function synthOutPath(filePath: string, projectDir: string): string | null {
   return null;
 }
 
-// Remove referências a um nome de stack em outros arquivos .ts do projeto
 function removeReferences(stackName: string, projectDir: string): string[] {
   const modified: string[] = [];
   const stacksDir = path.join(projectDir, 'stacks');
@@ -36,7 +34,6 @@ function removeReferences(stackName: string, projectDir: string): string[] {
 
   for (const file of findTs(stacksDir)) {
     const content = fs.readFileSync(file, 'utf-8');
-    // Procura por import ou referência ao nome da stack
     const pattern = new RegExp(
       `(import[^;]*from\\s*['"][^'"]*${stackName}[^'"]*['"]\\s*;?\\n?)|(.*${stackName}.*)`,
       'g'
@@ -55,19 +52,37 @@ function removeReferences(stackName: string, projectDir: string): string[] {
 export async function deleteFiles(
   deletions: string[],
   projectDir: string,
+  iacProvider: string,
   ask: AskFn
 ): Promise<void> {
-  // Expande a lista: para cada .ts de stack, adiciona o synth-out correspondente
+  // Monta lista completa: .ts + synth-out correspondente
+  const stackFiles = deletions.filter(f => f.match(/\.(ts|js)$/) && f.includes('stacks/'));
+  const otherFiles = deletions.filter(f => !stackFiles.includes(f));
+
+  const seen = new Set<string>();
   const allToDelete: string[] = [];
-  for (const filePath of deletions) {
+  const synthOuts: string[] = [];
+
+  const add = (f: string) => { if (!seen.has(f)) { seen.add(f); allToDelete.push(f); } };
+
+  for (const filePath of stackFiles) {
     const full = path.join(projectDir, filePath);
-    if (fs.existsSync(full)) allToDelete.push(filePath);
+    if (fs.existsSync(full)) add(filePath);
     const synthOut = synthOutPath(filePath, projectDir);
-    if (synthOut) allToDelete.push(path.relative(projectDir, synthOut));
+    if (synthOut) {
+      const rel = path.relative(projectDir, synthOut);
+      add(rel);
+      if (!synthOuts.includes(rel)) synthOuts.push(rel);
+    }
+  }
+
+  for (const filePath of otherFiles) {
+    const full = path.join(projectDir, filePath);
+    if (fs.existsSync(full)) add(filePath);
   }
 
   if (allToDelete.length === 0) {
-    console.log(chalk.dim('  Nenhum arquivo encontrado para remover.\n'));
+    console.log(chalk.dim('\n  Nenhum arquivo encontrado para remover.\n'));
     return;
   }
 
@@ -78,8 +93,28 @@ export async function deleteFiles(
   }
   console.log('');
 
-  const answer = await ask('Confirmar remoção? [y/n] ');
-  if (answer.toLowerCase() !== 'y') {
+  // Pergunta se quer rodar destroy antes de apagar
+  if (synthOuts.length > 0) {
+    const runDestroy = await ask('Rodar `iacmp destroy` para remover os recursos na nuvem antes de apagar? [y/n] ');
+    if (runDestroy.toLowerCase() === 'y') {
+      for (const synthOut of synthOuts) {
+        const stackName = path.basename(synthOut).replace(/\.(json|tf)$/, '');
+        console.log(chalk.dim(`\n  Rodando destroy para ${stackName}...`));
+        try {
+          cp.execSync(`iacmp destroy --stack ${stackName} --provider ${iacProvider} --force`, {
+            cwd: projectDir,
+            stdio: 'inherit',
+          });
+        } catch {
+          console.log(chalk.yellow(`  ! destroy falhou para ${stackName} — continuando com remoção local`));
+        }
+      }
+    }
+  }
+
+  // Confirma remoção dos arquivos locais
+  const confirm = await ask('\nApagar arquivos locais? [y/n] ');
+  if (confirm.toLowerCase() !== 'y') {
     console.log(chalk.dim('  Remoção cancelada.\n'));
     return;
   }
@@ -95,7 +130,7 @@ export async function deleteFiles(
   }
 
   // Remove referências nos outros arquivos
-  for (const filePath of deletions) {
+  for (const filePath of stackFiles) {
     const stackName = path.basename(filePath).replace(/\.(ts|js)$/, '');
     const modified = removeReferences(stackName, projectDir);
     for (const f of modified) {

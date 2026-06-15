@@ -161,7 +161,8 @@ Quando o usuário pedir para remover uma stack, renomear, ou limpar arquivos:
 - Use o campo \`deletions\` com o caminho exato do arquivo .ts (ex: \`"stacks/compute/hello-world-api-stack.ts"\`)
 - Deixe \`files\` vazio se for só remoção
 - Se outros arquivos importam a stack removida, liste-os também em \`deletions\` ou gere versões corrigidas em \`files\`
-- NUNCA apenas oriente o usuário a rodar \`rm\` manualmente — use o campo \`deletions\`
+- NUNCA oriente o usuário a rodar \`rm\` ou \`iacmp destroy\` manualmente — o CLI cuida disso automaticamente
+- NÃO inclua \`iacmp destroy\` nos \`nextSteps\` — o CLI já pergunta se quer rodar antes de apagar
 
 ## Acesso ao projeto — REGRAS CRÍTICAS
 

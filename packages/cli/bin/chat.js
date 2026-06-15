@@ -172,7 +172,7 @@ async function runGeneration(provider, session, lastPrompt) {
   printWarnings(parsed.warnings);
 
   if (parsed.deletions && parsed.deletions.length > 0) {
-    await deleteFiles(parsed.deletions, cwd, ask);
+    await deleteFiles(parsed.deletions, cwd, iacProvider, ask);
   }
 
   if (parsed.files.length > 0) {
