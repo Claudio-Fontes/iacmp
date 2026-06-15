@@ -124,6 +124,69 @@ function mentionsRecent(query: string): boolean {
   );
 }
 
+// Detecta se a query menciona Azure especificamente
+function mentionsAzure(query: string): boolean {
+  const lower = query.toLowerCase();
+  return ['azure', 'microsoft azure', 'az '].some(s => lower.includes(s));
+}
+
+// Detecta se a query menciona GCP especificamente
+function mentionsGcp(query: string): boolean {
+  const lower = query.toLowerCase();
+  return ['gcp', 'google cloud', 'gcloud', 'cloud run', 'bigquery', 'cloud functions', 'pub/sub', 'pubsub', 'spanner'].some(
+    s => lower.includes(s),
+  );
+}
+
+// Extrai o nome do serviço Azure da query para filtrar preços
+// Mapeia termos comuns para o serviceName da Azure Pricing API
+function extractAzureServiceName(query: string): string | null {
+  const lower = query.toLowerCase();
+  const serviceMap: Array<[string[], string]> = [
+    [['functions', 'function app'], 'Azure Functions'],
+    [['app service', 'web app'], 'Azure App Service'],
+    [['sql database', 'azure sql'], 'SQL Database'],
+    [['cosmos', 'cosmosdb'], 'Azure Cosmos DB'],
+    [['blob', 'storage account'], 'Storage'],
+    [['kubernetes', 'aks'], 'Azure Kubernetes Service'],
+    [['container instance', 'aci'], 'Container Instances'],
+    [['virtual machine', 'vm ', 'vms '], 'Virtual Machines'],
+    [['redis', 'cache'], 'Azure Cache for Redis'],
+    [['service bus'], 'Service Bus'],
+    [['event hub'], 'Event Hubs'],
+    [['api management', 'apim'], 'API Management'],
+    [['postgresql', 'postgres'], 'Azure Database for PostgreSQL'],
+    [['mysql'], 'Azure Database for MySQL'],
+  ];
+
+  for (const [terms, serviceName] of serviceMap) {
+    if (terms.some(t => lower.includes(t))) return serviceName;
+  }
+  return null;
+}
+
+// Extrai o nome do serviço GCP da query para filtrar SKUs
+function extractGcpServiceId(query: string): string | null {
+  const lower = query.toLowerCase();
+  const serviceMap: Array<[string[], string]> = [
+    [['cloud run'], 'Cloud Run'],
+    [['cloud functions', 'functions'], 'Cloud Functions'],
+    [['bigquery'], 'BigQuery'],
+    [['gke', 'kubernetes', 'kubernetes engine'], 'Kubernetes Engine'],
+    [['cloud sql', 'sql'], 'Cloud SQL'],
+    [['spanner'], 'Cloud Spanner'],
+    [['pub/sub', 'pubsub'], 'Cloud Pub/Sub'],
+    [['compute engine', 'vm ', 'instância'], 'Compute Engine'],
+    [['cloud storage', 'gcs'], 'Cloud Storage'],
+    [['cloud bigtable', 'bigtable'], 'Cloud Bigtable'],
+  ];
+
+  for (const [terms, serviceId] of serviceMap) {
+    if (terms.some(t => lower.includes(t))) return serviceId;
+  }
+  return null;
+}
+
 // Fonte 1: AWS What's New RSS
 async function fetchAwsWhatsNew(cache: CacheStore): Promise<string> {
   const cacheKey = 'aws-whats-new';
@@ -205,7 +268,205 @@ async function fetchAwsPricing(query: string, cache: CacheStore): Promise<string
   return sections.join('\n\n');
 }
 
-// Fonte 3: Terraform Registry API — versão atual do provider AWS
+// Fonte 3: Azure Pricing API — preços por serviço (eastus como referência)
+// https://prices.azure.com/api/retail/prices?$filter=serviceName eq 'X' and armRegionName eq 'eastus'
+async function fetchAzurePricing(query: string, cache: CacheStore): Promise<string> {
+  const serviceName = extractAzureServiceName(query);
+  if (!serviceName) return '';
+
+  const cacheKey = `azure-pricing-${serviceName.toLowerCase().replace(/\s+/g, '-')}`;
+  const cached = getCached(cache, cacheKey);
+  if (cached !== null) return cached;
+
+  const filter = encodeURIComponent(
+    `serviceName eq '${serviceName}' and armRegionName eq 'eastus' and priceType eq 'Consumption'`,
+  );
+  const url = `https://prices.azure.com/api/retail/prices?$filter=${filter}&$top=10`;
+
+  const raw = await fetchWithTimeout(url);
+  if (!raw) return '';
+
+  try {
+    const data = JSON.parse(raw) as {
+      Items?: Array<{
+        skuName?: string;
+        retailPrice?: number;
+        unitOfMeasure?: string;
+        productName?: string;
+      }>;
+    };
+
+    if (!data.Items || data.Items.length === 0) return '';
+
+    const lines: string[] = [`### Azure ${serviceName} Pricing (East US)`];
+    let count = 0;
+    for (const item of data.Items) {
+      if (count >= 6) break;
+      const sku = item.skuName ?? item.productName ?? '';
+      const price = item.retailPrice;
+      const unit = item.unitOfMeasure ?? '';
+      if (sku && price !== undefined) {
+        lines.push(`  - ${sku}: $${price}/${unit}`);
+        count++;
+      }
+    }
+
+    if (lines.length <= 1) return '';
+    const result = lines.join('\n');
+    setCached(cache, cacheKey, result);
+    return result;
+  } catch {
+    return '';
+  }
+}
+
+// Fonte 4: Azure Updates RSS — novidades da plataforma Azure
+async function fetchAzureUpdates(cache: CacheStore): Promise<string> {
+  const cacheKey = 'azure-updates';
+  const cached = getCached(cache, cacheKey);
+  if (cached !== null) return cached;
+
+  const xml = await fetchWithTimeout('https://www.microsoft.com/releasecommunications/api/v2/azure/rss');
+  if (!xml) return '';
+
+  const text = parseRssText(xml, 5);
+  const result = text ? `### Azure Updates (recente)\n${text}` : '';
+  setCached(cache, cacheKey, result);
+  return result;
+}
+
+// Fonte 5: GCP Cloud Billing Catalog API — SKUs por serviço
+// https://cloudbilling.googleapis.com/v1/services (público, sem auth para listar serviços)
+// SKUs individuais: https://cloudbilling.googleapis.com/v1/services/{serviceId}/skus
+async function fetchGcpPricing(query: string, cache: CacheStore): Promise<string> {
+  const targetService = extractGcpServiceId(query);
+  if (!targetService) return '';
+
+  const cacheKey = `gcp-pricing-${targetService.toLowerCase().replace(/\s+/g, '-')}`;
+  const cached = getCached(cache, cacheKey);
+  if (cached !== null) return cached;
+
+  // Primeiro busca a lista de serviços para encontrar o serviceId
+  const servicesRaw = await fetchWithTimeout('https://cloudbilling.googleapis.com/v1/services?pageSize=200');
+  if (!servicesRaw) return '';
+
+  let serviceId: string | null = null;
+  try {
+    const servicesData = JSON.parse(servicesRaw) as {
+      services?: Array<{ name?: string; displayName?: string }>;
+    };
+
+    const match = (servicesData.services ?? []).find(
+      s => s.displayName?.toLowerCase().includes(targetService.toLowerCase()),
+    );
+    if (match?.name) {
+      // name é algo como "services/95FF-2EF5-5EA1"
+      serviceId = match.name;
+    }
+  } catch {
+    return '';
+  }
+
+  if (!serviceId) return '';
+
+  // Busca SKUs do serviço (limita a 10 para não pesar)
+  const skusRaw = await fetchWithTimeout(
+    `https://cloudbilling.googleapis.com/v1/${serviceId}/skus?pageSize=10&currencyCode=USD`,
+  );
+  if (!skusRaw) return '';
+
+  try {
+    const skusData = JSON.parse(skusRaw) as {
+      skus?: Array<{
+        description?: string;
+        pricingInfo?: Array<{
+          pricingExpression?: {
+            tieredRates?: Array<{
+              unitPrice?: { units?: string; nanos?: number };
+              startUsageAmount?: number;
+            }>;
+            usageUnit?: string;
+          };
+        }>;
+      }>;
+    };
+
+    if (!skusData.skus || skusData.skus.length === 0) return '';
+
+    const lines: string[] = [`### GCP ${targetService} Pricing (USD)`];
+    let count = 0;
+    for (const sku of skusData.skus) {
+      if (count >= 6) break;
+      const desc = sku.description;
+      const rate = sku.pricingInfo?.[0]?.pricingExpression?.tieredRates?.[0];
+      const unit = sku.pricingInfo?.[0]?.pricingExpression?.usageUnit ?? '';
+      if (desc && rate?.unitPrice) {
+        const units = Number(rate.unitPrice.units ?? 0);
+        const nanos = (rate.unitPrice.nanos ?? 0) / 1e9;
+        const price = units + nanos;
+        lines.push(`  - ${desc}: $${price.toFixed(6)}/${unit}`);
+        count++;
+      }
+    }
+
+    if (lines.length <= 1) return '';
+    const result = lines.join('\n');
+    setCached(cache, cacheKey, result);
+    return result;
+  } catch {
+    return '';
+  }
+}
+
+// Fonte 6: GCP Release Notes RSS — novidades por produto
+async function fetchGcpReleaseNotes(cache: CacheStore): Promise<string> {
+  const cacheKey = 'gcp-release-notes';
+  const cached = getCached(cache, cacheKey);
+  if (cached !== null) return cached;
+
+  // Feed público de release notes do GCP (Atom)
+  const xml = await fetchWithTimeout('https://cloud.google.com/feeds/gcp-release-notes.xml');
+  if (!xml) return '';
+
+  // Feed Atom usa <entry> em vez de <item>
+  const text = parseAtomText(xml, 5);
+  const result = text ? `### GCP Release Notes (recente)\n${text}` : '';
+  setCached(cache, cacheKey, result);
+  return result;
+}
+
+// Parse básico de Atom feed (GCP usa Atom, não RSS)
+function parseAtomText(xml: string, maxItems = 5): string {
+  const items: string[] = [];
+  const entryRegex = /<entry[^>]*>([\s\S]*?)<\/entry>/gi;
+  const titleRegex = /<title[^>]*>(.*?)<\/title>/i;
+  const summaryRegex = /<summary[^>]*>([\s\S]*?)<\/summary>/i;
+
+  let match: RegExpExecArray | null;
+  let count = 0;
+
+  while ((match = entryRegex.exec(xml)) !== null && count < maxItems) {
+    const entryContent = match[1];
+    const titleMatch = titleRegex.exec(entryContent);
+    const summaryMatch = summaryRegex.exec(entryContent);
+
+    const title = (titleMatch?.[1] ?? '').replace(/<[^>]+>/g, '').trim();
+    const summary = (summaryMatch?.[1] ?? '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 200);
+
+    if (title) {
+      items.push(summary ? `- ${title}: ${summary}` : `- ${title}`);
+      count++;
+    }
+  }
+
+  return items.join('\n');
+}
+
+// Fonte 7: Terraform Registry API — versão atual do provider AWS
 async function fetchTerraformProviderVersion(cache: CacheStore): Promise<string> {
   const cacheKey = 'tf-aws-provider-version';
   const cached = getCached(cache, cacheKey);
@@ -242,22 +503,39 @@ export async function fetchLive(
   const sigSet = new Set(signals);
 
   try {
-    // AWS What's New: quando query menciona recente/novidades
-    if (mentionsRecent(query) || sigSet.has('recent')) {
-      const result = await fetchAwsWhatsNew(cache);
-      if (result) parts.push(result);
-    }
+    const isRecent = mentionsRecent(query) || sigSet.has('recent');
+    const isPrice  = mentionsPrice(query)  || sigSet.has('price');
+    const isAzure  = mentionsAzure(query)  || sigSet.has('azure');
+    const isGcp    = mentionsGcp(query)    || sigSet.has('gcp');
+    const isTf     = mentionsTerraform(query) || sigSet.has('terraform');
 
-    // AWS Pricing: quando query menciona preço/custo
-    if (mentionsPrice(query) || sigSet.has('price')) {
-      const result = await fetchAwsPricing(query, cache);
-      if (result) parts.push(result);
-    }
+    // Dispara fontes em paralelo para não somar os timeouts
+    const fetches: Array<Promise<string>> = [];
 
-    // Terraform Registry: quando query menciona Terraform
-    if (mentionsTerraform(query) || sigSet.has('terraform')) {
-      const result = await fetchTerraformProviderVersion(cache);
-      if (result) parts.push(result);
+    // AWS What's New
+    if (isRecent && !isAzure && !isGcp) fetches.push(fetchAwsWhatsNew(cache));
+
+    // AWS Pricing
+    if (isPrice && !isAzure && !isGcp) fetches.push(fetchAwsPricing(query, cache));
+
+    // Azure Pricing
+    if (isPrice && isAzure) fetches.push(fetchAzurePricing(query, cache));
+
+    // Azure Updates (novidades)
+    if (isRecent && isAzure) fetches.push(fetchAzureUpdates(cache));
+
+    // GCP Pricing
+    if (isPrice && isGcp) fetches.push(fetchGcpPricing(query, cache));
+
+    // GCP Release Notes
+    if (isRecent && isGcp) fetches.push(fetchGcpReleaseNotes(cache));
+
+    // Terraform Registry
+    if (isTf) fetches.push(fetchTerraformProviderVersion(cache));
+
+    const results = await Promise.all(fetches);
+    for (const r of results) {
+      if (r) parts.push(r);
     }
   } finally {
     saveCache(cache, options.projectDir);
@@ -268,10 +546,17 @@ export async function fetchLive(
 
 // Sinais que ativam o live retriever no query-router
 export const LIVE_SIGNALS = [
-  'preço', 'preco', 'custo', 'quanto custa',
+  // Preço / custo
+  'preço', 'preco', 'custo', 'quanto custa', 'valor', 'pricing',
+  // Novidades / recente
   'lançou', 'lancou', 'novidade', 'recente', 'novo serviço', 'novo recurso', 'anunciou',
-  'versão atual', 'versao atual', 'terraform provider', 'terraform aws',
-  'what\'s new', 'whats new',
+  'versão atual', 'versao atual', "what's new", 'whats new', 'release notes', 'release note',
+  // Terraform
+  'terraform provider', 'terraform aws', 'terraform azure', 'terraform gcp',
+  // Azure (específicos que indicam contexto Azure + info ao vivo)
+  'azure functions preço', 'app service custo', 'cosmos db custo', 'azure sql preço',
+  // GCP (específicos)
+  'cloud run preço', 'bigquery custo', 'gke preço', 'cloud sql gcp',
 ];
 
 // Verifica se a query contém sinais que ativam o live retriever
