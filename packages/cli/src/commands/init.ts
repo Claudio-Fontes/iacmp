@@ -7,19 +7,25 @@ import * as path from 'path';
 // Templates de stack — embutidos no CLI, funcionam após npm install -g iacmp
 // ---------------------------------------------------------------------------
 
+interface TemplateFile {
+  path: string;   // relativo à raiz do projeto, ex: 'stacks/compute/hello-fn.ts'
+  content: (projectName: string) => string;
+}
+
 interface Template {
   description: string;
   constructs: string[];    // lista para exibir no --list
-  stackContent: (projectName: string) => string;
+  stackContent: (projectName: string) => string;  // arquivo principal (mantém compatibilidade)
+  extraFiles?: TemplateFile[];                     // arquivos adicionais
 }
 
 const TEMPLATES: Record<string, Template> = {
   default: {
-    description: 'Lambda Hello World exposta via API Gateway REST',
+    description: 'Lambda Hello World exposta via API Gateway REST (arquivos separados)',
     constructs: ['Fn.Lambda', 'Fn.ApiGateway'],
     stackContent: (name) => `import { Stack, Fn } from '@iacmp/core';
 
-const stack = new Stack('${name}');
+const stack = new Stack('${name}-lambda');
 
 new Fn.Lambda(stack, 'HelloWorldFn', {
   runtime: 'nodejs20',
@@ -28,6 +34,15 @@ new Fn.Lambda(stack, 'HelloWorldFn', {
   memory: 128,
   timeout: 10,
 });
+
+export default stack;
+`,
+    extraFiles: [
+      {
+        path: 'stacks/api-gateway-stack.ts',
+        content: (name) => `import { Stack, Fn } from '@iacmp/core';
+
+const stack = new Stack('${name}-api');
 
 new Fn.ApiGateway(stack, 'HelloWorldApi', {
   name: '${name}-api',
@@ -46,6 +61,8 @@ new Fn.ApiGateway(stack, 'HelloWorldApi', {
 
 export default stack;
 `,
+      },
+    ],
   },
 
   rds: {
@@ -444,6 +461,15 @@ export default class Init extends Command {
 
       // stack (usa o template escolhido)
       fs.writeFileSync(path.join(stacksDir, stackFileName), template.stackContent(projectName));
+
+      // arquivos extras do template (ex: stacks separadas)
+      if (template.extraFiles) {
+        for (const extra of template.extraFiles) {
+          const extraPath = path.join(projectDir, extra.path);
+          fs.mkdirSync(path.dirname(extraPath), { recursive: true });
+          fs.writeFileSync(extraPath, extra.content(projectName));
+        }
+      }
 
       // test/
       const testDir = path.join(projectDir, 'test');
