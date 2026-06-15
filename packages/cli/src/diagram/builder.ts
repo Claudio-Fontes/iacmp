@@ -2,21 +2,37 @@ import { Stack, BaseConstruct } from '@iacmp/core';
 import { DiagramModel, DiagramStack, DiagramNode, DiagramRelationship } from './model';
 
 const TYPE_META: Record<string, { emoji: string; technology: string }> = {
-  'Compute.Instance':       { emoji: '⚙️',  technology: 'Virtual Machine'    },
-  'Storage.Bucket':         { emoji: '🗂️',  technology: 'Object Storage'     },
-  'Network.VPC':            { emoji: '🌐',  technology: 'Virtual Network'    },
-  'Network.Subnet':         { emoji: '🔀',  technology: 'Subnet'             },
-  'Network.SecurityGroup':  { emoji: '🛡️',  technology: 'Security Group'     },
-  'Network.WAF':            { emoji: '🔒',  technology: 'WAF'                },
-  'Database.SQL':           { emoji: '🗄️',  technology: 'Relational DB'      },
-  'Database.DocumentDB':    { emoji: '📄',  technology: 'Document DB'        },
-  'Cache.Redis':            { emoji: '⚡',  technology: 'Cache'              },
-  'Function.Lambda':        { emoji: '⚡',  technology: 'Serverless'         },
-  'Policy.IAM':             { emoji: '🔑',  technology: 'IAM Policy'         },
-  'Events.EventBridge':     { emoji: '📡',  technology: 'Event Bus'          },
-  'Workflow.StepFunctions': { emoji: '🔄',  technology: 'Step Functions'     },
-  'Messaging.Queue':        { emoji: '📨',  technology: 'Queue (SQS)'        },
-  'Messaging.Topic':        { emoji: '📢',  technology: 'Topic (SNS)'        },
+  'Compute.Instance':         { emoji: '⚙️',  technology: 'Virtual Machine'        },
+  'Compute.AutoScaling':      { emoji: '⚙️',  technology: 'Auto Scaling Group'     },
+  'Compute.Container':        { emoji: '📦',  technology: 'Container (ECS/Fargate)'},
+  'Compute.Kubernetes':       { emoji: '☸️',  technology: 'Kubernetes (EKS)'       },
+  'Storage.Bucket':           { emoji: '🗂️',  technology: 'Object Storage'         },
+  'Storage.FileSystem':       { emoji: '🗄️',  technology: 'File System (EFS)'      },
+  'Storage.Archive':          { emoji: '🗃️',  technology: 'Archive (Glacier)'      },
+  'Network.VPC':              { emoji: '🌐',  technology: 'Virtual Network'        },
+  'Network.Subnet':           { emoji: '🔀',  technology: 'Subnet'                 },
+  'Network.SecurityGroup':    { emoji: '🛡️',  technology: 'Security Group'         },
+  'Network.WAF':              { emoji: '🔒',  technology: 'WAF'                    },
+  'Network.LoadBalancer':     { emoji: '⚖️',  technology: 'Load Balancer'          },
+  'Network.CDN':              { emoji: '🌍',  technology: 'CDN (CloudFront)'       },
+  'Network.Dns':              { emoji: '🌐',  technology: 'DNS (Route53)'          },
+  'Database.SQL':             { emoji: '🗄️',  technology: 'Relational DB'          },
+  'Database.DocumentDB':      { emoji: '📄',  technology: 'Document DB'            },
+  'Database.DynamoDB':        { emoji: '⚡',  technology: 'DynamoDB'               },
+  'Cache.Redis':              { emoji: '⚡',  technology: 'Redis Cache'            },
+  'Cache.Memcached':          { emoji: '⚡',  technology: 'Memcached Cache'        },
+  'Function.Lambda':          { emoji: '⚡',  technology: 'Serverless'             },
+  'Function.ApiGateway':      { emoji: '🔌',  technology: 'API Gateway'            },
+  'Policy.IAM':               { emoji: '🔑',  technology: 'IAM Policy'             },
+  'Events.EventBridge':       { emoji: '📡',  technology: 'Event Bus'              },
+  'Workflow.StepFunctions':   { emoji: '🔄',  technology: 'Step Functions'         },
+  'Messaging.Queue':          { emoji: '📨',  technology: 'Queue (SQS)'            },
+  'Messaging.Topic':          { emoji: '📢',  technology: 'Topic (SNS)'            },
+  'Secret.Vault':             { emoji: '🔐',  technology: 'Secrets Manager'        },
+  'Certificate.TLS':          { emoji: '🔏',  technology: 'TLS Certificate (ACM)'  },
+  'Monitoring.Alarm':         { emoji: '🚨',  technology: 'CloudWatch Alarm'       },
+  'Monitoring.Dashboard':     { emoji: '📊',  technology: 'CloudWatch Dashboard'   },
+  'Logging.Stream':           { emoji: '📋',  technology: 'CloudWatch Logs'        },
 };
 
 function safeId(raw: string): string {
@@ -88,6 +104,83 @@ function describeProps(c: BaseConstruct): string {
     const subs = (p.subscriptions as Array<unknown>) ?? [];
     if (subs.length > 0) parts.push(`${subs.length} subscriptions`);
   }
+  if (c.type === 'Compute.AutoScaling') {
+    if (p.minCapacity !== undefined) parts.push(`min: ${p.minCapacity}`);
+    if (p.maxCapacity !== undefined) parts.push(`max: ${p.maxCapacity}`);
+    if (p.targetCpuUtilization) parts.push(`cpu: ${p.targetCpuUtilization}%`);
+  }
+  if (c.type === 'Compute.Container') {
+    if (p.image) parts.push(`image: ${p.image}`);
+    if (p.cpu) parts.push(`cpu: ${p.cpu}`);
+    if (p.memory) parts.push(`mem: ${p.memory}MB`);
+  }
+  if (c.type === 'Compute.Kubernetes') {
+    if (p.version) parts.push(`k8s: ${p.version}`);
+    if (p.desiredNodes) parts.push(`nodes: ${p.desiredNodes}`);
+    if (p.nodeInstanceType) parts.push(`size: ${p.nodeInstanceType}`);
+  }
+  if (c.type === 'Storage.FileSystem') {
+    if (p.performanceMode) parts.push(`perf: ${p.performanceMode}`);
+    if (p.encrypted) parts.push('encrypted');
+    const aps = (p.accessPoints as Array<unknown>) ?? [];
+    if (aps.length > 0) parts.push(`${aps.length} access points`);
+  }
+  if (c.type === 'Storage.Archive') {
+    if (p.retentionDays) parts.push(`retention: ${p.retentionDays}d`);
+    if (p.lockEnabled) parts.push('lock enabled');
+  }
+  if (c.type === 'Network.LoadBalancer') {
+    if (p.type) parts.push(`type: ${p.type}`);
+    if (p.scheme) parts.push(p.scheme as string);
+    const tgs = (p.targetGroups as Array<unknown>) ?? [];
+    if (tgs.length > 0) parts.push(`${tgs.length} target groups`);
+  }
+  if (c.type === 'Network.CDN') {
+    const origins = (p.origins as Array<unknown>) ?? [];
+    if (origins.length > 0) parts.push(`${origins.length} origins`);
+    if (p.priceClass) parts.push(p.priceClass as string);
+  }
+  if (c.type === 'Network.Dns') {
+    if (p.zoneName) parts.push(`zone: ${p.zoneName}`);
+    const records = (p.records as Array<unknown>) ?? [];
+    if (records.length > 0) parts.push(`${records.length} records`);
+  }
+  if (c.type === 'Database.DynamoDB') {
+    if (p.partitionKey) parts.push(`pk: ${p.partitionKey}`);
+    if (p.billingMode) parts.push(p.billingMode as string);
+    if (p.streamEnabled) parts.push('streams on');
+  }
+  if (c.type === 'Cache.Memcached') {
+    if (p.nodeType) parts.push(`size: ${p.nodeType}`);
+    if (p.numCacheNodes) parts.push(`nodes: ${p.numCacheNodes}`);
+  }
+  if (c.type === 'Function.ApiGateway') {
+    if (p.type) parts.push(`type: ${p.type}`);
+    if (p.stageName) parts.push(`stage: ${p.stageName}`);
+    const routes = (p.routes as Array<unknown>) ?? [];
+    if (routes.length > 0) parts.push(`${routes.length} routes`);
+  }
+  if (c.type === 'Secret.Vault') {
+    if (p.rotationDays) parts.push(`rotation: ${p.rotationDays}d`);
+    if (p.kmsKeyId) parts.push('KMS encrypted');
+  }
+  if (c.type === 'Certificate.TLS') {
+    if (p.domainName) parts.push(`domain: ${p.domainName}`);
+    if (p.validationMethod) parts.push(p.validationMethod as string);
+  }
+  if (c.type === 'Monitoring.Alarm') {
+    if (p.metricName) parts.push(`metric: ${p.metricName}`);
+    if (p.threshold !== undefined) parts.push(`threshold: ${p.threshold}`);
+  }
+  if (c.type === 'Monitoring.Dashboard') {
+    const widgets = (p.widgets as Array<unknown>) ?? [];
+    parts.push(`${widgets.length} widgets`);
+  }
+  if (c.type === 'Logging.Stream') {
+    if (p.retentionDays) parts.push(`retention: ${p.retentionDays}d`);
+    const filters = (p.subscriptionFilters as Array<unknown>) ?? [];
+    if (filters.length > 0) parts.push(`${filters.length} filters`);
+  }
 
   return parts.join(', ');
 }
@@ -147,19 +240,28 @@ function inferCrossStackRelationships(
 
   // Heurísticas de env keys para inferir dependência
   const ENV_HINTS: Array<{ pattern: RegExp; targetType: string; label: string }> = [
-    { pattern: /TABLE_NAME|DYNAMO|DYNAMODB/i,      targetType: 'Database.SQL',           label: 'reads table'    },
-    { pattern: /DB_HOST|DB_URL|DATABASE_URL/i,     targetType: 'Database.SQL',           label: 'connects db'    },
-    { pattern: /BUCKET_NAME|S3_BUCKET/i,           targetType: 'Storage.Bucket',         label: 'reads bucket'   },
-    { pattern: /VPC_ID|VPC_CIDR/i,                 targetType: 'Network.VPC',            label: 'uses vpc'       },
-    { pattern: /REDIS_URL|REDIS_HOST|CACHE_URL/i,  targetType: 'Cache.Redis',            label: 'uses cache'     },
-    { pattern: /DOCDB_URL|MONGO_URL/i,             targetType: 'Database.DocumentDB',    label: 'reads docdb'    },
-    { pattern: /QUEUE_URL|SQS_URL/i,               targetType: 'Messaging.Queue',        label: 'sends to queue' },
-    { pattern: /TOPIC_ARN|SNS_ARN/i,               targetType: 'Messaging.Topic',        label: 'publishes to'   },
+    { pattern: /TABLE_NAME|DYNAMO|DYNAMODB/i,         targetType: 'Database.DynamoDB',      label: 'reads table'       },
+    { pattern: /DB_HOST|DB_URL|DATABASE_URL/i,        targetType: 'Database.SQL',           label: 'connects db'       },
+    { pattern: /BUCKET_NAME|S3_BUCKET/i,              targetType: 'Storage.Bucket',         label: 'reads bucket'      },
+    { pattern: /VPC_ID|VPC_CIDR/i,                   targetType: 'Network.VPC',            label: 'uses vpc'          },
+    { pattern: /REDIS_URL|REDIS_HOST|CACHE_URL/i,    targetType: 'Cache.Redis',            label: 'uses cache'        },
+    { pattern: /MEMCACHED_URL|MEMCACHE_HOST/i,       targetType: 'Cache.Memcached',        label: 'uses memcached'    },
+    { pattern: /DOCDB_URL|MONGO_URL/i,               targetType: 'Database.DocumentDB',    label: 'reads docdb'       },
+    { pattern: /QUEUE_URL|SQS_URL/i,                 targetType: 'Messaging.Queue',        label: 'sends to queue'    },
+    { pattern: /TOPIC_ARN|SNS_ARN/i,                 targetType: 'Messaging.Topic',        label: 'publishes to'      },
+    { pattern: /API_URL|API_ENDPOINT|APIGW/i,        targetType: 'Function.ApiGateway',    label: 'calls api'         },
+    { pattern: /SECRET_ARN|SECRETS_MANAGER/i,        targetType: 'Secret.Vault',           label: 'reads secret'      },
+    { pattern: /EFS_ID|FILESYSTEM_ID/i,              targetType: 'Storage.FileSystem',     label: 'mounts filesystem' },
+    { pattern: /LOG_GROUP|LOG_STREAM/i,              targetType: 'Logging.Stream',         label: 'writes logs'       },
   ];
+
+  const ENV_CAPABLE_TYPES = new Set([
+    'Function.Lambda', 'Compute.Container', 'Compute.Instance', 'Compute.AutoScaling',
+  ]);
 
   for (const srcStack of builtStacks) {
     for (const srcNode of srcStack.nodes) {
-      if (srcNode.constructType !== 'Function.Lambda') continue;
+      if (!ENV_CAPABLE_TYPES.has(srcNode.constructType)) continue;
       const env = srcNode.props?.environment as Record<string, string> | undefined;
       if (!env || Object.keys(env).length === 0) continue;
 

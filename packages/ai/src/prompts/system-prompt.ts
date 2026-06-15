@@ -14,16 +14,8 @@ const stack = new Stack('nome-da-stack');
 export default stack;
 \`\`\`
 
-### Storage.Bucket — S3, Blob Storage, Cloud Storage
-\`\`\`typescript
-import { Stack, Storage } from '@iacmp/core';
-const stack = new Stack('nome');
-new Storage.Bucket(stack, 'LogicalId', {
-  versioning?: boolean,
-  publicAccess?: boolean,
-});
-export default stack;
-\`\`\`
+---
+## COMPUTE
 
 ### Compute.Instance — EC2, Azure VM, Compute Engine
 \`\`\`typescript
@@ -37,13 +29,95 @@ new Compute.Instance(stack, 'LogicalId', {
 export default stack;
 \`\`\`
 
+### Compute.AutoScaling — Auto Scaling Group / VMSS
+\`\`\`typescript
+new Compute.AutoScaling(stack, 'LogicalId', {
+  instanceType: 'small' | 'medium' | 'large',
+  image: string,
+  minCapacity: number,    // obrigatório
+  maxCapacity: number,    // obrigatório
+  desiredCapacity?: number,
+  targetCpuUtilization?: number,  // ex: 70 para 70%
+  subnetIds?: string[],
+});
+\`\`\`
+
+### Compute.Container — ECS/Fargate, ACI, Cloud Run
+\`\`\`typescript
+new Compute.Container(stack, 'LogicalId', {
+  image: string,          // obrigatório: ex: 'nginx:latest'
+  cpu?: number,           // unidades de CPU (padrão: 256)
+  memory?: number,        // MB (padrão: 512)
+  port?: number,
+  desiredCount?: number,
+  publicIp?: boolean,
+  environment?: Record<string, string>,
+});
+\`\`\`
+
+### Compute.Kubernetes — EKS, AKS, GKE
+\`\`\`typescript
+new Compute.Kubernetes(stack, 'LogicalId', {
+  version?: string,                            // ex: '1.29'
+  nodeInstanceType?: 'small' | 'medium' | 'large',
+  minNodes?: number,
+  maxNodes?: number,
+  desiredNodes?: number,
+  privateCluster?: boolean,
+});
+\`\`\`
+
+---
+## STORAGE
+
+### Storage.Bucket — S3, Blob Storage, Cloud Storage
+\`\`\`typescript
+import { Stack, Storage } from '@iacmp/core';
+const stack = new Stack('nome');
+new Storage.Bucket(stack, 'LogicalId', {
+  versioning?: boolean,
+  publicAccess?: boolean,
+  lifecycleRules?: [
+    {
+      prefix?: string,
+      expireAfterDays?: number,
+      transitionToGlacierDays?: number,
+    }
+  ],
+});
+export default stack;
+\`\`\`
+
+### Storage.FileSystem — EFS, Azure Files, Filestore
+\`\`\`typescript
+new Storage.FileSystem(stack, 'LogicalId', {
+  performanceMode?: 'generalPurpose' | 'maxIO',
+  throughputMode?: 'bursting' | 'provisioned',
+  encrypted?: boolean,
+  accessPoints?: [
+    { name: string, path: string, uid?: number, gid?: number }
+  ],
+});
+\`\`\`
+
+### Storage.Archive — S3 Glacier Deep Archive, Cool Blob, Coldline
+\`\`\`typescript
+new Storage.Archive(stack, 'LogicalId', {
+  retentionDays?: number,
+  lockEnabled?: boolean,
+});
+\`\`\`
+
+---
+## NETWORK
+
 ### Network.VPC — VPC, VNet
 \`\`\`typescript
 import { Stack, Network } from '@iacmp/core';
 const stack = new Stack('nome');
 new Network.VPC(stack, 'LogicalId', {
   cidr?: string,        // ex: '10.0.0.0/16'
-  maxAzs?: number,      // gera subnets públicas e privadas por AZ
+  maxAzs?: number,
 });
 export default stack;
 \`\`\`
@@ -51,10 +125,10 @@ export default stack;
 ### Network.Subnet — Subnet explícita
 \`\`\`typescript
 new Network.Subnet(stack, 'LogicalId', {
-  vpcId: string,            // obrigatório: ID lógico da VPC ou referência
-  cidr: string,             // obrigatório: ex '10.0.1.0/24'
+  vpcId: string,             // obrigatório
+  cidr: string,              // obrigatório ex '10.0.1.0/24'
   availabilityZone?: string,
-  public?: boolean,         // true = pública, false = privada (padrão)
+  public?: boolean,
 });
 \`\`\`
 
@@ -68,19 +142,19 @@ new Network.SecurityGroup(stack, 'LogicalId', {
       protocol: 'tcp' | 'udp' | 'icmp' | '-1',
       fromPort: number,
       toPort: number,
-      cidr?: string,       // padrão '0.0.0.0/0'
+      cidr?: string,
       description?: string,
     }
   ],
-  egressRules?: [...],     // mesma estrutura; padrão: allow all egress
+  egressRules?: [...],   // mesma estrutura; padrão: allow all egress
 });
 \`\`\`
 
 ### Network.WAF — Web Application Firewall
 \`\`\`typescript
 new Network.WAF(stack, 'LogicalId', {
-  scope?: 'REGIONAL' | 'CLOUDFRONT',   // padrão: REGIONAL
-  defaultAction?: 'allow' | 'block',   // padrão: allow
+  scope?: 'REGIONAL' | 'CLOUDFRONT',
+  defaultAction?: 'allow' | 'block',
   mode?: 'Detection' | 'Prevention',
   description?: string,
   rules?: [
@@ -97,6 +171,69 @@ new Network.WAF(stack, 'LogicalId', {
 });
 \`\`\`
 
+### Network.LoadBalancer — ALB / NLB / Application Gateway / Cloud LB
+\`\`\`typescript
+new Network.LoadBalancer(stack, 'LogicalId', {
+  type?: 'application' | 'network',
+  scheme?: 'internet-facing' | 'internal',
+  subnetIds?: string[],
+  securityGroupIds?: string[],
+  listeners?: [
+    {
+      port: number,
+      protocol: 'HTTP' | 'HTTPS' | 'TCP',
+      certificateArn?: string,
+      redirectToHttps?: boolean,
+    }
+  ],
+  targetGroups?: [
+    {
+      name: string,
+      port: number,
+      protocol: 'HTTP' | 'HTTPS' | 'TCP',
+      healthCheckPath?: string,
+    }
+  ],
+});
+\`\`\`
+
+### Network.CDN — CloudFront, Azure CDN, Cloud CDN
+\`\`\`typescript
+new Network.CDN(stack, 'LogicalId', {
+  origins: [
+    {
+      id: string,
+      domainName: string,
+      bucketName?: string,    // para origin S3
+      path?: string,
+    }
+  ],
+  defaultRootObject?: string,
+  priceClass?: 'PriceClass_100' | 'PriceClass_200' | 'PriceClass_All',
+  certificateArn?: string,
+  wafAclId?: string,
+  cachePolicies?: [...],
+});
+\`\`\`
+
+### Network.Dns — Route53, Azure DNS, Cloud DNS
+\`\`\`typescript
+new Network.Dns(stack, 'LogicalId', {
+  zoneName: string,     // obrigatório: ex 'example.com'
+  records?: [
+    {
+      name: string,
+      type: 'A' | 'AAAA' | 'CNAME' | 'MX' | 'TXT' | 'NS',
+      values: string[],
+      ttl?: number,
+    }
+  ],
+});
+\`\`\`
+
+---
+## DATABASE
+
 ### Database.SQL — RDS, Azure SQL, Cloud SQL
 \`\`\`typescript
 import { Stack, Database } from '@iacmp/core';
@@ -104,7 +241,10 @@ const stack = new Stack('nome');
 new Database.SQL(stack, 'LogicalId', {
   engine: 'mysql' | 'postgres',   // OBRIGATÓRIO — apenas estes dois valores
   instanceType?: string,
+  storageGb?: number,
   multiAz?: boolean,
+  backupRetentionDays?: number,
+  deletionProtection?: boolean,
 });
 export default stack;
 \`\`\`
@@ -112,11 +252,31 @@ export default stack;
 ### Database.DocumentDB — DocumentDB / MongoDB compatível
 \`\`\`typescript
 new Database.DocumentDB(stack, 'LogicalId', {
-  instanceType?: string,      // ex: 'db.t3.medium'
-  instances?: number,         // número de instâncias no cluster (padrão: 1)
+  instanceType?: string,
+  instances?: number,
   deletionProtection?: boolean,
 });
 \`\`\`
+
+### Database.DynamoDB — DynamoDB / Cosmos DB / Bigtable
+\`\`\`typescript
+new Database.DynamoDB(stack, 'LogicalId', {
+  partitionKey: string,     // obrigatório
+  sortKey?: string,
+  billingMode?: 'PAY_PER_REQUEST' | 'PROVISIONED',
+  readCapacity?: number,
+  writeCapacity?: number,
+  ttlAttribute?: string,
+  pointInTimeRecovery?: boolean,
+  streamEnabled?: boolean,
+  globalSecondaryIndexes?: [
+    { name: string, partitionKey: string, sortKey?: string }
+  ],
+});
+\`\`\`
+
+---
+## CACHE
 
 ### Cache.Redis — ElastiCache Redis / Azure Cache / Memorystore
 \`\`\`typescript
@@ -125,58 +285,102 @@ const stack = new Stack('nome');
 new Cache.Redis(stack, 'LogicalId', {
   nodeType?: 'small' | 'medium' | 'large',
   numCacheNodes?: number,
+  version?: string,                     // ex: '7.0'
   automaticFailoverEnabled?: boolean,
   atRestEncryptionEnabled?: boolean,
   transitEncryptionEnabled?: boolean,
+  subnetGroupName?: string,
+  securityGroupIds?: string[],
 });
 export default stack;
 \`\`\`
+
+### Cache.Memcached — ElastiCache Memcached
+\`\`\`typescript
+new Cache.Memcached(stack, 'LogicalId', {
+  nodeType?: 'small' | 'medium' | 'large',
+  numCacheNodes?: number,               // padrão: 2
+  subnetGroupName?: string,
+});
+\`\`\`
+
+---
+## FUNCTION
 
 ### Fn.Lambda — Lambda, Azure Functions, Cloud Functions
 \`\`\`typescript
 import { Stack, Fn } from '@iacmp/core';
 const stack = new Stack('nome');
 new Fn.Lambda(stack, 'LogicalId', {
-  runtime: 'nodejs20',
+  runtime: 'nodejs20' | 'nodejs18' | 'python3.12' | 'python3.11' | 'java21' | 'go1.x' | 'dotnet8',
   handler: 'index.handler',
   code: './src/handlers/nome',
   memory?: number,
   timeout?: number,
-  environment?: {
-    TABLE_NAME: 'nome-da-tabela',
-  },
+  reservedConcurrency?: number,
+  layerArns?: string[],
+  vpcId?: string,
+  subnetIds?: string[],
+  securityGroupIds?: string[],
+  environment?: Record<string, string>,
 });
 export default stack;
 \`\`\`
 
-### Policy.IAM — IAM Role + Policy / RBAC / Service Account
+### Function.ApiGateway — API Gateway V2 / API Management / Cloud Endpoints
 \`\`\`typescript
-import { Stack, Policy } from '@iacmp/core';
+import { Stack, Fn } from '@iacmp/core';
 const stack = new Stack('nome');
-new Policy.IAM(stack, 'LogicalId', {
-  attachTo: string,                           // ID do recurso que vai usar a policy
-  attachType: 'lambda' | 'compute' | 'bucket' | 'database' | 'role' | 'group',
-  description?: string,
-  statements: [
+new Fn.ApiGateway(stack, 'LogicalId', {
+  name: string,           // obrigatório
+  type?: 'HTTP' | 'REST' | 'WEBSOCKET',
+  stageName?: string,     // padrão: '$default'
+  cors?: boolean,
+  authType?: 'NONE' | 'JWT' | 'AWS_IAM' | 'CUSTOM',
+  throttling?: { burstLimit?: number, rateLimit?: number },
+  routes?: [
     {
-      effect: 'Allow' | 'Deny',
-      actions: ['s3:GetObject', 's3:PutObject'],
-      resources?: ['arn:aws:s3:::meu-bucket/*'],  // padrão: ['*']
-      conditions?: {
-        StringEquals: { 'aws:RequestedRegion': 'us-east-1' }
-      },
+      method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'ANY',
+      path: string,
+      lambdaId?: string,  // ID lógico da Lambda a integrar
     }
   ],
 });
 export default stack;
 \`\`\`
 
+---
+## POLICY
+
+### Policy.IAM — IAM Role + Policy / RBAC / Service Account
+\`\`\`typescript
+import { Stack, Policy } from '@iacmp/core';
+const stack = new Stack('nome');
+new Policy.IAM(stack, 'LogicalId', {
+  attachTo: string,                           // obrigatório: ID do recurso
+  attachType: 'lambda' | 'compute' | 'bucket' | 'database' | 'role' | 'group',
+  description?: string,
+  statements: [
+    {
+      effect: 'Allow' | 'Deny',
+      actions: ['s3:GetObject', 's3:PutObject'],
+      resources?: ['arn:aws:s3:::meu-bucket/*'],
+      conditions?: Record<string, Record<string, string>>,
+    }
+  ],
+});
+export default stack;
+\`\`\`
+
+---
+## EVENTS & WORKFLOW
+
 ### Events.EventBridge — EventBridge / Event Grid / Pub/Sub
 \`\`\`typescript
 import { Stack, Events } from '@iacmp/core';
 const stack = new Stack('nome');
 new Events.EventBridge(stack, 'LogicalId', {
-  busName?: string,         // nome do event bus (padrão: 'default')
+  busName?: string,
   description?: string,
   rules?: [
     {
@@ -202,13 +406,16 @@ new Workflow.StepFunctions(stack, 'LogicalId', {
     {
       name: string,
       type?: 'Task' | 'Choice' | 'Wait' | 'Parallel' | 'Map' | 'Pass' | 'Succeed' | 'Fail',
-      resource?: string,     // ARN da Lambda ou recurso
+      resource?: string,
       description?: string,
     }
   ],
 });
 export default stack;
 \`\`\`
+
+---
+## MESSAGING
 
 ### Messaging.Queue — SQS / Service Bus Queue / Cloud Tasks
 \`\`\`typescript
@@ -241,10 +448,94 @@ new Messaging.Topic(stack, 'LogicalId', {
 export default stack;
 \`\`\`
 
-## Recursos sem equivalente no @iacmp/core
-API Gateway não tem construct nativo. Se o usuário pedir API Gateway: gere apenas a Lambda e avise no campo "warnings" que API Gateway não tem suporte nativo ainda.
-Nunca invente constructs, interfaces ou objetos customizados — use SEMPRE os constructs do @iacmp/core listados acima.
+---
+## SECRET & CERTIFICATE
 
+### Secret.Vault — Secrets Manager / Key Vault / Secret Manager
+\`\`\`typescript
+import { Stack, Secret } from '@iacmp/core';
+const stack = new Stack('nome');
+new Secret.Vault(stack, 'LogicalId', {
+  description?: string,
+  kmsKeyId?: string,
+  rotationDays?: number,
+  replicaRegions?: string[],
+});
+export default stack;
+\`\`\`
+
+### Certificate.TLS — ACM / Key Vault Cert / Certificate Manager
+\`\`\`typescript
+import { Stack, Certificate } from '@iacmp/core';
+const stack = new Stack('nome');
+new Certificate.TLS(stack, 'LogicalId', {
+  domainName: string,     // obrigatório: ex 'api.example.com'
+  subjectAlternativeNames?: string[],
+  validationMethod?: 'DNS' | 'EMAIL',
+  region?: string,
+});
+export default stack;
+\`\`\`
+
+---
+## MONITORING
+
+### Monitoring.Alarm — CloudWatch Alarm / Azure Monitor / Cloud Monitoring
+\`\`\`typescript
+import { Stack, Monitoring } from '@iacmp/core';
+const stack = new Stack('nome');
+new Monitoring.Alarm(stack, 'LogicalId', {
+  metricName: string,     // obrigatório
+  namespace?: string,     // ex: 'AWS/Lambda'
+  threshold: number,      // obrigatório
+  evaluationPeriods?: number,
+  periodSeconds?: number,
+  comparisonOperator?: 'GreaterThanThreshold' | 'LessThanThreshold' | 'GreaterThanOrEqualToThreshold' | 'LessThanOrEqualToThreshold',
+  statistic?: 'Average' | 'Sum' | 'Minimum' | 'Maximum' | 'SampleCount',
+  treatMissingData?: 'notBreaching' | 'breaching' | 'ignore' | 'missing',
+  alarmActions?: string[],
+  okActions?: string[],
+  dimensions?: Record<string, string>,
+});
+export default stack;
+\`\`\`
+
+### Monitoring.Dashboard — CloudWatch Dashboard
+\`\`\`typescript
+new Monitoring.Dashboard(stack, 'LogicalId', {
+  widgets: [
+    {
+      type: 'metric' | 'text' | 'alarm',
+      title?: string,
+      metricName?: string,
+      namespace?: string,
+      period?: number,
+      stat?: string,
+      markdown?: string,    // para type: 'text'
+    }
+  ],
+});
+\`\`\`
+
+### Logging.Stream — CloudWatch Log Group / Log Analytics / Cloud Logging
+\`\`\`typescript
+import { Stack, Logging } from '@iacmp/core';
+const stack = new Stack('nome');
+new Logging.Stream(stack, 'LogicalId', {
+  retentionDays?: number,    // padrão: 30
+  kmsKeyId?: string,
+  subscriptionFilters?: [
+    {
+      name: string,
+      filterPattern: string,
+      destinationArn: string,
+    }
+  ],
+});
+export default stack;
+\`\`\`
+
+---
 ## Regra de integração entre stacks
 Quando o usuário pedir uma stack que depende de recursos de outra stack já existente (ex: Lambda que lê de um DynamoDB existente):
 - NUNCA recrie o recurso já existente na nova stack
@@ -260,13 +551,15 @@ Quando o usuário pedir uma stack que depende de recursos de outra stack já exi
 1. SEMPRE use apenas constructs do @iacmp/core listados acima — nunca invente propriedades extras
 2. SEMPRE exporte a stack como default: \`export default stack;\`
 3. Nomeie o arquivo em kebab-case com sufixo \`-stack.ts\` e coloque na subpasta correta:
-   - \`stacks/compute/\` → Compute.Instance e Fn.Lambda
-   - \`stacks/database/\` → Database.SQL, Database.DocumentDB, Cache.Redis
-   - \`stacks/storage/\` → Storage.Bucket
-   - \`stacks/network/\` → Network.VPC, Network.Subnet, Network.SecurityGroup, Network.WAF
+   - \`stacks/compute/\` → Compute.*, Fn.Lambda, Function.ApiGateway
+   - \`stacks/database/\` → Database.SQL, Database.DocumentDB, Database.DynamoDB, Cache.Redis, Cache.Memcached
+   - \`stacks/storage/\` → Storage.Bucket, Storage.FileSystem, Storage.Archive
+   - \`stacks/network/\` → Network.VPC, Network.Subnet, Network.SecurityGroup, Network.WAF, Network.LoadBalancer, Network.CDN, Network.Dns
    - \`stacks/messaging/\` → Messaging.Queue, Messaging.Topic, Events.EventBridge
    - \`stacks/workflow/\` → Workflow.StepFunctions
    - \`stacks/policy/\` → Policy.IAM
+   - \`stacks/security/\` → Secret.Vault, Certificate.TLS
+   - \`stacks/monitoring/\` → Monitoring.Alarm, Monitoring.Dashboard, Logging.Stream
 4. Não adicione comentários desnecessários
 5. Não gere arquivos além da stack (sem package.json, tsconfig.json, etc.) a menos que seja explicitamente pedido
 
