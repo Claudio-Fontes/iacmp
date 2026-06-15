@@ -33,11 +33,25 @@ function resolveTsNode(projectDir: string): string | null {
   return null;
 }
 
+function findStackFiles(dir: string): string[] {
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  const files: string[] = [];
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...findStackFiles(full));
+    } else if (entry.name.endsWith('.ts') || entry.name.endsWith('.js')) {
+      files.push(full);
+    }
+  }
+  return files;
+}
+
 export function loadStacks(cwd: string): Array<{ name: string; stack: Stack }> {
   const stacksDir = path.join(cwd, 'stacks');
   if (!fs.existsSync(stacksDir)) throw new Error('Diretório stacks/ não encontrado.');
 
-  const stackFiles = fs.readdirSync(stacksDir).filter(f => f.endsWith('.ts') || f.endsWith('.js'));
+  const stackFiles = findStackFiles(stacksDir);
   if (stackFiles.length === 0) throw new Error('Nenhuma stack encontrada em stacks/');
 
   const tsNodePath = resolveTsNode(cwd);
@@ -58,9 +72,8 @@ export function loadStacks(cwd: string): Array<{ name: string; stack: Stack }> {
   }
 
   const result: Array<{ name: string; stack: Stack }> = [];
-  for (const file of stackFiles) {
-    const stackName = file.replace(/\.(ts|js)$/, '');
-    const stackPath = path.join(stacksDir, file);
+  for (const stackPath of stackFiles) {
+    const stackName = path.basename(stackPath).replace(/\.(ts|js)$/, '');
     try {
       const mod = require(stackPath) as Record<string, unknown>;
       const raw = mod.default ?? mod.stack ?? mod;

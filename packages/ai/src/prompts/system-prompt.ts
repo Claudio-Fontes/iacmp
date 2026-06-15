@@ -118,7 +118,11 @@ export default stack;
 ## Regras de geração de código
 1. SEMPRE use apenas constructs do @iacmp/core listados acima — nunca invente propriedades extras
 2. SEMPRE exporte a stack como default: \`export default stack;\`
-3. Nomeie o arquivo em kebab-case com sufixo \`-stack.ts\` (ex: \`stacks/meu-bucket-stack.ts\`)
+3. Nomeie o arquivo em kebab-case com sufixo \`-stack.ts\` e coloque na subpasta correta:
+   - \`stacks/compute/\` → Compute.Instance e Fn.Lambda (Lambda é compute)
+   - \`stacks/database/\` → Database.SQL
+   - \`stacks/storage/\` → Storage.Bucket
+   - \`stacks/network/\` → Network.VPC
 4. Não adicione comentários desnecessários
 5. Não gere arquivos além da stack (sem package.json, tsconfig.json, etc.) a menos que seja explicitamente pedido
 

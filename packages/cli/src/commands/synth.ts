@@ -42,9 +42,22 @@ export default class Synth extends Command {
       this.error('Diretório stacks/ não encontrado.');
     }
 
-    const stackFiles = fs.readdirSync(stacksDir)
-      .filter(f => f.endsWith('.ts') || f.endsWith('.js'))
-      .filter(f => !flags.stack || f.replace(/\.(ts|js)$/, '') === flags.stack);
+    const findStackFiles = (dir: string): string[] => {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      const files: string[] = [];
+      for (const entry of entries) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          files.push(...findStackFiles(full));
+        } else if (entry.name.endsWith('.ts') || entry.name.endsWith('.js')) {
+          files.push(full);
+        }
+      }
+      return files;
+    };
+
+    const stackFiles = findStackFiles(stacksDir)
+      .filter(f => !flags.stack || path.basename(f).replace(/\.(ts|js)$/, '') === flags.stack);
 
     if (stackFiles.length === 0) {
       this.error('Nenhuma stack encontrada em stacks/');
@@ -63,9 +76,9 @@ export default class Synth extends Command {
       this.error(`Provider '${provider}' não encontrado. Providers disponíveis: ${nativeProviders.join(', ')}`);
     }
 
-    for (const file of stackFiles) {
+    for (const stackPath of stackFiles) {
+      const file = path.basename(stackPath);
       const stackName = file.replace(/\.(ts|js)$/, '');
-      const stackPath = path.join(stacksDir, file);
 
       let stackModule: Record<string, unknown>;
       try {
