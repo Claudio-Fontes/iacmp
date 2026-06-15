@@ -128,23 +128,39 @@ export default stack;
   },
 
   serverless: {
-    description: 'API serverless com Lambda e VPC',
-    constructs: ['Network.VPC', 'Function.Lambda'],
-    stackContent: (name) => `import { Stack, Network, Fn } from '@iacmp/core';
+    description: 'API serverless com múltiplas Lambdas e API Gateway',
+    constructs: ['Fn.Lambda', 'Fn.ApiGateway'],
+    stackContent: (name) => `import { Stack, Fn } from '@iacmp/core';
 
 const stack = new Stack('${name}');
 
-new Network.VPC(stack, 'Rede', {
-  cidr: '10.0.0.0/16',
-  maxAzs: 2,
-});
-
-new Fn.Lambda(stack, 'Handler', {
+new Fn.Lambda(stack, 'HelloFn', {
   runtime: 'nodejs20',
   handler: 'index.handler',
   code: 'dist/',
-  memory: 512,
+  memory: 256,
   timeout: 30,
+});
+
+new Fn.Lambda(stack, 'UsersFn', {
+  runtime: 'nodejs20',
+  handler: 'index.handler',
+  code: 'dist/',
+  memory: 256,
+  timeout: 30,
+});
+
+new Fn.ApiGateway(stack, 'Api', {
+  name: '${name}-api',
+  type: 'REST',
+  stageName: 'prod',
+  cors: true,
+  authType: 'NONE',
+  routes: [
+    { method: 'GET', path: '/hello', lambdaId: 'HelloFn' },
+    { method: 'GET', path: '/users', lambdaId: 'UsersFn' },
+    { method: 'POST', path: '/users', lambdaId: 'UsersFn' },
+  ],
 });
 
 export default stack;

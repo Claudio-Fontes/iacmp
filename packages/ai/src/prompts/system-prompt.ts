@@ -352,22 +352,27 @@ export default stack;
 \`\`\`
 
 ### Function.ApiGateway — API Gateway V2 / API Management / Cloud Endpoints
+
+O ApiGateway é um construct SEPARADO das Lambdas — um único gateway pode agregar rotas de múltiplas Lambdas. SEMPRE gere o Fn.ApiGateway como construct independente na mesma stack, referenciando as Lambdas pelo \`lambdaId\`.
+
 \`\`\`typescript
 import { Stack, Fn } from '@iacmp/core';
 const stack = new Stack('nome');
-new Fn.ApiGateway(stack, 'LogicalId', {
+
+new Fn.Lambda(stack, 'HelloFn', { runtime: 'nodejs20', handler: 'index.handler', code: 'dist/' });
+new Fn.Lambda(stack, 'UsersFn', { runtime: 'nodejs20', handler: 'index.handler', code: 'dist/' });
+
+new Fn.ApiGateway(stack, 'Api', {
   name: string,           // obrigatório
   type?: 'HTTP' | 'REST' | 'WEBSOCKET',
   stageName?: string,     // padrão: '$default'
   cors?: boolean,
   authType?: 'NONE' | 'JWT' | 'AWS_IAM' | 'CUSTOM',
   throttling?: { burstLimit?: number, rateLimit?: number },
-  routes?: [
-    {
-      method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'ANY',
-      path: string,
-      lambdaId?: string,  // ID lógico da Lambda a integrar
-    }
+  routes: [
+    { method: 'GET',  path: '/hello', lambdaId: 'HelloFn' },
+    { method: 'GET',  path: '/users', lambdaId: 'UsersFn' },
+    { method: 'POST', path: '/users', lambdaId: 'UsersFn' },
   ],
 });
 export default stack;
