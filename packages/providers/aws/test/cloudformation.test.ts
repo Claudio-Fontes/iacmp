@@ -1,4 +1,4 @@
-import { Stack, Compute, Storage, Network, Database, Fn } from '@iacmp/core';
+import { Stack, Compute, Storage, Network, Database, Fn, Cache, Messaging, Secret } from '@iacmp/core';
 import { AWSProvider } from '../src';
 
 describe('AWSProvider', () => {
@@ -65,5 +65,65 @@ describe('AWSProvider', () => {
       const expected = { small: 't3.small', medium: 't3.medium', large: 't3.large' }[size];
       expect(tpl.Resources.W.Properties.InstanceType).toBe(expected);
     });
+  });
+
+  test('Database.SQL postgres → Engine: postgres', () => {
+    new Database.SQL(stack, 'DB', { engine: 'postgres' });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.DB.Properties.Engine).toBe('postgres');
+  });
+
+  test('Database.SQL oracle → Engine começa com oracle-', () => {
+    new Database.SQL(stack, 'DB', { engine: 'oracle' });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.DB.Properties.Engine).toMatch(/^oracle-/);
+  });
+
+  test('Database.SQL sqlserver → Engine começa com sqlserver-', () => {
+    new Database.SQL(stack, 'DB', { engine: 'sqlserver' });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.DB.Properties.Engine).toMatch(/^sqlserver-/);
+  });
+
+  test('Database.SQL mariadb → Engine: mariadb', () => {
+    new Database.SQL(stack, 'DB', { engine: 'mariadb' });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.DB.Properties.Engine).toBe('mariadb');
+  });
+
+  test('Compute.Instance windows-2022 → ImageId contém Windows_Server-2022', () => {
+    new Compute.Instance(stack, 'Win', { instanceType: 'small', image: 'windows-2022' });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.Win.Properties.ImageId).toContain('Windows_Server-2022');
+  });
+
+  test('Compute.Instance amazon-linux-2023 → ImageId contém al2023', () => {
+    new Compute.Instance(stack, 'AL', { instanceType: 'small', image: 'amazon-linux-2023' });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.AL.Properties.ImageId).toContain('al2023');
+  });
+
+  test('Cache.Redis → AWS::ElastiCache::ReplicationGroup', () => {
+    new Cache.Redis(stack, 'RedisCache', { nodeType: 'small' });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.RedisCache.Type).toBe('AWS::ElastiCache::ReplicationGroup');
+  });
+
+  test('Messaging.Queue → AWS::SQS::Queue', () => {
+    new Messaging.Queue(stack, 'MyQueue', {});
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.MyQueue.Type).toBe('AWS::SQS::Queue');
+  });
+
+  test('Fn.Lambda python3.12 → runtime contém python', () => {
+    new Fn.Lambda(stack, 'PyHandler', { runtime: 'python3.12', handler: 'main.handler', code: 'dist/' });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.PyHandler.Properties.Runtime).toContain('python');
+  });
+
+  test('Secret.Vault → AWS::SecretsManager::Secret', () => {
+    new Secret.Vault(stack, 'MySecret', {});
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.MySecret.Type).toBe('AWS::SecretsManager::Secret');
   });
 });
