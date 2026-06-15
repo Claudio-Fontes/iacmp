@@ -239,15 +239,26 @@ new Network.Dns(stack, 'LogicalId', {
 import { Stack, Database } from '@iacmp/core';
 const stack = new Stack('nome');
 new Database.SQL(stack, 'LogicalId', {
-  engine: 'mysql' | 'postgres',   // OBRIGATÓRIO — apenas estes dois valores
+  engine: 'mysql' | 'postgres' | 'mariadb' | 'oracle' | 'sqlserver',  // OBRIGATÓRIO
   instanceType?: string,
   storageGb?: number,
   multiAz?: boolean,
   backupRetentionDays?: number,
   deletionProtection?: boolean,
+  edition?: string,        // Oracle: 'se2' (padrão) | 'ee'  /  SQL Server: 'ex' (padrão) | 'web' | 'se' | 'ee'
+  licenseModel?: 'license-included' | 'bring-your-own-license',
 });
 export default stack;
 \`\`\`
+
+Mapeamento por provider:
+- mysql → MySQL 8.0 (RDS / Azure Database for MySQL Flexible / Cloud SQL MYSQL_8_0)
+- postgres → PostgreSQL 15 (RDS / Azure Database for PostgreSQL Flexible / Cloud SQL POSTGRES_15)
+- mariadb → MariaDB 10.11 (RDS / Azure Database for MariaDB / Cloud SQL usa MySQL 8.0 compat.)
+- oracle → oracle-se2 ou oracle-ee (RDS / Oracle Database@Azure / Cloud SQL usa PostgreSQL compat.)
+- sqlserver → sqlserver-ex/se/ee (RDS / Azure SQL Database / Cloud SQL SQLSERVER_2019_EXPRESS)
+
+Notas: Oracle e SQL Server requerem instâncias maiores (mínimo small). No GCP, Oracle não tem serviço gerenciado nativo e é provisionado como PostgreSQL (AlloyDB-compatible). MariaDB no GCP usa MySQL 8.0.
 
 ### Database.DocumentDB — DocumentDB / MongoDB compatível
 \`\`\`typescript
@@ -579,7 +590,7 @@ Exemplos de como responder perguntas conversacionais:
 
 Pergunta: "por que você usou postgres em vez de oracle?"
 Resposta correta:
-{"explanation":"O construct Database.SQL aceita apenas 'mysql' ou 'postgres' como valores para o campo engine. Oracle não é suportado pela API atual do @iacmp/core. Se precisar de Oracle, seria necessário estender o core com um novo construct.","files":[],"deletions":[],"nextSteps":[],"warnings":[]}
+{"explanation":"O construct Database.SQL suporta os engines 'mysql', 'postgres', 'mariadb', 'oracle' e 'sqlserver'. Se preferir Oracle, posso alterar o stack para usar engine: 'oracle'. No GCP, Oracle não tem serviço gerenciado nativo e será provisionado como PostgreSQL (AlloyDB-compatible); nas outras clouds (AWS e Azure) o Oracle é nativo.","files":[],"deletions":[],"nextSteps":[],"warnings":[]}
 
 Pergunta: "o que é um NAT Gateway?"
 Resposta correta:

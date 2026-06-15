@@ -481,6 +481,98 @@ function synthesizeConstruct(construct: BaseConstruct): ARMResource[] {
     case 'Database.SQL': {
       const engine = (props.engine as string) ?? 'mysql';
       const serverName = `${construct.id.toLowerCase()}-server`;
+      const storageBytes = (props.storageGb as number ?? 20) * 1024 * 1024 * 1024;
+      const zoneRedundant = (props.multiAz as boolean) ?? false;
+
+      // MySQL → Azure Database for MySQL Flexible Server
+      if (engine === 'mysql') {
+        return [
+          {
+            type: 'Microsoft.DBforMySQL/flexibleServers',
+            apiVersion: '2023-06-30',
+            name: serverName,
+            location,
+            tags: tag(construct.id),
+            sku: { name: 'Standard_D2ds_v4', tier: 'GeneralPurpose' },
+            properties: {
+              administratorLogin: 'mysqladmin',
+              administratorLoginPassword: '[parameters(\'adminPassword\')]',
+              version: '8.0.21',
+              storage: { storageSizeGB: props.storageGb ?? 20, autoGrow: 'Enabled' },
+              backup: { backupRetentionDays: props.backupRetentionDays ?? 7, geoRedundantBackup: 'Disabled' },
+              highAvailability: { mode: zoneRedundant ? 'ZoneRedundant' : 'Disabled' },
+            },
+          },
+        ];
+      }
+
+      // PostgreSQL → Azure Database for PostgreSQL Flexible Server
+      if (engine === 'postgres') {
+        return [
+          {
+            type: 'Microsoft.DBforPostgreSQL/flexibleServers',
+            apiVersion: '2023-06-01-preview',
+            name: serverName,
+            location,
+            tags: tag(construct.id),
+            sku: { name: 'Standard_D2ds_v5', tier: 'GeneralPurpose' },
+            properties: {
+              administratorLogin: 'pgadmin',
+              administratorLoginPassword: '[parameters(\'adminPassword\')]',
+              version: '15',
+              storage: { storageSizeGB: props.storageGb ?? 32 },
+              backup: { backupRetentionDays: props.backupRetentionDays ?? 7, geoRedundantBackup: 'Disabled' },
+              highAvailability: { mode: zoneRedundant ? 'ZoneRedundant' : 'Disabled' },
+            },
+          },
+        ];
+      }
+
+      // MariaDB → Azure Database for MariaDB
+      if (engine === 'mariadb') {
+        return [
+          {
+            type: 'Microsoft.DBforMariaDB/servers',
+            apiVersion: '2018-06-01',
+            name: serverName,
+            location,
+            tags: tag(construct.id),
+            sku: { name: 'GP_Gen5_2', tier: 'GeneralPurpose', capacity: 2, family: 'Gen5' },
+            properties: {
+              administratorLogin: 'mariadbadmin',
+              administratorLoginPassword: '[parameters(\'adminPassword\')]',
+              version: '10.3',
+              storageProfile: {
+                storageMB: (props.storageGb as number ?? 20) * 1024,
+                backupRetentionDays: props.backupRetentionDays ?? 7,
+                geoRedundantBackup: 'Disabled',
+              },
+            },
+          },
+        ];
+      }
+
+      // Oracle → Oracle Database@Azure (exadata-based, requer subscription agreement)
+      if (engine === 'oracle') {
+        return [
+          {
+            type: 'Oracle.Database/cloudExadataInfrastructures',
+            apiVersion: '2023-09-01',
+            name: serverName,
+            location,
+            tags: tag(construct.id),
+            properties: {
+              displayName: construct.id,
+              shape: 'Exadata.X9M',
+              computeCount: 2,
+              storageCount: 3,
+            },
+          },
+        ];
+      }
+
+      // SQL Server (padrão) → Azure SQL Database
+      const edition = (props.edition as string) ?? 'Standard';
       return [
         {
           type: 'Microsoft.Sql/servers',
@@ -500,11 +592,11 @@ function synthesizeConstruct(construct: BaseConstruct): ARMResource[] {
           name: `${serverName}/${construct.id}`,
           location,
           dependsOn: [`[resourceId('Microsoft.Sql/servers', '${serverName}')]`],
+          sku: { name: edition === 'ee' ? 'BusinessCritical' : 'Standard', tier: edition === 'ee' ? 'BusinessCritical' : 'Standard' },
           properties: {
             collation: 'SQL_Latin1_General_CP1_CI_AS',
-            catalogCollation: engine === 'postgres' ? 'DATABASE_DEFAULT' : 'SQL_Latin1_General_CP1_CI_AS',
-            maxSizeBytes: (props.storageGb as number ?? 20) * 1024 * 1024 * 1024,
-            zoneRedundant: (props.multiAz as boolean) ?? false,
+            maxSizeBytes: storageBytes,
+            zoneRedundant,
           },
         },
       ];

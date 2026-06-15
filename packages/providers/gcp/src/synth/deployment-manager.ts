@@ -462,7 +462,22 @@ function synthesizeConstruct(construct: BaseConstruct): GCPResource[] {
     // ── Database ──────────────────────────────────────────────────────────
     case 'Database.SQL': {
       const engine = (props.engine as string) ?? 'mysql';
-      const dbVersion = engine === 'postgres' ? 'POSTGRES_15' : 'MYSQL_8_0';
+      const edition = (props.edition as string) ?? '';
+
+      // GCP Cloud SQL suporta MySQL, PostgreSQL e SQL Server nativamente.
+      // Oracle e MariaDB não têm serviço gerenciado — usa AlloyDB (postgres-compatible) como fallback.
+      const dbVersionMap: Record<string, string> = {
+        mysql:     'MYSQL_8_0',
+        postgres:  'POSTGRES_15',
+        mariadb:   'MYSQL_8_0',    // MariaDB → MySQL no Cloud SQL (mais compatível)
+        sqlserver: `SQLSERVER_2019_${(edition || 'EXPRESS').toUpperCase()}`,
+        oracle:    'POSTGRES_15',  // Oracle → AlloyDB/PostgreSQL (postgres-compatible)
+      };
+      const dbVersion = dbVersionMap[engine] ?? 'MYSQL_8_0';
+
+      // Tier: SQL Server exige no mínimo db-custom-2-4096
+      const defaultTier = engine === 'sqlserver' ? 'db-custom-2-4096' : 'db-f1-micro';
+
       return [{
         name: construct.id,
         type: 'sqladmin.v1beta4.instance',
@@ -470,8 +485,11 @@ function synthesizeConstruct(construct: BaseConstruct): GCPResource[] {
           databaseVersion: dbVersion,
           region,
           settings: {
-            tier: 'db-f1-micro',
-            backupConfiguration: { enabled: true, binaryLogEnabled: engine === 'mysql' },
+            tier: (props.instanceType as string) ?? defaultTier,
+            backupConfiguration: {
+              enabled: true,
+              binaryLogEnabled: (engine === 'mysql' || engine === 'mariadb'),
+            },
             storageAutoResize: true,
             storageAutoResizeLimit: (props.storageGb as number) ?? 20,
             availabilityType: (props.multiAz as boolean) ? 'REGIONAL' : 'ZONAL',

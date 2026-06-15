@@ -447,23 +447,56 @@ function synthesizeConstruct(construct: BaseConstruct): string {
     // ── Database ──────────────────────────────────────────────────────────
     case 'Database.SQL': {
       const engine = (props.engine as string) ?? 'mysql';
-      const body = indent([
+      const edition = (props.edition as string) ?? '';
+      const licenseModel = (props.licenseModel as string) ?? '';
+
+      const engineVersionMap: Record<string, string> = {
+        mysql:     '8.0.36',
+        postgres:  '15.4',
+        mariadb:   '10.11.6',
+        oracle:    '19.0.0.0.ru-2024-01.rur-2024-01.r1',
+        sqlserver: '15.00.4365.2.v1',
+      };
+      const engineIdentMap: Record<string, string> = {
+        mysql:     'mysql',
+        postgres:  'postgres',
+        mariadb:   'mariadb',
+        oracle:    `oracle-${edition || 'se2'}`,
+        sqlserver: `sqlserver-${edition || 'ex'}`,
+      };
+      const defaultInstanceMap: Record<string, string> = {
+        mysql:     'db.t3.micro',
+        postgres:  'db.t3.micro',
+        mariadb:   'db.t3.micro',
+        oracle:    'db.t3.small',
+        sqlserver: 'db.t3.small',
+      };
+      const usernameMap: Record<string, string> = {
+        mysql:     'dbadmin',
+        postgres:  'dbadmin',
+        mariadb:   'dbadmin',
+        oracle:    'dbadmin',
+        sqlserver: 'sqladmin',
+      };
+
+      const attrs = [
         attr('identifier', construct.id.toLowerCase()),
-        attr('engine', engine),
-        attr('engine_version', engine === 'postgres' ? '15.4' : '8.0.36'),
-        attr('instance_class', (props.instanceType as string) ?? 'db.t3.micro'),
+        attr('engine', engineIdentMap[engine] ?? engine),
+        attr('engine_version', engineVersionMap[engine] ?? '8.0.36'),
+        attr('instance_class', (props.instanceType as string) ?? defaultInstanceMap[engine] ?? 'db.t3.micro'),
         attr('allocated_storage', (props.storageGb as number) ?? 20),
-        attr('username', 'dbadmin'),
+        attr('username', usernameMap[engine] ?? 'dbadmin'),
         attr('password', 'changeme'),
         attr('multi_az', (props.multiAz as boolean) ?? false),
         attr('skip_final_snapshot', false),
         attr('storage_encrypted', true),
         attr('backup_retention_period', (props.backupRetentionDays as number) ?? 7),
         attr('deletion_protection', (props.deletionProtection as boolean) ?? false),
-        '',
-        tagsBlock(construct.id),
-      ].join('\n'));
-      return block('resource', ['aws_db_instance', id], body);
+      ];
+      if (licenseModel) attrs.push(attr('license_model', licenseModel));
+      attrs.push('', tagsBlock(construct.id));
+
+      return block('resource', ['aws_db_instance', id], indent(attrs.join('\n')));
     }
 
     case 'Database.DocumentDB': {

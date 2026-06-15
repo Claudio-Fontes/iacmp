@@ -498,21 +498,47 @@ function synthesizeConstruct(construct: BaseConstruct): Array<[string, CloudForm
     // ── Database ──────────────────────────────────────────────────────────
     case 'Database.SQL': {
       const engine = props.engine as string;
+      const edition = (props.edition as string) ?? '';
+
+      // Mapeia engine → Engine + EngineVersion do RDS
+      const engineMap: Record<string, { Engine: string; EngineVersion: string }> = {
+        mysql:     { Engine: 'mysql',                                    EngineVersion: '8.0.36' },
+        postgres:  { Engine: 'postgres',                                 EngineVersion: '15.4' },
+        mariadb:   { Engine: 'mariadb',                                  EngineVersion: '10.11.6' },
+        oracle:    { Engine: `oracle-${edition || 'se2'}`,               EngineVersion: '19.0.0.0.ru-2024-01.rur-2024-01.r1' },
+        sqlserver: { Engine: `sqlserver-${edition || 'ex'}`,             EngineVersion: '15.00.4365.2.v1' },
+      };
+      const mapped = engineMap[engine] ?? engineMap['mysql'];
+
+      const isOracle    = engine === 'oracle';
+      const isSqlServer = engine === 'sqlserver';
+      const licenseModel = (props.licenseModel as string)
+        ?? (isOracle || isSqlServer ? 'license-included' : undefined);
+
+      // SQL Server com licença incluída não suporta MasterUsername customizado
+      const masterUser = isSqlServer ? 'sqladmin' : 'dbadmin';
+
+      // Oracle e SQL Server exigem instâncias maiores (mínimo db.t3.small)
+      const defaultInstance = (isOracle || isSqlServer) ? 'db.t3.small' : 'db.t3.micro';
+
+      const rdsProps: Record<string, unknown> = {
+        DBInstanceClass:       (props.instanceType as string) ?? defaultInstance,
+        Engine:                mapped.Engine,
+        EngineVersion:         mapped.EngineVersion,
+        AllocatedStorage:      String(props.storageGb ?? 20),
+        MultiAZ:               (props.multiAz as boolean) ?? false,
+        MasterUsername:        masterUser,
+        MasterUserPassword:    { 'Fn::Sub': '{{resolve:ssm:/iacmp/${AWS::StackName}/db-password}}' },
+        StorageEncrypted:      true,
+        BackupRetentionPeriod: props.backupRetentionDays ?? 7,
+        DeletionProtection:    (props.deletionProtection as boolean) ?? false,
+      };
+      if (licenseModel) rdsProps['LicenseModel'] = licenseModel;
+
       return [[logicalId, {
         Type: 'AWS::RDS::DBInstance',
         DeletionPolicy: (props.deletionProtection as boolean) ? 'Retain' : 'Snapshot',
-        Properties: {
-          DBInstanceClass: (props.instanceType as string) ?? 'db.t3.micro',
-          Engine: engine === 'postgres' ? 'postgres' : 'mysql',
-          EngineVersion: engine === 'postgres' ? '15.4' : '8.0.36',
-          AllocatedStorage: String(props.storageGb ?? 20),
-          MultiAZ: (props.multiAz as boolean) ?? false,
-          MasterUsername: 'dbadmin',
-          MasterUserPassword: { 'Fn::Sub': '{{resolve:ssm:/iacmp/${AWS::StackName}/db-password}}' },
-          StorageEncrypted: true,
-          BackupRetentionPeriod: props.backupRetentionDays ?? 7,
-          DeletionProtection: (props.deletionProtection as boolean) ?? false,
-        },
+        Properties: rdsProps,
       }]];
     }
 

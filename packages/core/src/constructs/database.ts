@@ -1,12 +1,26 @@
 import { Stack, BaseConstruct } from '../stack';
 
+export type SQLEngine =
+  | 'mysql'
+  | 'postgres'
+  | 'mariadb'
+  | 'oracle'
+  | 'sqlserver';
+
 export interface DatabaseSQLProps {
-  engine: 'mysql' | 'postgres';
+  engine: SQLEngine;
   instanceType?: string;
   multiAz?: boolean;
   storageGb?: number;
   backupRetentionDays?: number;
   deletionProtection?: boolean;
+  /** Edição do Oracle ou SQL Server quando aplicável.
+   * Oracle: 'ee' | 'se2' (padrão: 'se2')
+   * SQL Server: 'ex' | 'web' | 'se' | 'ee' (padrão: 'ex')
+   */
+  edition?: string;
+  /** Licença: 'license-included' | 'bring-your-own-license' (padrão: 'license-included') */
+  licenseModel?: 'license-included' | 'bring-your-own-license';
 }
 
 export interface DatabaseDocumentDBProps {
@@ -35,9 +49,18 @@ export namespace Database {
   export class SQL implements BaseConstruct {
     readonly type = 'Database.SQL';
     readonly props: Record<string, unknown>;
+
+    static readonly SUPPORTED_ENGINES: SQLEngine[] = [
+      'mysql', 'postgres', 'mariadb', 'oracle', 'sqlserver',
+    ];
+
     constructor(stack: Stack, readonly id: string, props: DatabaseSQLProps) {
-      if (props.engine !== 'mysql' && props.engine !== 'postgres')
-        throw new Error(`Database.SQL "${id}": engine inválido "${props.engine}". Use "mysql" ou "postgres".`);
+      if (!SQL.SUPPORTED_ENGINES.includes(props.engine)) {
+        throw new Error(
+          `Database.SQL "${id}": engine inválido "${props.engine}". ` +
+          `Use um dos valores suportados: ${SQL.SUPPORTED_ENGINES.join(', ')}.`,
+        );
+      }
       this.props = props as unknown as Record<string, unknown>;
       stack.addConstruct(this);
     }
