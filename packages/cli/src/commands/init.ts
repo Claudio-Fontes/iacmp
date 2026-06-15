@@ -186,7 +186,7 @@ test('${projectName} stack tem pelo menos um construct', () => {
 `;
 }
 
-function packageJson(projectName: string): string {
+function packageJson(projectName: string, corePath: string): string {
   return JSON.stringify({
     name: projectName,
     version: '0.1.0',
@@ -197,6 +197,9 @@ function packageJson(projectName: string): string {
       test: 'jest',
       synth: 'iacmp synth',
       deploy: 'iacmp deploy',
+    },
+    dependencies: {
+      '@iacmp/core': `file:${corePath}`,
     },
     devDependencies: {
       '@types/jest': '^30',
@@ -403,11 +406,11 @@ export default class Init extends Command {
 
     if (flags.language === 'typescript') {
       // package.json
-      fs.writeFileSync(path.join(projectDir, 'package.json'), packageJson(projectName));
-
-      // tsconfig.json
       const corePkgJson = require.resolve('@iacmp/core/package.json');
       const corePath = path.dirname(corePkgJson);
+      fs.writeFileSync(path.join(projectDir, 'package.json'), packageJson(projectName, corePath));
+
+      // tsconfig.json
       fs.writeFileSync(path.join(projectDir, 'tsconfig.json'), tsConfig(corePath));
 
       // stack (usa o template escolhido)
