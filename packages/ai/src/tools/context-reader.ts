@@ -24,23 +24,33 @@ export function readProjectContext(projectDir: string): string {
     lines.push('');
   }
 
-  // Lista stacks existentes
+  // Lista stacks existentes (recursivo — suporta subpastas compute/, database/, etc.)
   const stacksDir = path.join(projectDir, 'stacks');
   if (fs.existsSync(stacksDir)) {
-    const stackFiles = fs.readdirSync(stacksDir).filter(f => f.endsWith('.ts') || f.endsWith('.js'));
+    const findStackFiles = (dir: string): string[] => {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      const files: string[] = [];
+      for (const e of entries) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) files.push(...findStackFiles(full));
+        else if (e.name.endsWith('.ts') || e.name.endsWith('.js')) files.push(full);
+      }
+      return files;
+    };
+
+    const stackFiles = findStackFiles(stacksDir);
 
     if (stackFiles.length > 0) {
       lines.push('## Stacks existentes');
-      for (const file of stackFiles) {
-        const filePath = path.join(stacksDir, file);
+      lines.push('Caminhos completos (use exatamente estes em "deletions"):');
+      for (const filePath of stackFiles) {
+        const rel = path.relative(projectDir, filePath);
         const stat = fs.statSync(filePath);
         const sizeKb = (stat.size / 1024).toFixed(1);
-        lines.push(`- ${file} (${sizeKb} KB)`);
+        lines.push(`- ${rel} (${sizeKb} KB)`);
 
-        // Inclui conteúdo de stacks pequenas
-        const lineCount = fs.readFileSync(filePath, 'utf-8').split('\n').length;
-        if (lineCount <= 200) {
-          const content = fs.readFileSync(filePath, 'utf-8');
+        const content = fs.readFileSync(filePath, 'utf-8');
+        if (content.split('\n').length <= 200) {
           lines.push('```typescript');
           lines.push(content);
           lines.push('```');
