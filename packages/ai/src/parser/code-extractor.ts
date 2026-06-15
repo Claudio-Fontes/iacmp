@@ -6,6 +6,7 @@ export interface GeneratedFile {
 export interface AIGeneratedResponse {
   explanation: string;
   files: GeneratedFile[];
+  deletions: string[];
   nextSteps: string[];
   warnings: string[];
 }
@@ -79,6 +80,9 @@ function validate(obj: unknown): AIGeneratedResponse {
   return {
     explanation: o['explanation'] as string,
     files,
+    deletions: Array.isArray(o['deletions'])
+      ? (o['deletions'] as unknown[]).filter((s): s is string => typeof s === 'string')
+      : [],
     nextSteps: Array.isArray(o['nextSteps'])
       ? (o['nextSteps'] as unknown[]).filter((s): s is string => typeof s === 'string')
       : [],

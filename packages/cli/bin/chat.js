@@ -51,7 +51,7 @@ Module._resolveFilename = function(req, parent, isMain, opts) {
 const chalk = require('chalk');
 const {
   AnthropicProvider, CopilotProvider, ChatSession,
-  extractResponse, validateTypeScript, writeGeneratedFiles,
+  extractResponse, validateTypeScript, writeGeneratedFiles, deleteFiles,
   runSynth, readProjectContext, printExplanation, printWarnings,
   printNextSteps, buildSystemPrompt,
   loadSession, saveSession, clearSession, getCached, setCache, clearCache,
@@ -170,6 +170,10 @@ async function runGeneration(provider, session, lastPrompt) {
 
   printExplanation(parsed.explanation);
   printWarnings(parsed.warnings);
+
+  if (parsed.deletions && parsed.deletions.length > 0) {
+    await deleteFiles(parsed.deletions, cwd, ask);
+  }
 
   if (parsed.files.length > 0) {
     await writeGeneratedFiles(parsed.files, cwd, dryRun, ask);

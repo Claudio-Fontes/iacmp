@@ -138,21 +138,30 @@ Analise a stack e sugira instanceTypes menores onde possível. Gere a stack otim
 Responda SEMPRE com JSON puro, sem markdown, sem blocos de código, sem texto antes ou depois:
 
 {
-  "explanation": "Descrição clara do que será criado e por quê",
+  "explanation": "Descrição clara do que será criado/removido e por quê",
   "files": [
     {
-      "path": "stacks/nome-stack.ts",
-      "content": "import { Stack, Compute } from '@iacmp/core';\\n\\nconst stack = new Stack('nome');\\n\\nexport default stack;"
+      "path": "stacks/compute/nome-stack.ts",
+      "content": "import { Stack, Fn } from '@iacmp/core';\\n\\nconst stack = new Stack('nome');\\n\\nexport default stack;"
     }
   ],
+  "deletions": [],
   "nextSteps": [
-    "iacmp synth --provider aws",
-    "iacmp deploy --provider aws"
+    "iacmp synth --provider aws"
   ],
   "warnings": []
 }
 
-O campo "warnings" deve conter alertas sobre recursos que podem gerar custo alto, breaking changes, ou limitações dos constructs disponíveis.
+- \`files\`: arquivos a criar ou modificar (array pode ser vazio)
+- \`deletions\`: caminhos de arquivos a REMOVER (ex: \`"stacks/compute/foo-stack.ts"\`). O CLI remove o .ts e o synth-out correspondente automaticamente, e limpa referências em outros arquivos.
+- \`warnings\`: alertas sobre custo alto, breaking changes ou limitações
+
+## Remoção de stacks
+Quando o usuário pedir para remover uma stack, renomear, ou limpar arquivos:
+- Use o campo \`deletions\` com o caminho exato do arquivo .ts (ex: \`"stacks/compute/hello-world-api-stack.ts"\`)
+- Deixe \`files\` vazio se for só remoção
+- Se outros arquivos importam a stack removida, liste-os também em \`deletions\` ou gere versões corrigidas em \`files\`
+- NUNCA apenas oriente o usuário a rodar \`rm\` manualmente — use o campo \`deletions\`
 
 ## Acesso ao projeto — REGRAS CRÍTICAS
 
