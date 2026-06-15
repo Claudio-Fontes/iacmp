@@ -15,20 +15,33 @@ interface Template {
 
 const TEMPLATES: Record<string, Template> = {
   default: {
-    description: 'Servidor web simples com bucket de assets',
-    constructs: ['Compute.Instance', 'Storage.Bucket'],
-    stackContent: (name) => `import { Stack, Compute, Storage } from '@iacmp/core';
+    description: 'Lambda Hello World exposta via API Gateway REST',
+    constructs: ['Fn.Lambda', 'Fn.ApiGateway'],
+    stackContent: (name) => `import { Stack, Fn } from '@iacmp/core';
 
 const stack = new Stack('${name}');
 
-new Compute.Instance(stack, 'Web', {
-  instanceType: 'small',
-  image: 'ubuntu-22.04',
+new Fn.Lambda(stack, 'HelloWorldFn', {
+  runtime: 'nodejs20',
+  handler: 'index.handler',
+  code: 'dist/',
+  memory: 128,
+  timeout: 10,
 });
 
-new Storage.Bucket(stack, 'Assets', {
-  versioning: true,
-  publicAccess: false,
+new Fn.ApiGateway(stack, 'HelloWorldApi', {
+  name: '${name}-api',
+  type: 'REST',
+  stageName: 'prod',
+  cors: true,
+  authType: 'NONE',
+  routes: [
+    {
+      method: 'GET',
+      path: '/hello',
+      lambdaId: 'HelloWorldFn',
+    },
+  ],
 });
 
 export default stack;
