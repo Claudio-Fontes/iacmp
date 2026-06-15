@@ -120,6 +120,7 @@ function createContextualProvider(base, projectContext) {
 }
 
 async function runGeneration(provider, session, lastPrompt) {
+  let acted = false;
   const cached = getCached(cwd, lastPrompt);
   let raw;
 
@@ -173,13 +174,16 @@ async function runGeneration(provider, session, lastPrompt) {
 
   if (parsed.deletions && parsed.deletions.length > 0) {
     await deleteFiles(parsed.deletions, cwd, iacProvider, ask);
+    acted = true;
   }
 
   if (parsed.files.length > 0) {
     await writeGeneratedFiles(parsed.files, cwd, dryRun, ask);
+    acted = true;
   }
 
   printNextSteps(parsed.nextSteps);
+  return acted;
 
   if (!dryRun && parsed.files.length > 0) {
     const ans = await ask('Quer rodar `iacmp synth` agora? (y/n) ');
@@ -239,8 +243,9 @@ async function main() {
     const freshContext = readProjectContext(cwd);
     const provider = createContextualProvider(aiProvider, freshContext);
 
-    await runGeneration(provider, session, input);
-    saveSession(cwd, session.getMessages());
+    const changed = await runGeneration(provider, session, input);
+    // Só salva na sessão se houve ação real — evita contaminar com respostas de erro
+    if (changed) saveSession(cwd, session.getMessages());
     console.log('');
   }
 

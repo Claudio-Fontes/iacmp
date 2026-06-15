@@ -84,16 +84,80 @@ function buildStackDiagram(name: string, stack: Stack): DiagramStack {
   return { name, nodes, relationships };
 }
 
+// BUG-05 fix: infere relacionamentos cross-stack via environment variables
+// ex: Lambda com TABLE_NAME aponta para Database em outra stack
+function inferCrossStackRelationships(
+  builtStacks: DiagramStack[],
+): DiagramRelationship[] {
+  const relationships: DiagramRelationship[] = [];
+
+  // Índice: id do nó → nó
+  const nodeById: Record<string, DiagramNode> = {};
+  for (const s of builtStacks) {
+    for (const n of s.nodes) nodeById[n.id] = n;
+  }
+
+  // Heurísticas de env keys para inferir dependência
+  const ENV_HINTS: Array<{ pattern: RegExp; targetType: string; label: string }> = [
+    { pattern: /TABLE_NAME|DYNAMO|DYNAMODB/i,    targetType: 'Database.SQL',    label: 'reads table'  },
+    { pattern: /DB_HOST|DB_URL|DATABASE_URL/i,   targetType: 'Database.SQL',    label: 'connects db'  },
+    { pattern: /BUCKET_NAME|S3_BUCKET/i,         targetType: 'Storage.Bucket',  label: 'reads bucket' },
+    { pattern: /VPC_ID|VPC_CIDR/i,               targetType: 'Network.VPC',     label: 'uses vpc'     },
+  ];
+
+  for (const srcStack of builtStacks) {
+    for (const srcNode of srcStack.nodes) {
+      if (srcNode.constructType !== 'Function.Lambda') continue;
+      const env = srcNode.props?.environment as Record<string, string> | undefined;
+      if (!env || Object.keys(env).length === 0) continue;
+
+      for (const hint of ENV_HINTS) {
+        const matched = Object.keys(env).some(k => hint.pattern.test(k));
+        if (!matched) continue;
+
+        // Procura nó do tipo alvo em outras stacks
+        for (const tgtStack of builtStacks) {
+          if (tgtStack.name === srcStack.name) continue;
+          for (const tgtNode of tgtStack.nodes) {
+            if (tgtNode.constructType !== hint.targetType) continue;
+            relationships.push({
+              sourceId: srcNode.id,
+              targetId: tgtNode.id,
+              label: hint.label,
+              inferred: true,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  return relationships;
+}
+
 export function buildModel(
   projectName: string,
   provider: string,
   region: string,
   stacks: Array<{ name: string; stack: Stack }>,
 ): DiagramModel {
+  const builtStacks = stacks.map(({ name, stack }) => buildStackDiagram(name, stack));
+  const crossRelationships = inferCrossStackRelationships(builtStacks);
+
+  // Adiciona relacionamentos cross-stack à primeira stack que tem o nó fonte
+  for (const rel of crossRelationships) {
+    for (const s of builtStacks) {
+      if (s.nodes.some(n => n.id === rel.sourceId)) {
+        s.relationships.push(rel);
+        break;
+      }
+    }
+  }
+
   return {
     projectName,
     provider,
     region,
-    stacks: stacks.map(({ name, stack }) => buildStackDiagram(name, stack)),
+    stacks: builtStacks,
   };
 }

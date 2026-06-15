@@ -12,6 +12,9 @@ export namespace Database {
     readonly props: Record<string, unknown>;
 
     constructor(stack: Stack, readonly id: string, props: DatabaseSQLProps) {
+      if (props.engine !== 'mysql' && props.engine !== 'postgres') {
+        throw new Error(`Database.SQL: engine inválido "${props.engine}". Use "mysql" ou "postgres".`);
+      }
       this.props = props as unknown as Record<string, unknown>;
       stack.addConstruct(this);
     }

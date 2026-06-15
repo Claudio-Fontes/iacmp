@@ -41,12 +41,37 @@ function synthesizeConstruct(construct: BaseConstruct): string {
     }
 
     case 'Storage.Bucket': {
-      const body = indent([
-        attr('bucket', construct.id.toLowerCase()),
+      const versioning = (props.versioning as boolean) ?? false;
+      const blockPublic = !(props.publicAccess as boolean);
+      const bucketName = construct.id.toLowerCase();
+
+      // BUG-08 fix: emite bucket + versioning + public_access_block separados
+      const bucketBody = indent([
+        attr('bucket', bucketName),
         '',
         tagsBlock(construct.id),
       ].join('\n'));
-      return block('resource', ['aws_s3_bucket', id], body);
+
+      const versioningBody = indent([
+        `bucket = aws_s3_bucket.${id}.id`,
+        `versioning_configuration {`,
+        `  status = "${versioning ? 'Enabled' : 'Suspended'}"`,
+        `}`,
+      ].join('\n'));
+
+      const pabBody = indent([
+        `bucket                  = aws_s3_bucket.${id}.id`,
+        attr('block_public_acls', blockPublic),
+        attr('block_public_policy', blockPublic),
+        attr('ignore_public_acls', blockPublic),
+        attr('restrict_public_buckets', blockPublic),
+      ].join('\n'));
+
+      return [
+        block('resource', ['aws_s3_bucket', id], bucketBody),
+        block('resource', ['aws_s3_bucket_versioning', `${id}_versioning`], versioningBody),
+        block('resource', ['aws_s3_bucket_public_access_block', `${id}_pab`], pabBody),
+      ].join('\n');
     }
 
     case 'Network.VPC': {
@@ -66,11 +91,14 @@ function synthesizeConstruct(construct: BaseConstruct): string {
         attr('identifier', construct.id.toLowerCase()),
         attr('engine', engine),
         attr('engine_version', engine === 'postgres' ? '15.4' : '8.0.36'),
-        attr('instance_class', 'db.t3.micro'),
+        attr('instance_class', (props.instanceType as string) ?? 'db.t3.micro'),
         attr('allocated_storage', 20),
         attr('username', 'dbadmin'),
         attr('password', 'changeme'),
-        attr('skip_final_snapshot', true),
+        attr('multi_az', (props.multiAz as boolean) ?? false),
+        attr('skip_final_snapshot', false),
+        attr('storage_encrypted', true),
+        attr('backup_retention_period', 7),
         '',
         tagsBlock(construct.id),
       ].join('\n'));
@@ -78,6 +106,19 @@ function synthesizeConstruct(construct: BaseConstruct): string {
     }
 
     case 'Function.Lambda': {
+      const environment = props.environment as Record<string, string> | undefined;
+
+      // BUG-01 fix: emite bloco environment quando definido
+      const envBlock = environment && Object.keys(environment).length > 0
+        ? '\n' + indent([
+            'environment {',
+            indent('variables = {', 2),
+            ...Object.entries(environment).map(([k, v]) => indent(indent(attr(k, v), 2), 2)),
+            indent('}', 2),
+            '}',
+          ].join('\n'))
+        : '';
+
       const body = indent([
         attr('function_name', construct.id),
         attr('runtime', 'nodejs20.x'),
@@ -85,9 +126,14 @@ function synthesizeConstruct(construct: BaseConstruct): string {
         attr('role', 'arn:aws:iam::ACCOUNT_ID:role/lambda-role'),
         '',
         `filename = "function.zip"`,
+        `source_code_hash = filebase64sha256("function.zip")`,
+        '',
+        (props.memory ? attr('memory_size', props.memory as number) : ''),
+        (props.timeout ? attr('timeout', props.timeout as number) : ''),
+        envBlock,
         '',
         tagsBlock(construct.id),
-      ].join('\n'));
+      ].filter(l => l !== '').join('\n'));
       return block('resource', ['aws_lambda_function', id], body);
     }
 

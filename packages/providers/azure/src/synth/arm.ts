@@ -113,7 +113,13 @@ function synthesizeConstruct(construct: BaseConstruct): ARMResource[] {
       ];
     }
 
-    case 'Function.Lambda':
+    case 'Function.Lambda': {
+      const environment = (props.environment as Record<string, string>) ?? {};
+      const baseSettings = [
+        { name: 'FUNCTIONS_EXTENSION_VERSION', value: '~4' },
+        { name: 'FUNCTIONS_WORKER_RUNTIME', value: 'node' },
+      ];
+      const envSettings = Object.entries(environment).map(([k, v]) => ({ name: k, value: v }));
       return [{
         type: 'Microsoft.Web/sites',
         apiVersion: '2023-01-01',
@@ -123,14 +129,12 @@ function synthesizeConstruct(construct: BaseConstruct): ARMResource[] {
         properties: {
           siteConfig: {
             nodeVersion: '~20',
-            appSettings: [
-              { name: 'FUNCTIONS_EXTENSION_VERSION', value: '~4' },
-              { name: 'FUNCTIONS_WORKER_RUNTIME', value: 'node' },
-            ],
+            appSettings: [...baseSettings, ...envSettings],
           },
           httpsOnly: true,
         },
       }];
+    }
 
     default:
       return [];

@@ -117,11 +117,15 @@ export default class Synth extends Command {
 
       const typedStack = stack as Stack;
 
+      // BUG-04 fix: subdiretório por provider para evitar sobrescrita entre providers
+      const providerOutDir = path.join(outDir, provider);
+      fs.mkdirSync(providerOutDir, { recursive: true });
+
       switch (provider) {
         case 'aws': {
           const p = new AWSProvider();
           const template = p.synthesize(typedStack);
-          const outPath = path.join(outDir, `${stackName}.json`);
+          const outPath = path.join(providerOutDir, `${stackName}.json`);
           fs.writeFileSync(outPath, JSON.stringify(template, null, 2) + '\n');
           this.log(`Sintetizado: ${outPath}`);
           break;
@@ -130,7 +134,7 @@ export default class Synth extends Command {
         case 'azure': {
           const p = new AzureProvider();
           const template = p.synthesize(typedStack);
-          const outPath = path.join(outDir, `${stackName}.json`);
+          const outPath = path.join(providerOutDir, `${stackName}.json`);
           fs.writeFileSync(outPath, JSON.stringify(template, null, 2) + '\n');
           this.log(`Sintetizado: ${outPath}`);
           break;
@@ -139,7 +143,7 @@ export default class Synth extends Command {
         case 'gcp': {
           const p = new GCPProvider();
           const deployment = p.synthesize(typedStack);
-          const outPath = path.join(outDir, `${stackName}.json`);
+          const outPath = path.join(providerOutDir, `${stackName}.json`);
           fs.writeFileSync(outPath, JSON.stringify(deployment, null, 2) + '\n');
           this.log(`Sintetizado: ${outPath}`);
           break;
@@ -148,7 +152,7 @@ export default class Synth extends Command {
         case 'terraform': {
           const p = new TerraformProvider();
           const hcl = p.synthesize(typedStack);
-          const outPath = path.join(outDir, `${stackName}.tf`);
+          const outPath = path.join(providerOutDir, `${stackName}.tf`);
           fs.writeFileSync(outPath, hcl);
           this.log(`Sintetizado: ${outPath}`);
           break;

@@ -89,7 +89,8 @@ function synthesizeConstruct(construct: BaseConstruct): GCPResource[] {
       }];
     }
 
-    case 'Function.Lambda':
+    case 'Function.Lambda': {
+      const environment = (props.environment as Record<string, string>) ?? {};
       return [{
         name: construct.id,
         type: 'cloudfunctions.v2.function',
@@ -103,9 +104,11 @@ function synthesizeConstruct(construct: BaseConstruct): GCPResource[] {
           serviceConfig: {
             availableMemory: `${(props.memory as number) ?? 128}M`,
             timeoutSeconds: (props.timeout as number) ?? 30,
+            ...(Object.keys(environment).length > 0 ? { environmentVariables: environment } : {}),
           },
         },
       }];
+    }
 
     default:
       return [];
