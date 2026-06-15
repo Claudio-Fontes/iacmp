@@ -17,11 +17,12 @@ export { writeGeneratedFiles } from './tools/file-writer';
 export { deleteFiles } from './tools/file-deleter';
 export { renderAndConfirm, FileDiff, AskFn } from './tools/diff-renderer';
 export { runSynth } from './tools/synth-runner';
-export { readProjectContext, readProjectContextAsync } from './tools/context-reader';
-export { buildIndexes, IndexerOptions } from './rag/indexer';
-export { retrieve, formatRetrievedContext, RetrieverIndexes, RetrievalResult } from './rag/retriever';
-export { routeQuery, RoutingDecision } from './rag/query-router';
-export { Chunk, chunkStackFile, chunkIacmpDocs } from './rag/chunker';
-export { buildBM25Index, bm25Search } from './rag/bm25';
+export { readProjectContext, readProjectMeta, readProjectContextRAG, invalidateIndexCache } from './tools/context-reader';
 export { loadSession, saveSession, clearSession } from './tools/session-store';
 export { getCached, setCache, clearCache } from './tools/response-cache';
+// RAG
+export { Chunk, chunkStackFile, chunkIacmpDocs, chunkKnowledgeFile } from './rag/chunker';
+export { Contextualizer } from './rag/contextualizer';
+export { buildBM25Index, bm25Search, BM25Index } from './rag/bm25';
+export { retrieve, formatRetrievedContext, RetrieverIndexes, RetrievalResult } from './rag/retriever';
+export { buildIndexes, IndexerOptions } from './rag/indexer';

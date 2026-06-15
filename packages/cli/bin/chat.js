@@ -52,7 +52,7 @@ const chalk = require('chalk');
 const {
   AnthropicProvider, CopilotProvider, ChatSession,
   extractResponse, validateTypeScript, writeGeneratedFiles, deleteFiles,
-  runSynth, readProjectContext, printExplanation, printWarnings,
+  runSynth, readProjectContextAsync, printExplanation, printWarnings,
   printNextSteps, buildSystemPrompt,
   loadSession, saveSession, clearSession, getCached, setCache, clearCache,
 } = require('@iacmp/ai');
@@ -240,7 +240,7 @@ async function main() {
     session.addUserMessage(input);
     saveSession(cwd, session.getMessages());
 
-    const freshContext = readProjectContext(cwd);
+    const freshContext = await readProjectContextAsync(cwd, input);
     const provider = createContextualProvider(aiProvider, freshContext);
 
     const changed = await runGeneration(provider, session, input);
