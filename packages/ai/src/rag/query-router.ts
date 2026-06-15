@@ -1,10 +1,13 @@
 // Decide quais corpora buscar com base na query do usuário.
 // Fase 1 usa classificação por palavras-chave — sem chamada ao modelo.
 
+import { shouldFetchLive } from './live-retriever';
+
 export interface RoutingDecision {
   useProjectStacks: boolean;    // corpus 1
   useIacmpDocs: boolean;        // corpus 2
   usePlatformKnowledge: boolean; // corpus 3
+  useLive: boolean;             // corpus 4 — live retriever
 }
 
 // Termos que sinalizam que a query é sobre o projeto atual do usuário
@@ -79,10 +82,12 @@ export function routeQuery(query: string): RoutingDecision {
   const useIacmpDocs = isGeneration || containsSignal(query, DOCS_SIGNALS);
   const usePlatformKnowledge = containsSignal(query, KNOWLEDGE_SIGNALS);
 
+  const useLive = shouldFetchLive(query);
+
   // Se nenhum sinal foi encontrado, busca em tudo (fallback conservador)
   if (!useProjectStacks && !useIacmpDocs && !usePlatformKnowledge) {
-    return { useProjectStacks: true, useIacmpDocs: true, usePlatformKnowledge: true };
+    return { useProjectStacks: true, useIacmpDocs: true, usePlatformKnowledge: true, useLive };
   }
 
-  return { useProjectStacks, useIacmpDocs, usePlatformKnowledge };
+  return { useProjectStacks, useIacmpDocs, usePlatformKnowledge, useLive };
 }

@@ -1,5 +1,6 @@
 import { Chunk } from './chunker';
 import { BM25Index, bm25Search } from './bm25';
+import { VectorStore } from './vector-store';
 
 export interface RetrievalResult {
   chunk: Chunk;
@@ -13,6 +14,8 @@ export interface RetrieverIndexes {
   knowledgeIndex: BM25Index;
   // Mapa de id → chunk para lookup rápido
   chunkMap: Map<string, Chunk>;
+  // Vector store opcional (quando VOYAGE_API_KEY disponível)
+  vectorStore?: VectorStore;
 }
 
 // Quantos chunks buscar por corpus por padrão

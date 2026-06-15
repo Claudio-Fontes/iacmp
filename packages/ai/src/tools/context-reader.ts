@@ -3,6 +3,7 @@ import * as path from 'path';
 import { buildIndexes, IndexerOptions } from '../rag/indexer';
 import { retrieve, formatRetrievedContext, RetrieverIndexes } from '../rag/retriever';
 import { SYSTEM_PROMPT_TEMPLATE } from '../prompts/system-prompt';
+import { fetchLive, shouldFetchLive } from '../rag/live-retriever';
 
 // Cache de índices em memória por projectDir (evita reindexar em cada mensagem)
 const indexCache = new Map<string, RetrieverIndexes>();
@@ -164,12 +165,21 @@ export async function readProjectContextRAG(
     const ragContext = formatRetrievedContext(results);
     const meta = readProjectMeta(projectDir);
 
+    // Live retriever: consulta fontes externas quando a query pede info recente/preço/terraform
+    let liveContext = '';
+    if (shouldFetchLive(userQuery)) {
+      liveContext = await fetchLive(userQuery, [], { projectDir });
+    }
+
     // Sem hits relevantes: fallback para comportamento legado
-    if (!ragContext) {
+    if (!ragContext && !liveContext) {
       return readProjectContext(projectDir);
     }
 
-    return `${meta}\n${ragContext}`;
+    const parts = [meta];
+    if (ragContext) parts.push(ragContext);
+    if (liveContext) parts.push(`## Informações ao vivo\n${liveContext}`);
+    return parts.join('\n');
   } catch {
     // Fallback silencioso para comportamento legado
     return readProjectContext(projectDir);

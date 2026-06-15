@@ -5,6 +5,8 @@ import { Chunk, chunkStackFile, chunkIacmpDocs, chunkKnowledgeFile } from './chu
 import { Contextualizer } from './contextualizer';
 import { buildBM25Index, BM25Index } from './bm25';
 import { RetrieverIndexes } from './retriever';
+import { createEmbedder } from './embedder';
+import { VectorStore } from './vector-store';
 
 const INDEX_FILE = '.iacmp/rag-index.json';
 const KNOWLEDGE_DIR = path.join(__dirname, '../knowledge');
@@ -86,10 +88,13 @@ function loadKnowledgeChunks(): Chunk[] {
   return chunks;
 }
 
+const VECTOR_INDEX_FILE = '.iacmp/vector-index.bin';
+
 export interface IndexerOptions {
   projectDir: string;
   systemPromptTemplate: string;
   anthropicApiKey?: string;           // se fornecido, usa Contextual Retrieval
+  voyageApiKey?: string;              // se fornecido, gera embeddings Voyage AI
   useContextualRetrieval?: boolean;   // padrão: true se apiKey fornecida
   onProgress?: (msg: string) => void;
 }
@@ -100,6 +105,7 @@ export async function buildIndexes(options: IndexerOptions): Promise<RetrieverIn
     projectDir,
     systemPromptTemplate,
     anthropicApiKey,
+    voyageApiKey = process.env['VOYAGE_API_KEY'],
     useContextualRetrieval = !!anthropicApiKey,
     onProgress,
   } = options;
@@ -181,8 +187,41 @@ export async function buildIndexes(options: IndexerOptions): Promise<RetrieverIn
     chunkMap.set(c.id, c);
   }
 
-  const total = projectChunks.length + docsChunks.length + knowledgeChunks.length;
-  log(`RAG pronto — ${total} chunks indexados no total.`);
+  // ── Corpus Vector (Embeddings) ────────────────────────────────────────
+  const vectorStore = new VectorStore();
+  const vectorIndexPath = path.join(projectDir, VECTOR_INDEX_FILE);
 
-  return { projectIndex, docsIndex, knowledgeIndex, chunkMap };
+  if (voyageApiKey) {
+    // Tenta carregar índice existente, caso contrário gera novos embeddings
+    const loaded = vectorStore.load(vectorIndexPath);
+    if (!loaded) {
+      log(`Gerando embeddings com Voyage AI (${knowledgeChunks.length} chunks de conhecimento)...`);
+      const embedder = createEmbedder(voyageApiKey);
+      const texts = knowledgeChunks.map(c => c.contextualContent ?? c.content);
+
+      try {
+        const vectors = await embedder.embed(texts);
+        for (let i = 0; i < knowledgeChunks.length; i++) {
+          const chunk = knowledgeChunks[i];
+          vectorStore.add(chunk.id, vectors[i], {
+            id: chunk.id,
+            source: chunk.metadata.source,
+            section: chunk.metadata.section,
+            platform: chunk.metadata.platform,
+          });
+        }
+        vectorStore.save(vectorIndexPath);
+        log(`${vectorStore.size()} vetores gerados e salvos.`);
+      } catch (err) {
+        log(`Embeddings Voyage AI falharam — usando apenas BM25: ${(err as Error).message}`);
+      }
+    } else {
+      log(`${vectorStore.size()} vetores carregados do cache.`);
+    }
+  }
+
+  const total = projectChunks.length + docsChunks.length + knowledgeChunks.length;
+  log(`RAG pronto — ${total} chunks indexados no total${voyageApiKey ? ` + ${vectorStore.size()} vetores` : ''}.`);
+
+  return { projectIndex, docsIndex, knowledgeIndex, chunkMap, vectorStore };
 }
