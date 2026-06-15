@@ -1,13 +1,22 @@
 import { Stack, BaseConstruct } from '@iacmp/core';
 import { DiagramModel, DiagramStack, DiagramNode, DiagramRelationship } from './model';
 
-// Emoji e tecnologia por construct type
 const TYPE_META: Record<string, { emoji: string; technology: string }> = {
-  'Compute.Instance': { emoji: '⚙️',  technology: 'Virtual Machine' },
-  'Storage.Bucket':   { emoji: '🗂️',  technology: 'Object Storage'  },
-  'Network.VPC':      { emoji: '🌐',  technology: 'Virtual Network' },
-  'Database.SQL':     { emoji: '🗄️',  technology: 'Relational DB'   },
-  'Function.Lambda':  { emoji: '⚡',  technology: 'Serverless'       },
+  'Compute.Instance':       { emoji: '⚙️',  technology: 'Virtual Machine'    },
+  'Storage.Bucket':         { emoji: '🗂️',  technology: 'Object Storage'     },
+  'Network.VPC':            { emoji: '🌐',  technology: 'Virtual Network'    },
+  'Network.Subnet':         { emoji: '🔀',  technology: 'Subnet'             },
+  'Network.SecurityGroup':  { emoji: '🛡️',  technology: 'Security Group'     },
+  'Network.WAF':            { emoji: '🔒',  technology: 'WAF'                },
+  'Database.SQL':           { emoji: '🗄️',  technology: 'Relational DB'      },
+  'Database.DocumentDB':    { emoji: '📄',  technology: 'Document DB'        },
+  'Cache.Redis':            { emoji: '⚡',  technology: 'Cache'              },
+  'Function.Lambda':        { emoji: '⚡',  technology: 'Serverless'         },
+  'Policy.IAM':             { emoji: '🔑',  technology: 'IAM Policy'         },
+  'Events.EventBridge':     { emoji: '📡',  technology: 'Event Bus'          },
+  'Workflow.StepFunctions': { emoji: '🔄',  technology: 'Step Functions'     },
+  'Messaging.Queue':        { emoji: '📨',  technology: 'Queue (SQS)'        },
+  'Messaging.Topic':        { emoji: '📢',  technology: 'Topic (SNS)'        },
 };
 
 function safeId(raw: string): string {
@@ -39,6 +48,45 @@ function describeProps(c: BaseConstruct): string {
     if (p.runtime) parts.push(`runtime: ${p.runtime}`);
     if (p.memory) parts.push(`memory: ${p.memory}MB`);
     if (p.handler) parts.push(`handler: ${p.handler}`);
+  }
+  if (c.type === 'Network.SecurityGroup') {
+    const ingress = (p.ingressRules as Array<Record<string, unknown>>) ?? [];
+    if (ingress.length > 0) parts.push(`${ingress.length} ingress rules`);
+  }
+  if (c.type === 'Network.WAF') {
+    const rules = (p.rules as Array<unknown>) ?? [];
+    parts.push(`${rules.length} rules`);
+    if (p.scope) parts.push(`scope: ${p.scope}`);
+  }
+  if (c.type === 'Cache.Redis') {
+    if (p.nodeType) parts.push(`size: ${p.nodeType}`);
+    if (p.numCacheNodes) parts.push(`nodes: ${p.numCacheNodes}`);
+  }
+  if (c.type === 'Database.DocumentDB') {
+    if (p.instances) parts.push(`instances: ${p.instances}`);
+  }
+  if (c.type === 'Policy.IAM') {
+    if (p.attachTo) parts.push(`attachTo: ${p.attachTo}`);
+    if (p.attachType) parts.push(`type: ${p.attachType}`);
+  }
+  if (c.type === 'Events.EventBridge') {
+    const rules = (p.rules as Array<unknown>) ?? [];
+    if (rules.length > 0) parts.push(`${rules.length} rules`);
+  }
+  if (c.type === 'Workflow.StepFunctions') {
+    const steps = (p.steps as Array<unknown>) ?? [];
+    parts.push(`${steps.length} steps`);
+    if (p.type) parts.push(p.type as string);
+  }
+  if (c.type === 'Messaging.Queue') {
+    if (p.fifo) parts.push('FIFO');
+    if (p.encrypted) parts.push('encrypted');
+    if (p.dlqArn) parts.push('DLQ configured');
+  }
+  if (c.type === 'Messaging.Topic') {
+    if (p.fifo) parts.push('FIFO');
+    const subs = (p.subscriptions as Array<unknown>) ?? [];
+    if (subs.length > 0) parts.push(`${subs.length} subscriptions`);
   }
 
   return parts.join(', ');
@@ -99,10 +147,14 @@ function inferCrossStackRelationships(
 
   // Heurísticas de env keys para inferir dependência
   const ENV_HINTS: Array<{ pattern: RegExp; targetType: string; label: string }> = [
-    { pattern: /TABLE_NAME|DYNAMO|DYNAMODB/i,    targetType: 'Database.SQL',    label: 'reads table'  },
-    { pattern: /DB_HOST|DB_URL|DATABASE_URL/i,   targetType: 'Database.SQL',    label: 'connects db'  },
-    { pattern: /BUCKET_NAME|S3_BUCKET/i,         targetType: 'Storage.Bucket',  label: 'reads bucket' },
-    { pattern: /VPC_ID|VPC_CIDR/i,               targetType: 'Network.VPC',     label: 'uses vpc'     },
+    { pattern: /TABLE_NAME|DYNAMO|DYNAMODB/i,      targetType: 'Database.SQL',           label: 'reads table'    },
+    { pattern: /DB_HOST|DB_URL|DATABASE_URL/i,     targetType: 'Database.SQL',           label: 'connects db'    },
+    { pattern: /BUCKET_NAME|S3_BUCKET/i,           targetType: 'Storage.Bucket',         label: 'reads bucket'   },
+    { pattern: /VPC_ID|VPC_CIDR/i,                 targetType: 'Network.VPC',            label: 'uses vpc'       },
+    { pattern: /REDIS_URL|REDIS_HOST|CACHE_URL/i,  targetType: 'Cache.Redis',            label: 'uses cache'     },
+    { pattern: /DOCDB_URL|MONGO_URL/i,             targetType: 'Database.DocumentDB',    label: 'reads docdb'    },
+    { pattern: /QUEUE_URL|SQS_URL/i,               targetType: 'Messaging.Queue',        label: 'sends to queue' },
+    { pattern: /TOPIC_ARN|SNS_ARN/i,               targetType: 'Messaging.Topic',        label: 'publishes to'   },
   ];
 
   for (const srcStack of builtStacks) {
