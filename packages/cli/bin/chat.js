@@ -167,22 +167,6 @@ async function runGeneration(provider, session, lastPrompt, projectContext) {
     return false;
   }
 
-  // Rejeita resposta que menciona "standalone" quando há projeto carregado
-  if (projectContext && projectContext.includes('Stacks existentes') &&
-      parsed.explanation && parsed.explanation.toLowerCase().includes('standalone')) {
-    process.stderr.write(chalk.dim('Contexto desatualizado detectado — re-gerando...\n'));
-    session.removeLast(); // remove a resposta envenenada do histórico
-    const retryChunks = [];
-    try {
-      await provider.stream(session.getMessages(), chunk => retryChunks.push(chunk));
-      raw = retryChunks.join('');
-      session.addAssistantMessage(raw);
-      parsed = extractResponse(raw);
-    } catch {
-      // se falhar, continua com o que tinha
-    }
-  }
-
   // Só grava no cache depois de confirmar que o parse teve sucesso
   if (!fromCache) {
     setCache(cwd, cacheKey, raw);
@@ -287,10 +271,20 @@ async function main() {
     }
 
     console.log('');
-    session.addUserMessage(input);
-    saveSession(cwd, session.getMessages());
 
     const freshContext = await readProjectContextRAG(cwd, input);
+
+    // Na primeira mensagem da sessão, inclui o contexto das stacks na mensagem
+    // para garantir que o modelo leia o estado atual do projeto mesmo com histórico longo
+    const isFirstMessage = session.getMessages().length === 0;
+    const hasStacks = freshContext.includes('Stacks existentes');
+    const userMessageContent = (isFirstMessage && hasStacks)
+      ? `${input}\n\n[Contexto do projeto]\n${freshContext}`
+      : input;
+
+    session.addUserMessage(userMessageContent);
+    saveSession(cwd, session.getMessages());
+
     const provider = createContextualProvider(aiProvider, freshContext);
 
     const changed = await runGeneration(provider, session, input, freshContext);

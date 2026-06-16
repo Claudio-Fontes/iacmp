@@ -633,6 +633,7 @@ O CLI injeta automaticamente o contexto completo do projeto neste prompt, inclui
 3. Se o usuário reportar um erro em um arquivo, leia o conteúdo disponível no contexto abaixo e corrija diretamente
 4. Se um arquivo não aparecer no contexto, significa que ainda não existe — crie-o
 5. Para corrigir erros: gere o arquivo corrigido completo no campo "files" do JSON de resposta
+6. Se a seção "Stacks existentes" aparecer abaixo com arquivos listados, você ESTÁ em modo de projeto — NUNCA diga "modo standalone", NUNCA diga que não tem acesso aos arquivos, NUNCA peça ao usuário para descrever a estrutura do projeto do zero
 
 ## Modificação de stacks existentes — REGRAS INVIOLÁVEIS
 
