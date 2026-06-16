@@ -1,8 +1,16 @@
-import { Command } from '@oclif/core';
+import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import { readConfig, loadStacks, saveReport, today } from '../audit';
 import { BaseConstruct } from '@iacmp/core';
 import { Stack } from '@iacmp/core';
+
+type FailOn = 'critical' | 'warning' | 'none';
+
+function shouldFail(failOn: FailOn, critical: number, warnings: number): boolean {
+  if (failOn === 'critical') return critical > 0;
+  if (failOn === 'warning') return critical > 0 || warnings > 0;
+  return false;
+}
 
 interface Finding {
   level: 'critical' | 'warning' | 'ok';
@@ -110,9 +118,23 @@ function analyzeStack(stackName: string, stack: Stack): { findings: Finding[]; o
 
 export default class AuditSecurity extends Command {
   static description = 'Audit stacks for security issues';
-  static examples = ['$ iacmp audit-security'];
+  static examples = [
+    '$ iacmp audit-security',
+    '$ iacmp audit-security --fail-on=critical',
+    '$ iacmp audit-security --fail-on=warning',
+  ];
+
+  static flags = {
+    'fail-on': Flags.string({
+      description: 'Sai com exit 1 quando há achados no nível indicado',
+      options: ['critical', 'warning', 'none'],
+      default: 'none',
+    }),
+  };
 
   async run(): Promise<void> {
+    const { flags } = await this.parse(AuditSecurity);
+    const failOn = flags['fail-on'] as FailOn;
     const cwd = process.cwd();
     let config;
     try {
@@ -185,5 +207,9 @@ export default class AuditSecurity extends Command {
 
     const relPath = saveReport(cwd, 'security', md);
     this.log(`\nReport saved to ${relPath}`);
+
+    if (shouldFail(failOn, critical.length, warnings.length)) {
+      this.exit(1);
+    }
   }
 }

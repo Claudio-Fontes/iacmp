@@ -1,7 +1,11 @@
 import { Command, Flags } from '@oclif/core';
 import * as fs from 'fs';
 import * as path from 'path';
+import chalk from 'chalk';
 import { listTemplates, countResources } from '../synth-out';
+import { readJsonFile, errMessage } from '../utils';
+
+const MVP_BANNER = 'MVP: deploy/destroy real ainda não implementado nesta fase. Os arquivos foram impressos como dry-run.';
 
 const PROVIDER_LABELS: Record<string, string> = {
   aws: 'AWS (CloudFormation)',
@@ -35,10 +39,17 @@ export default class Deploy extends Command {
       this.error('Projeto não inicializado. Rode: iacmp init');
     }
 
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    let config: { provider?: string };
+    try {
+      config = readJsonFile<{ provider?: string }>(configPath);
+    } catch (err) {
+      this.error(errMessage(err));
+    }
     const provider = flags.provider ?? config.provider ?? 'aws';
     const label = PROVIDER_LABELS[provider] ?? provider.toUpperCase();
 
+    this.log(chalk.yellow.bold(MVP_BANNER));
+    this.log('');
     this.log(`Sintetizando stacks para ${provider}...`);
 
     const templates = listTemplates(cwd, provider, flags.stack);

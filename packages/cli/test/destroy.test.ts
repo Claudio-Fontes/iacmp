@@ -24,6 +24,8 @@ describe('destroy', () => {
     expect(r.status).toBe(0);
     expect(r.stdout).toMatch(/Would destroy \d+ resource\(s\) from AWS/);
     expect(r.stdout).toContain('main-stack');
+    // CLI-05: banner amarelo no topo da saída avisando que destroy é dry-run
+    expect(r.stdout).toContain('MVP: deploy/destroy real ainda não implementado nesta fase');
   });
 
   test('conta recursos (Total de recursos) de forma provider-aware', () => {

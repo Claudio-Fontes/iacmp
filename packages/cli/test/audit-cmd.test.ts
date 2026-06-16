@@ -285,3 +285,74 @@ describe('audit-all', () => {
     expect(exists(dir, 'audit')).toBe(false);
   });
 });
+
+describe('audit --fail-on (CLI-07)', () => {
+  let dir: string;
+  afterEach(() => dir && rmrf(dir));
+
+  test('audit-security --fail-on=critical sai com 1 quando há achado crítico', () => {
+    dir = makeProject({ stacks: { 'bad-stack.js': badStackJs() } });
+    const r = runCli(['audit-security', '--fail-on=critical'], { cwd: dir });
+    expect(r.status).toBe(1);
+    // relatório ainda é gravado antes do exit
+    expect(reportFor(dir, 'security')).toBeDefined();
+  });
+
+  test('audit-security --fail-on=critical sai com 0 quando só há warnings', () => {
+    // Bucket privado sem versioning => 0 críticos, 1 warning
+    const stack = `const { Stack, Storage } = require('@iacmp/core');
+const stack = new Stack('warn');
+new Storage.Bucket(stack, 'B', { versioning: false, publicAccess: false });
+module.exports = stack;
+`;
+    dir = makeProject({ stacks: { 'warn-stack.js': stack } });
+    const r = runCli(['audit-security', '--fail-on=critical'], { cwd: dir });
+    expect(r.status).toBe(0);
+  });
+
+  test('audit-security --fail-on=warning sai com 1 quando há warning', () => {
+    const stack = `const { Stack, Storage } = require('@iacmp/core');
+const stack = new Stack('warn');
+new Storage.Bucket(stack, 'B', { versioning: false, publicAccess: false });
+module.exports = stack;
+`;
+    dir = makeProject({ stacks: { 'warn-stack.js': stack } });
+    const r = runCli(['audit-security', '--fail-on=warning'], { cwd: dir });
+    expect(r.status).toBe(1);
+  });
+
+  test('audit-security --fail-on=none (default) sempre sai com 0', () => {
+    dir = makeProject({ stacks: { 'bad-stack.js': badStackJs() } });
+    const r = runCli(['audit-security'], { cwd: dir });
+    expect(r.status).toBe(0);
+  });
+
+  test('audit-all --fail-on=critical sai com 1 quando algum sub-audit é crítico', () => {
+    dir = makeProject({ stacks: { 'bad-stack.js': badStackJs() } });
+    const r = runCli(['audit-all', '--fail-on=critical'], { cwd: dir });
+    expect(r.status).toBe(1);
+    // os 4 relatórios ainda são gravados
+    expect(reportFor(dir, 'security')).toBeDefined();
+    expect(reportFor(dir, 'ha')).toBeDefined();
+    expect(reportFor(dir, 'dr')).toBeDefined();
+    expect(reportFor(dir, 'improvements')).toBeDefined();
+  });
+
+  test('audit-ha --fail-on=critical sai com 1 para VPC single-AZ', () => {
+    dir = makeProject({ stacks: { 'bad-stack.js': badStackJs() } });
+    const r = runCli(['audit-ha', '--fail-on=critical'], { cwd: dir });
+    expect(r.status).toBe(1);
+  });
+
+  test('audit-dr --fail-on=critical sai com 1 quando há achado NO DR', () => {
+    dir = makeProject({ stacks: { 'bad-stack.js': badStackJs() } });
+    const r = runCli(['audit-dr', '--fail-on=critical'], { cwd: dir });
+    expect(r.status).toBe(1);
+  });
+
+  test('audit-improvements --fail-on=critical sai com 1 para High impact', () => {
+    dir = makeProject({ stacks: { 'bad-stack.js': badStackJs() } });
+    const r = runCli(['audit-improvements', '--fail-on=critical'], { cwd: dir });
+    expect(r.status).toBe(1);
+  });
+});

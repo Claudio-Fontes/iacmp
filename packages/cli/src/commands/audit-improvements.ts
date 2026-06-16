@@ -1,7 +1,15 @@
-import { Command } from '@oclif/core';
+import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import { readConfig, loadStacks, saveReport, today } from '../audit';
 import { Stack } from '@iacmp/core';
+
+type FailOn = 'critical' | 'warning' | 'none';
+
+function shouldFail(failOn: FailOn, critical: number, warnings: number): boolean {
+  if (failOn === 'critical') return critical > 0;
+  if (failOn === 'warning') return critical > 0 || warnings > 0;
+  return false;
+}
 
 interface Improvement {
   category: string;
@@ -151,9 +159,22 @@ function analyzeStack(stackName: string, stack: Stack): { improvements: Improvem
 
 export default class AuditImprovements extends Command {
   static description = 'Suggest architecture and performance improvements for stacks';
-  static examples = ['$ iacmp audit-improvements'];
+  static examples = [
+    '$ iacmp audit-improvements',
+    '$ iacmp audit-improvements --fail-on=critical',
+  ];
+
+  static flags = {
+    'fail-on': Flags.string({
+      description: 'Sai com exit 1 quando há melhorias no nível indicado (critical = High impact, warning = qualquer)',
+      options: ['critical', 'warning', 'none'],
+      default: 'none',
+    }),
+  };
 
   async run(): Promise<void> {
+    const { flags } = await this.parse(AuditImprovements);
+    const failOn = flags['fail-on'] as FailOn;
     const cwd = process.cwd();
     let config;
     try {
@@ -214,5 +235,11 @@ export default class AuditImprovements extends Command {
 
     const relPath = saveReport(cwd, 'improvements', md);
     this.log(`\nReport saved to ${relPath}`);
+
+    const highImpact = allImprovements.filter(m => m.impact === 'High').length;
+    const otherImpact = allImprovements.length - highImpact;
+    if (shouldFail(failOn, highImpact, otherImpact)) {
+      this.exit(1);
+    }
   }
 }

@@ -1,7 +1,15 @@
-import { Command } from '@oclif/core';
+import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import { readConfig, loadStacks, saveReport, today } from '../audit';
 import { Stack } from '@iacmp/core';
+
+type FailOn = 'critical' | 'warning' | 'none';
+
+function shouldFail(failOn: FailOn, critical: number, warnings: number): boolean {
+  if (failOn === 'critical') return critical > 0;
+  if (failOn === 'warning') return critical > 0 || warnings > 0;
+  return false;
+}
 
 type HAStatus = 'no-ha' | 'ha-partial' | 'ha-ok' | 'info';
 
@@ -139,9 +147,22 @@ function analyzeStack(stackName: string, stack: Stack): HAFinding[] {
 
 export default class AuditHA extends Command {
   static description = 'Audit stacks for high availability (HA) issues';
-  static examples = ['$ iacmp audit-ha'];
+  static examples = [
+    '$ iacmp audit-ha',
+    '$ iacmp audit-ha --fail-on=critical',
+  ];
+
+  static flags = {
+    'fail-on': Flags.string({
+      description: 'Sai com exit 1 quando há achados no nível indicado',
+      options: ['critical', 'warning', 'none'],
+      default: 'none',
+    }),
+  };
 
   async run(): Promise<void> {
+    const { flags } = await this.parse(AuditHA);
+    const failOn = flags['fail-on'] as FailOn;
     const cwd = process.cwd();
     let config;
     try {
@@ -214,5 +235,9 @@ export default class AuditHA extends Command {
 
     const relPath = saveReport(cwd, 'ha', md);
     this.log(`\nReport saved to ${relPath}`);
+
+    if (shouldFail(failOn, noHA.length, partial.length + infos.length)) {
+      this.exit(1);
+    }
   }
 }

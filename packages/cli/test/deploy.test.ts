@@ -51,7 +51,8 @@ describe('deploy — caso feliz por provider (synth antes)', () => {
     expect(r.stdout).toContain('Would deploy 12 resource(s) to AWS (CloudFormation)');
     // dry-run: nada de "apply" no caminho não-terraform
     expect(r.stdout).not.toContain('Would apply');
-    // banner de MVP
+    // banner de MVP (CLI-05): no início e no fim
+    expect(r.stdout).toContain('MVP: deploy/destroy real ainda não implementado nesta fase');
     expect(r.stdout).toContain('(MVP: deploy real não implementado nesta fase)');
   });
 

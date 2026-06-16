@@ -85,12 +85,13 @@ describe('doctor — checagens de ambiente', () => {
     expect(r.stdout).toMatch(/iacmp v\d+\.\d+\.\d+/);
   });
 
-  test('lista todas as quatro checagens de ambiente', () => {
+  test('lista todas as checagens de ambiente', () => {
     const dir = mk({ noConfig: true, noStacks: true });
     const r = runCli(['doctor'], { cwd: dir });
 
     expect(r.status).toBe(0);
     expect(r.stdout).toContain('Node.js');
+    expect(r.stdout).toContain('npm');
     expect(r.stdout).toContain('iacmp');
     expect(r.stdout).toContain('AWS CLI');
     expect(r.stdout).toContain('ANTHROPIC_API_KEY');
@@ -237,18 +238,39 @@ describe('doctor — exit code', () => {
   });
 
   /**
-   * BUG (CLI-DOCTOR-01): o doctor sai SEMPRE com status 0, mesmo quando uma
-   * checagem obrigatória falha (ex.: Node < 20, AWS CLI ausente). Idealmente
-   * "Alguns itens precisam de atenção." deveria refletir num exit != 0 para
-   * permitir uso em CI/scripts. Este teste documenta o comportamento ATUAL.
+   * CLI-DOCTOR-01: checagens OBRIGATÓRIAS (Node>=20, npm) derrubam o exit code,
+   * checagens opcionais (AWS CLI, ANTHROPIC_API_KEY) ficam como info e não
+   * quebram. A flag --strict promove tudo a obrigatório.
    */
-  test('sai com 0 mesmo quando há itens com atenção (comportamento atual)', () => {
+  test('sai com 0 quando só faltam checagens opcionais (AWS CLI ausente)', () => {
     const dir = makeProject({ noConfig: true, noStacks: true });
     dirs.push(dir);
     const r = runCli(['doctor'], { cwd: dir });
 
-    // No ambiente de teste a AWS CLI normalmente não está instalada, então o
-    // veredicto costuma ser "Alguns itens precisam de atenção." — e ainda assim 0.
+    // No ambiente de teste Node>=20 e npm sempre estão presentes; AWS CLI pode
+    // não estar — mas como é opcional, o exit segue 0.
     expect(r.status).toBe(0);
+  });
+
+  test('--strict sai com 1 quando há checagem opcional falhando (sem AWS CLI)', () => {
+    const dir = makeProject({ noConfig: true, noStacks: true });
+    dirs.push(dir);
+    const hasAws = (() => {
+      try {
+        require('child_process').execSync('aws --version', { stdio: 'pipe' });
+        return true;
+      } catch {
+        return false;
+      }
+    })();
+
+    const r = runCli(['doctor', '--strict'], { cwd: dir });
+    if (hasAws) {
+      // ambiente tem AWS CLI: todas opcionais OK também → exit 0
+      expect(r.status).toBe(0);
+    } else {
+      expect(r.status).toBe(1);
+      expect(r.all).toContain('AWS CLI');
+    }
   });
 });

@@ -1,5 +1,15 @@
 import { DiagramModel, DiagramNode } from './model';
 
+// Mermaid envolve labels de nó em aspas duplas; "[]" também rompem o parser de
+// shape. Trocamos por equivalentes HTML para não corromper o grafo.
+function escapeMermaid(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/\[/g, '&#91;')
+    .replace(/\]/g, '&#93;');
+}
+
 const TYPE_EMOJI: Record<string, string> = {
   'Compute.Instance': '⚙️',
   'Storage.Bucket':   '🗂️',
@@ -11,12 +21,17 @@ const TYPE_EMOJI: Record<string, string> = {
 function nodeLabel(node: DiagramNode): string {
   const emoji = TYPE_EMOJI[node.constructType] ?? '□';
   const lines = [
-    `${emoji} ${node.label}`,
-    node.constructType,
+    `${emoji} ${escapeMermaid(node.label)}`,
+    escapeMermaid(node.constructType),
   ];
-  if (node.description) lines.push(node.description);
-  // Mermaid usa \n dentro de aspas para múltiplas linhas em node labels
+  if (node.description) lines.push(escapeMermaid(node.description));
+  // Mermaid usa <br/> dentro de aspas para múltiplas linhas em node labels
   return `["${lines.join('<br/>')}"]`;
+}
+
+function escapeRelLabel(s: string): string {
+  // Em arestas "A -->|label| B", | é separador — escapamos via entity HTML.
+  return escapeMermaid(s).replace(/\|/g, '&#124;');
 }
 
 export function renderMermaid(model: DiagramModel): string {
@@ -47,7 +62,7 @@ export function renderMermaid(model: DiagramModel): string {
         if (rel.inferred) {
           sections.push(`  ${rel.sourceId} -.->|inferred| ${rel.targetId}`);
         } else {
-          sections.push(`  ${rel.sourceId} -->|${rel.label}| ${rel.targetId}`);
+          sections.push(`  ${rel.sourceId} -->|${escapeRelLabel(rel.label)}| ${rel.targetId}`);
         }
       }
     }

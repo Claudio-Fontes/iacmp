@@ -2,7 +2,11 @@ import { Command, Flags } from '@oclif/core';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';
+import chalk from 'chalk';
 import { listTemplates, countResources } from '../synth-out';
+import { readJsonFile, errMessage } from '../utils';
+
+const MVP_BANNER = 'MVP: deploy/destroy real ainda não implementado nesta fase. Os arquivos foram impressos como dry-run.';
 
 export default class Destroy extends Command {
   static description = 'Destroi a infraestrutura do provider configurado';
@@ -38,8 +42,16 @@ export default class Destroy extends Command {
       this.error('Projeto não inicializado. Rode: iacmp init');
     }
 
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    let config: { provider?: string };
+    try {
+      config = readJsonFile<{ provider?: string }>(configPath);
+    } catch (err) {
+      this.error(errMessage(err));
+    }
     const provider = flags.provider ?? config.provider ?? 'aws';
+
+    this.log(chalk.yellow.bold(MVP_BANNER));
+    this.log('');
 
     const templates = listTemplates(cwd, provider, flags.stack);
 

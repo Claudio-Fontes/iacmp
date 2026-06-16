@@ -9,6 +9,8 @@ import { GCPProvider } from '@iacmp/provider-gcp';
 import { TerraformProvider } from '@iacmp/provider-terraform';
 import { Stack } from '@iacmp/core';
 import { resolveTemplateDir, templateExt } from '../synth-out';
+import { findStackFiles } from '../load-stacks';
+import { readJsonFile, errMessage } from '../utils';
 
 const CONTEXT_LINES = 2;
 
@@ -113,7 +115,12 @@ export default class Diff extends Command {
       this.error('Projeto não inicializado. Rode: iacmp init');
     }
 
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    let config: { provider?: string };
+    try {
+      config = readJsonFile<{ provider?: string }>(configPath);
+    } catch (err) {
+      this.error(errMessage(err));
+    }
     const provider = flags.provider ?? config.provider ?? 'aws';
     const outDir = resolveTemplateDir(cwd, provider);
 
@@ -135,9 +142,8 @@ export default class Diff extends Command {
       this.error('Diretório stacks/ não encontrado.');
     }
 
-    const stackFiles = fs.readdirSync(stacksDir)
-      .filter(f => f.endsWith('.ts') || f.endsWith('.js'))
-      .filter(f => !flags.stack || f.replace(/\.(ts|js)$/, '') === flags.stack);
+    const stackFiles = findStackFiles(stacksDir)
+      .filter(f => !flags.stack || path.basename(f).replace(/\.(ts|js)$/, '') === flags.stack);
 
     if (stackFiles.length === 0) {
       this.error('Nenhuma stack encontrada em stacks/');
@@ -145,9 +151,9 @@ export default class Diff extends Command {
 
     let anyDiff = false;
 
-    for (const file of stackFiles) {
+    for (const stackPath of stackFiles) {
+      const file = path.basename(stackPath);
       const stackName = file.replace(/\.(ts|js)$/, '');
-      const stackPath = path.join(stacksDir, file);
       const savedPath = path.join(outDir, `${stackName}${ext}`);
 
       if (!fs.existsSync(savedPath)) {
@@ -160,7 +166,7 @@ export default class Diff extends Command {
       try {
         stackModule = require(stackPath) as Record<string, unknown>;
       } catch (err) {
-        this.warn(`Não foi possível carregar ${file}: ${(err as Error).message}`);
+        this.warn(`Não foi possível carregar ${file}: ${errMessage(err)}`);
         continue;
       }
 
@@ -175,7 +181,7 @@ export default class Diff extends Command {
       try {
         newText = synthStack(stack as Stack, provider);
       } catch (err) {
-        this.warn(`Erro ao sintetizar ${stackName}: ${(err as Error).message}`);
+        this.warn(`Erro ao sintetizar ${stackName}: ${errMessage(err)}`);
         continue;
       }
 

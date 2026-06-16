@@ -577,6 +577,61 @@ describe('renderStructurizr — serialização DSL', () => {
   });
 });
 
+describe('escape de labels em renderers (CLI-08)', () => {
+  test('renderMermaid escapa aspas duplas e colchetes em label/description', () => {
+    const stack = new Stack('main');
+    stack.addConstruct({
+      id: 'X',
+      type: 'Custom.Thing',
+      props: {},
+    });
+    // hackeia o nó pra ter caracteres especiais
+    const model = buildModel('p', 'aws', 'r', [{ name: 'main', stack }]);
+    model.stacks[0].nodes[0].label = 'Has "quotes" and [brackets]';
+    model.stacks[0].nodes[0].description = 'desc "with" [chars]';
+
+    const out = renderMermaid(model);
+    // dentro do bloco mermaid (sintaxe do grafo) o label tem que estar escapado
+    // — caso contrário " ou [ ] quebram o parser do mermaid.
+    const block = out.split('```mermaid')[1].split('```')[0];
+    expect(block).toContain('&quot;');
+    expect(block).toContain('&#91;');
+    expect(block).toContain('&#93;');
+    expect(block).toMatch(/Has &quot;quotes&quot; and &#91;brackets&#93;/);
+    expect(block).not.toMatch(/Has "quotes" and \[brackets\]/);
+  });
+
+  test('renderStructurizr substitui aspas duplas em labels (mantém DSL bem-formada)', () => {
+    const stack = new Stack('main');
+    stack.addConstruct({ id: 'X', type: 'Custom.Thing', props: {} });
+    const model = buildModel('proj "weird"', 'aws', 'r', [{ name: 'group "x"', stack }]);
+    model.stacks[0].nodes[0].label = 'Name "with" quotes';
+    model.stacks[0].nodes[0].description = 'desc "x"';
+
+    const dsl = renderStructurizr(model);
+    // o nome do workspace, do grupo e da label não devem quebrar as aspas externas
+    // (aspa dupla interna some — vira aspa simples)
+    expect(dsl).toContain("workspace \"proj 'weird'\"");
+    expect(dsl).toContain("group \"group 'x'\"");
+    expect(dsl).toContain("container \"Name 'with' quotes\"");
+    // chaves balanceadas — DSL ainda parseável
+    const opens = (dsl.match(/{/g) || []).length;
+    const closes = (dsl.match(/}/g) || []).length;
+    expect(opens).toBe(closes);
+  });
+
+  test('renderStructurizr remove quebras de linha de labels', () => {
+    const stack = new Stack('main');
+    stack.addConstruct({ id: 'X', type: 'Custom.Thing', props: {} });
+    const model = buildModel('p', 'aws', 'r', [{ name: 'main', stack }]);
+    model.stacks[0].nodes[0].label = 'line1\nline2';
+
+    const dsl = renderStructurizr(model);
+    expect(dsl).toContain('container "line1 line2"');
+    expect(dsl).not.toMatch(/container "line1\nline2"/);
+  });
+});
+
 describe('integração builder→renderers: consistência de ids entre DSL e mermaid', () => {
   test('todos os ids de nós aparecem nas duas serializações', () => {
     const stack = new Stack('main');
