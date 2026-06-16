@@ -222,6 +222,21 @@ function buildStackDiagram(name: string, stack: Stack): DiagramStack {
     }
   }
 
+  // ApiGateway → Lambda via routes[].lambdaId (mesma stack)
+  const apiGateways = stack.constructs.filter(c => c.type === 'Function.ApiGateway');
+  for (const gw of apiGateways) {
+    const routes = (gw.props?.routes as Array<{ lambdaId?: string }>) ?? [];
+    const gwNode = nodes.find(n => n.label === gw.id);
+    if (!gwNode) continue;
+    for (const route of routes) {
+      if (!route.lambdaId) continue;
+      const lambdaNode = nodes.find(n => n.label === route.lambdaId);
+      if (lambdaNode) {
+        relationships.push({ sourceId: gwNode.id, targetId: lambdaNode.id, label: 'invokes', inferred: false });
+      }
+    }
+  }
+
   return { name, nodes, relationships };
 }
 
@@ -286,6 +301,25 @@ function inferCrossStackRelationships(
     }
   }
 
+  // ApiGateway cross-stack → Lambda via routes[].lambdaId
+  for (const srcStack of builtStacks) {
+    for (const srcNode of srcStack.nodes) {
+      if (srcNode.constructType !== 'Function.ApiGateway') continue;
+      const routes = (srcNode.props?.routes as Array<{ lambdaId?: string }>) ?? [];
+      for (const route of routes) {
+        if (!route.lambdaId) continue;
+        // Procura lambda com esse label em qualquer stack (exceto a própria, já tratada)
+        for (const tgtStack of builtStacks) {
+          if (tgtStack.name === srcStack.name) continue;
+          const tgtNode = tgtStack.nodes.find(n => n.label === route.lambdaId);
+          if (tgtNode) {
+            relationships.push({ sourceId: srcNode.id, targetId: tgtNode.id, label: 'invokes', inferred: false });
+          }
+        }
+      }
+    }
+  }
+
   return relationships;
 }
 
@@ -296,11 +330,29 @@ export function buildModel(
   stacks: Array<{ name: string; stack: Stack }>,
 ): DiagramModel {
   const builtStacks = stacks.map(({ name, stack }) => buildStackDiagram(name, stack));
+
+  // Deduplica nós com mesmo id global (ex: dois arquivos produzem o mesmo construct)
+  const seenNodeIds = new Set<string>();
+  for (const s of builtStacks) {
+    s.nodes = s.nodes.filter(n => {
+      if (seenNodeIds.has(n.id)) return false;
+      seenNodeIds.add(n.id);
+      return true;
+    });
+    // Remove relacionamentos que referenciam nós removidos
+    s.relationships = s.relationships.filter(
+      r => seenNodeIds.has(r.sourceId) && seenNodeIds.has(r.targetId),
+    );
+  }
+
+  // Remove stacks que ficaram sem nós após deduplicação
+  const nonEmptyStacks = builtStacks.filter(s => s.nodes.length > 0);
+  // Mas mantemos referências completas para inferência cross-stack
   const crossRelationships = inferCrossStackRelationships(builtStacks);
 
-  // Adiciona relacionamentos cross-stack à primeira stack que tem o nó fonte
+  // Adiciona relacionamentos cross-stack à primeira stack (não vazia) que tem o nó fonte
   for (const rel of crossRelationships) {
-    for (const s of builtStacks) {
+    for (const s of nonEmptyStacks) {
       if (s.nodes.some(n => n.id === rel.sourceId)) {
         s.relationships.push(rel);
         break;
@@ -312,6 +364,6 @@ export function buildModel(
     projectName,
     provider,
     region,
-    stacks: builtStacks,
+    stacks: nonEmptyStacks,
   };
 }
