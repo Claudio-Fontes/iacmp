@@ -307,30 +307,44 @@ function synthesizeConstruct(construct: BaseConstruct): ARMResource[] {
       const ingress = (props.ingressRules as Array<Record<string, unknown>>) ?? [];
       const egress = (props.egressRules as Array<Record<string, unknown>>) ?? [];
 
+      const protocolMap: Record<string, string> = {
+        tcp: 'Tcp', udp: 'Udp', icmp: 'Icmp', '-1': '*',
+      };
+      const mapProtocol = (raw: unknown): string => {
+        if (raw === undefined || raw === null) return '*';
+        const key = String(raw).toLowerCase();
+        return protocolMap[key] ?? '*';
+      };
+
       const secRules = [
-        ...ingress.map((r, i) => ({
-          name: `ingress-rule-${i}`,
-          properties: {
-            priority: 100 + i,
-            direction: 'Inbound',
-            access: 'Allow',
-            protocol: (r.protocol as string) === '-1' ? '*' : (r.protocol as string).toUpperCase(),
-            sourcePortRange: '*',
-            destinationPortRange: r.fromPort === r.toPort
-              ? String(r.fromPort)
-              : `${r.fromPort}-${r.toPort}`,
-            sourceAddressPrefix: (r.cidr as string) ?? '*',
-            destinationAddressPrefix: '*',
-            description: (r.description as string) ?? '',
-          },
-        })),
+        ...ingress.map((r, i) => {
+          if (r.cidr === undefined) {
+            console.warn(`[azure] Security group rule sem CIDR; usando * — defina props.cidr explicitamente (${construct.id} ingress[${i}])`);
+          }
+          return {
+            name: `ingress-rule-${i}`,
+            properties: {
+              priority: 100 + i,
+              direction: 'Inbound',
+              access: 'Allow',
+              protocol: mapProtocol(r.protocol),
+              sourcePortRange: '*',
+              destinationPortRange: r.fromPort === r.toPort
+                ? String(r.fromPort)
+                : `${r.fromPort}-${r.toPort}`,
+              sourceAddressPrefix: (r.cidr as string) ?? '*',
+              destinationAddressPrefix: '*',
+              description: (r.description as string) ?? '',
+            },
+          };
+        }),
         ...egress.map((r, i) => ({
           name: `egress-rule-${i}`,
           properties: {
             priority: 200 + i,
             direction: 'Outbound',
             access: 'Allow',
-            protocol: (r.protocol as string) === '-1' ? '*' : (r.protocol as string).toUpperCase(),
+            protocol: mapProtocol(r.protocol),
             sourcePortRange: '*',
             destinationPortRange: r.fromPort === r.toPort
               ? String(r.fromPort)
@@ -1067,6 +1081,7 @@ function synthesizeConstruct(construct: BaseConstruct): ARMResource[] {
     }
 
     default:
+      console.warn(`[azure] Construct type '${construct.type}' nao suportado — descartado.`);
       return [];
   }
 }

@@ -59,4 +59,113 @@ describe('GCPProvider', () => {
     const tpl = new GCPProvider().synthesize(stack) as any;
     expect(tpl.resources[0].type).toBe('compute.v1.network');
   });
+
+  // ── IAC-04: Storage.Bucket usa props.location ────────────────────────
+  describe('IAC-04 Storage.Bucket location', () => {
+    test('sem location → usa default US', () => {
+      const stack = new Stack('test');
+      new Storage.Bucket(stack, 'B', { versioning: false });
+      const tpl = new GCPProvider().synthesize(stack) as any;
+      expect(tpl.resources[0].properties.location).toBe('US');
+    });
+
+    test('com location explicito → respeita o valor', () => {
+      const stack = new Stack('test');
+      new Storage.Bucket(stack, 'B', { versioning: false, location: 'EU' });
+      const tpl = new GCPProvider().synthesize(stack) as any;
+      expect(tpl.resources[0].properties.location).toBe('EU');
+    });
+
+    test('com location regional → respeita', () => {
+      const stack = new Stack('test');
+      new Storage.Bucket(stack, 'B', { versioning: false, location: 'us-central1' });
+      const tpl = new GCPProvider().synthesize(stack) as any;
+      expect(tpl.resources[0].properties.location).toBe('us-central1');
+    });
+  });
+
+  // ── IAC-05: GCS lifecycle separa SetStorageClass + Delete ───────────
+  describe('IAC-05 Storage.Bucket lifecycle', () => {
+    test('transition + expiration geram duas regras separadas', () => {
+      const stack = new Stack('test');
+      new Storage.Bucket(stack, 'B', {
+        versioning: false,
+        lifecycleRules: [{ transitionToGlacierDays: 30, expireAfterDays: 365 }],
+      });
+      const tpl = new GCPProvider().synthesize(stack) as any;
+      const rules = tpl.resources[0].properties.lifecycle.rule;
+      expect(rules).toHaveLength(2);
+      const setClass = rules.find((r: any) => r.action.type === 'SetStorageClass');
+      const del = rules.find((r: any) => r.action.type === 'Delete');
+      expect(setClass).toBeDefined();
+      expect(setClass.action.storageClass).toBe('ARCHIVE');
+      expect(setClass.condition.age).toBe(30);
+      expect(del).toBeDefined();
+      expect(del.condition.age).toBe(365);
+    });
+
+    test('apenas expiration gera somente regra Delete', () => {
+      const stack = new Stack('test');
+      new Storage.Bucket(stack, 'B', {
+        versioning: false,
+        lifecycleRules: [{ expireAfterDays: 90 }],
+      });
+      const tpl = new GCPProvider().synthesize(stack) as any;
+      const rules = tpl.resources[0].properties.lifecycle.rule;
+      expect(rules).toHaveLength(1);
+      expect(rules[0].action.type).toBe('Delete');
+      expect(rules[0].condition.age).toBe(90);
+    });
+
+    test('apenas transition gera somente regra SetStorageClass', () => {
+      const stack = new Stack('test');
+      new Storage.Bucket(stack, 'B', {
+        versioning: false,
+        lifecycleRules: [{ transitionToGlacierDays: 60 }],
+      });
+      const tpl = new GCPProvider().synthesize(stack) as any;
+      const rules = tpl.resources[0].properties.lifecycle.rule;
+      expect(rules).toHaveLength(1);
+      expect(rules[0].action.type).toBe('SetStorageClass');
+      expect(rules[0].condition.age).toBe(60);
+    });
+
+    test('prefix aplica em todas as regras geradas', () => {
+      const stack = new Stack('test');
+      new Storage.Bucket(stack, 'B', {
+        versioning: false,
+        lifecycleRules: [{ prefix: 'logs/', transitionToGlacierDays: 30, expireAfterDays: 365 }],
+      });
+      const tpl = new GCPProvider().synthesize(stack) as any;
+      const rules = tpl.resources[0].properties.lifecycle.rule;
+      expect(rules).toHaveLength(2);
+      for (const r of rules) {
+        expect(r.condition.matchesPrefix).toEqual(['logs/']);
+      }
+    });
+  });
+
+  // ── SEC-04 + ARCH-06 ─────────────────────────────────────────────────
+  test('SEC-04: firewall ingress sem CIDR emite warn', () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation();
+    const stack = new Stack('test');
+    new Network.SecurityGroup(stack, 'SG', {
+      vpcId: 'vpc-1',
+      ingressRules: [{ protocol: 'tcp', fromPort: 22, toPort: 22 } as any],
+    });
+    const tpl = new GCPProvider().synthesize(stack) as any;
+    const ingress = tpl.resources.find((r: any) => r.name === 'SG-ingress-0');
+    expect(ingress.properties.sourceRanges).toEqual(['0.0.0.0/0']);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('sem CIDR'));
+    warnSpy.mockRestore();
+  });
+
+  test('ARCH-06: construct desconhecido emite warn', () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation();
+    const stack = new Stack('test');
+    stack.addConstruct({ id: 'X', type: 'Foo.Bar', props: {} } as any);
+    new GCPProvider().synthesize(stack);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("'Foo.Bar' nao suportado"));
+    warnSpy.mockRestore();
+  });
 });

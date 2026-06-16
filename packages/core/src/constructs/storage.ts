@@ -3,6 +3,7 @@ import { Stack, BaseConstruct } from '../stack';
 export interface StorageBucketProps {
   versioning?: boolean;
   publicAccess?: boolean;
+  location?: string;
   lifecycleRules?: Array<{
     prefix?: string;
     expireAfterDays?: number;
@@ -26,6 +27,7 @@ export interface StorageArchiveProps {
   retrievalTier?: 'Expedited' | 'Standard' | 'Bulk';
   lockEnabled?: boolean;
   retentionDays?: number;
+  location?: string;
 }
 
 export namespace Storage {

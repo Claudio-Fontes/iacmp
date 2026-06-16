@@ -211,29 +211,32 @@ function synthesizeConstruct(construct: BaseConstruct): GCPResource[] {
     // ── Storage ───────────────────────────────────────────────────────────
     case 'Storage.Bucket': {
       const lifecycleRules = (props.lifecycleRules as Array<Record<string, unknown>>) ?? [];
+      const gcsRules: Array<Record<string, unknown>> = [];
+      for (const r of lifecycleRules) {
+        const prefixCond = r.prefix ? { matchesPrefix: [r.prefix as string] } : {};
+        if (r.transitionToGlacierDays) {
+          gcsRules.push({
+            action: { type: 'SetStorageClass', storageClass: 'ARCHIVE' },
+            condition: { age: r.transitionToGlacierDays as number, ...prefixCond },
+          });
+        }
+        if (r.expireAfterDays) {
+          gcsRules.push({
+            action: { type: 'Delete' },
+            condition: { age: r.expireAfterDays as number, ...prefixCond },
+          });
+        }
+      }
       return [{
         name: construct.id.toLowerCase().replace(/[^a-z0-9-]/g, '-'),
         type: 'storage.v1.bucket',
         properties: {
-          location: (props.region as string) ?? 'US',
+          location: (props.location as string) ?? 'US',
           versioning: { enabled: (props.versioning as boolean) ?? false },
           iamConfiguration: {
             uniformBucketLevelAccess: { enabled: !(props.publicAccess as boolean) },
           },
-          ...(lifecycleRules.length > 0 ? {
-            lifecycle: {
-              rule: lifecycleRules.map(r => ({
-                action: r.expireAfterDays
-                  ? { type: 'Delete' }
-                  : { type: 'SetStorageClass', storageClass: 'ARCHIVE' },
-                condition: {
-                  ...(r.expireAfterDays ? { age: r.expireAfterDays } : {}),
-                  ...(r.transitionToGlacierDays ? { age: r.transitionToGlacierDays } : {}),
-                  ...(r.prefix ? { matchesPrefix: [r.prefix] } : {}),
-                },
-              })),
-            },
-          } : {}),
+          ...(gcsRules.length > 0 ? { lifecycle: { rule: gcsRules } } : {}),
         },
       }];
     }
@@ -258,7 +261,7 @@ function synthesizeConstruct(construct: BaseConstruct): GCPResource[] {
         name: `${construct.id.toLowerCase().replace(/[^a-z0-9-]/g, '-')}-archive`,
         type: 'storage.v1.bucket',
         properties: {
-          location: (props.region as string) ?? 'US',
+          location: (props.location as string) ?? 'US',
           storageClass: 'ARCHIVE',
           iamConfiguration: { uniformBucketLevelAccess: { enabled: true } },
           lifecycle: {
@@ -299,23 +302,28 @@ function synthesizeConstruct(construct: BaseConstruct): GCPResource[] {
       const ingress = (props.ingressRules as Array<Record<string, unknown>>) ?? [];
       const egress = (props.egressRules as Array<Record<string, unknown>>) ?? [];
 
-      const ingressResources: GCPResource[] = ingress.map((r, i) => ({
-        name: `${construct.id}-ingress-${i}`,
-        type: 'compute.v1.firewall',
-        properties: {
-          network: `global/networks/${props.vpcId as string}`,
-          direction: 'INGRESS',
-          priority: 1000 + i,
-          allowed: [{
-            IPProtocol: (r.protocol as string) === '-1' ? 'all' : r.protocol as string,
-            ...((r.protocol as string) !== '-1' ? {
-              ports: r.fromPort === r.toPort ? [`${r.fromPort}`] : [`${r.fromPort}-${r.toPort}`],
-            } : {}),
-          }],
-          sourceRanges: [(r.cidr as string) ?? '0.0.0.0/0'],
-          description: (r.description as string) ?? '',
-        },
-      }));
+      const ingressResources: GCPResource[] = ingress.map((r, i) => {
+        if (r.cidr === undefined) {
+          console.warn(`[gcp] Security group rule sem CIDR; usando 0.0.0.0/0 — defina props.cidr explicitamente (${construct.id} ingress[${i}])`);
+        }
+        return {
+          name: `${construct.id}-ingress-${i}`,
+          type: 'compute.v1.firewall',
+          properties: {
+            network: `global/networks/${props.vpcId as string}`,
+            direction: 'INGRESS',
+            priority: 1000 + i,
+            allowed: [{
+              IPProtocol: (r.protocol as string) === '-1' ? 'all' : r.protocol as string,
+              ...((r.protocol as string) !== '-1' ? {
+                ports: r.fromPort === r.toPort ? [`${r.fromPort}`] : [`${r.fromPort}-${r.toPort}`],
+              } : {}),
+            }],
+            sourceRanges: [(r.cidr as string) ?? '0.0.0.0/0'],
+            description: (r.description as string) ?? '',
+          },
+        };
+      });
 
       const egressList = egress.length > 0 ? egress : [{
         protocol: '-1', fromPort: 0, toPort: 0, cidr: '0.0.0.0/0', description: 'Allow all egress',
@@ -950,6 +958,7 @@ function synthesizeConstruct(construct: BaseConstruct): GCPResource[] {
     }
 
     default:
+      console.warn(`[gcp] Construct type '${construct.type}' nao suportado — descartado.`);
       return [];
   }
 }
