@@ -16,13 +16,17 @@ const OUTPUT_FILE: Record<Format, string> = {
 };
 
 export default class Diagram extends Command {
-  static description = 'Gera diagramas de arquitetura a partir das stacks do projeto';
+  static description = 'Gera diagramas de arquitetura a partir das stacks do projeto.';
 
   static flags = {
     format: Flags.string({
       char: 'f',
       description: 'Formato de saída: structurizr, mermaid',
       default: 'structurizr',
+    }),
+    provider: Flags.string({
+      char: 'p',
+      description: 'Provider para o theme do diagrama: aws, azure, gcp, terraform (padrão: lido do iacmp.json)',
     }),
     stack: Flags.string({
       char: 's',
@@ -37,9 +41,11 @@ export default class Diagram extends Command {
 
   static examples = [
     '$ iacmp diagram',
+    '$ iacmp diagram --provider azure',
+    '$ iacmp diagram --provider gcp',
     '$ iacmp diagram --format mermaid',
     '$ iacmp diagram --stack database',
-    '$ iacmp diagram --format mermaid --stack webapp --out docs/diagrams',
+    '$ iacmp diagram --provider azure --format mermaid',
   ];
 
   async run(): Promise<void> {
@@ -77,8 +83,9 @@ export default class Diagram extends Command {
       );
     }
 
-    // Constrói modelo intermediário
-    const model = buildModel(config.name, config.provider, 'us-east-1', stacks);
+    // Constrói modelo intermediário — provider da flag sobrepõe o do iacmp.json
+    const provider = flags.provider ?? config.provider;
+    const model = buildModel(config.name, provider, 'us-east-1', stacks);
 
     // Renderiza
     const content = format === 'structurizr'
@@ -98,7 +105,7 @@ export default class Diagram extends Command {
     this.log(chalk.bold('Diagrama gerado'));
     this.log('─'.repeat(40));
     this.log(`Projeto:  ${config.name}`);
-    this.log(`Provider: ${config.provider}`);
+    this.log(`Provider: ${provider}${flags.provider ? ' (via --provider)' : ''}`);
     this.log(`Formato:  ${format}`);
     this.log(`Stacks:   ${stacks.map(s => s.name).join(', ')}`);
     this.log(`Nodes:    ${model.stacks.reduce((n, s) => n + s.nodes.length, 0)}`);
