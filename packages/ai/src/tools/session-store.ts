@@ -43,7 +43,14 @@ export function loadSession(projectDir: string): AIMessage[] {
     if (data.projectHash && data.projectHash !== currentHash) {
       return [];
     }
-    return data.messages ?? [];
+    const messages = data.messages ?? [];
+    // Descarta sessão malformada: não pode terminar com mensagem do usuário sem resposta
+    // nem ter dois 'user' consecutivos
+    for (let i = 0; i < messages.length - 1; i++) {
+      if (messages[i].role === 'user' && messages[i + 1].role === 'user') return [];
+    }
+    if (messages.length > 0 && messages[messages.length - 1].role === 'user') return [];
+    return messages;
   } catch {
     return [];
   }

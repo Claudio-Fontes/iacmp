@@ -163,8 +163,7 @@ async function runGeneration(provider, session, lastPrompt, projectContext) {
   } catch {
     // Resposta conversacional (não é JSON) — exibe como texto e segue
     console.log('\n' + raw.trim() + '\n');
-    // Não grava no cache respostas que não são JSON
-    return false;
+    return true; // assistente respondeu — salva a sessão
   }
 
   // Só grava no cache depois de confirmar que o parse teve sucesso
@@ -205,7 +204,7 @@ async function runGeneration(provider, session, lastPrompt, projectContext) {
   }
 
   printNextSteps(parsed.nextSteps);
-  return acted;
+  return true; // assistente respondeu — sempre salva a sessão
 }
 
 async function main() {
@@ -283,13 +282,16 @@ async function main() {
       : input;
 
     session.addUserMessage(userMessageContent);
-    saveSession(cwd, session.getMessages());
 
     const provider = createContextualProvider(aiProvider, freshContext);
 
-    const changed = await runGeneration(provider, session, input, freshContext);
-    // Só salva na sessão se houve ação real — evita contaminar com respostas de erro
-    if (changed) saveSession(cwd, session.getMessages());
+    const responded = await runGeneration(provider, session, input, freshContext);
+    if (responded) {
+      saveSession(cwd, session.getMessages());
+    } else {
+      // Erro na geração — remove a mensagem do usuário para não deixar sessão malformada
+      session.removeLast();
+    }
     console.log('');
   }
 
