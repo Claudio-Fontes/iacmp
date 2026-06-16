@@ -15,6 +15,10 @@ export class ChatSession {
     return [...this.messages];
   }
 
+  removeLast(): void {
+    this.messages.pop();
+  }
+
   clear(): void {
     this.messages = [];
   }

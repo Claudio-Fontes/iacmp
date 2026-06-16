@@ -167,6 +167,22 @@ async function runGeneration(provider, session, lastPrompt, projectContext) {
     return false;
   }
 
+  // Rejeita resposta que menciona "standalone" quando há projeto carregado
+  if (projectContext && projectContext.includes('Stacks existentes') &&
+      parsed.explanation && parsed.explanation.toLowerCase().includes('standalone')) {
+    process.stderr.write(chalk.dim('Contexto desatualizado detectado — re-gerando...\n'));
+    session.removeLast(); // remove a resposta envenenada do histórico
+    const retryChunks = [];
+    try {
+      await provider.stream(session.getMessages(), chunk => retryChunks.push(chunk));
+      raw = retryChunks.join('');
+      session.addAssistantMessage(raw);
+      parsed = extractResponse(raw);
+    } catch {
+      // se falhar, continua com o que tinha
+    }
+  }
+
   // Só grava no cache depois de confirmar que o parse teve sucesso
   if (!fromCache) {
     setCache(cwd, cacheKey, raw);
@@ -212,11 +228,28 @@ async function main() {
   const previous = loadSession(cwd);
   const session = new ChatSession();
   if (previous.length > 0) {
-    for (const msg of previous) {
-      if (msg.role === 'user') session.addUserMessage(msg.content);
-      else session.addAssistantMessage(msg.content);
+    // Sessão contaminada: se alguma resposta do modelo dizia "modo standalone"
+    // mas agora temos um projeto real, o histórico está errado — descarta.
+    const contaminated = previous.some(msg => {
+      if (msg.role !== 'assistant') return false;
+      try {
+        const parsed = JSON.parse(msg.content);
+        return typeof parsed.explanation === 'string' &&
+          parsed.explanation.toLowerCase().includes('standalone');
+      } catch { return false; }
+    });
+
+    if (contaminated) {
+      clearSession(cwd);
+      clearCache(cwd);
+      console.log(chalk.dim('\n  Sessão anterior descartada (contexto desatualizado)'));
+    } else {
+      for (const msg of previous) {
+        if (msg.role === 'user') session.addUserMessage(msg.content);
+        else session.addAssistantMessage(msg.content);
+      }
+      console.log(chalk.dim(`\n  Sessão anterior carregada (${previous.length} mensagens)`));
     }
-    console.log(chalk.dim(`\n  Sessão anterior carregada (${previous.length} mensagens)`));
   }
 
   console.log(chalk.cyan.bold('\niacmp ai — Modo Chat Interativo'));
