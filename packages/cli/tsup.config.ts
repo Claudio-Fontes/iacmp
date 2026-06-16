@@ -1,4 +1,5 @@
 import { defineConfig } from 'tsup';
+import { copyFileSync, mkdirSync } from 'fs';
 
 /**
  * O `iacmp` é distribuído como um pacote único (`npm i -g iacmp`). Os pacotes
@@ -32,6 +33,14 @@ export default defineConfig([
     entry: ['src/index.ts', 'src/commands/**/*.ts'],
     outDir: 'dist',
     clean: true,
+    // @iacmp/registry foi inlinado, mas seu client.ts lê registry.json via
+    // fs.readFileSync(path.join(__dirname, 'registry.json')). No bundle __dirname
+    // é dist/commands/, e o tsup empacota só JS — então copiamos o data file
+    // para lá, senão `iacmp registry list/search` quebra com ENOENT (CLI-REGISTRY-01).
+    onSuccess: async () => {
+      mkdirSync('dist/commands', { recursive: true });
+      copyFileSync('../registry/src/registry.json', 'dist/commands/registry.json');
+    },
   },
   {
     ...common,
