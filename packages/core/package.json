@@ -1,9 +1,28 @@
 {
   "name": "@iacmp/core",
   "version": "1.0.0",
+  "description": "Constructs agnósticos de provider para o iacmp — a API que os stacks do usuário importam",
+  "keywords": ["iacmp", "iac", "infrastructure", "cdk", "constructs"],
+  "license": "MIT",
+  "author": "Caio Melo",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cmelo/iacmp",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/cmelo/iacmp#readme",
+  "bugs": {
+    "url": "https://github.com/cmelo/iacmp/issues"
+  },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": ["dist"],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",

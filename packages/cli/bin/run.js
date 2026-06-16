@@ -25,7 +25,8 @@ const isChat = argv.includes('ai') && (argv.includes('--chat') || argv.includes(
 
 if (isChat) {
   const cp = require('child_process');
-  const chatScript = path.resolve(__dirname, 'chat.js');
+  // chat é bundlado (com @iacmp/ai inlinado) para dist/chat.js pelo tsup
+  const chatScript = path.resolve(__dirname, '..', 'dist', 'chat.js');
 
   // Detecta --provider / -p
   let provider = 'aws';

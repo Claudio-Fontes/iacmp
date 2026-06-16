@@ -8,3 +8,7 @@ synth-out/
 audit/
 *.env
 .env.*
+
+# build artifacts
+oclif.manifest.json
+*.tgz
