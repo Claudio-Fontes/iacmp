@@ -1,22 +1,22 @@
 {
   "name": "@iacmp/core",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Constructs agnósticos de provider para o iacmp — a API que os stacks do usuário importam",
   "keywords": ["iacmp", "iac", "infrastructure", "cdk", "constructs"],
   "license": "MIT",
   "author": "Caio Melo",
   "repository": {
     "type": "git",
-    "url": "https://github.com/cmelo/iacmp",
+    "url": "https://github.com/Claudio-Fontes/iacmp",
     "directory": "packages/core"
   },
-  "homepage": "https://github.com/cmelo/iacmp#readme",
+  "homepage": "https://github.com/Claudio-Fontes/iacmp#readme",
   "bugs": {
-    "url": "https://github.com/cmelo/iacmp/issues"
+    "url": "https://github.com/Claudio-Fontes/iacmp/issues"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist"],
+  "files": ["dist", "LICENSE"],
   "publishConfig": {
     "access": "public"
   },
@@ -28,7 +28,8 @@
     "dev": "tsc --watch",
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit",
-    "test": "jest"
+    "test": "jest",
+    "prepack": "cp ../../LICENSE ./LICENSE && tsc"
   },
   "devDependencies": {
     "@types/jest": "^29",

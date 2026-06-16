@@ -88,7 +88,12 @@ iacmp synth
 iacmp synth --provider aws
 ```
 
-Lê as stacks compiladas em `stacks/` e gera os templates em `synth-out/`.
+Lê as stacks em `stacks/` (`.ts` direto via ts-node ou `.js` compiladas) e gera
+os templates em `synth-out/<provider>/<stack>.<ext>`. Exemplos:
+`synth-out/aws/minha-stack.json`, `synth-out/terraform/minha-stack.tf`.
+
+> `ts-node` é instalado como devDependency pelo `iacmp init`. Se você criou o
+> projeto manualmente, rode `npm i -D ts-node` antes do primeiro synth.
 
 ---
 
@@ -287,7 +292,7 @@ Verifica:
 - Node.js 20+
 - iacmp instalado
 - AWS CLI (para provider AWS)
-- ANTHROPIC_API_KEY (necessário apenas para `iacmp ai`, disponível na Fase 3)
+- ANTHROPIC_API_KEY (necessário para `iacmp ai`)
 
 ---
 
@@ -443,3 +448,7 @@ O `iacmp init` gera automaticamente:
 ---
 
 *iacmp v1.1.0 — IaC Multi Plataforma*
+
+Para configurar `ANTHROPIC_API_KEY` (e opcionalmente `GITHUB_TOKEN`), copie o
+`.env.example` da raiz para `.env` e preencha. O `iacmp` lê do ambiente — você
+pode também exportar a variável no seu shell.

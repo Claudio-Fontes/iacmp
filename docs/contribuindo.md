@@ -13,7 +13,7 @@
 ## Setup do ambiente de desenvolvimento
 
 ```bash
-git clone https://github.com/seu-usuario/iacmp.git
+git clone https://github.com/Claudio-Fontes/iacmp.git
 cd iacmp
 npm install
 npm run build
@@ -108,40 +108,75 @@ node packages/cli/bin/run.js nome-do-comando --help
 
 ## Adicionando um novo construct
 
-Os constructs ficam em `packages/core/src/constructs/`.
+Os constructs ficam em `packages/core/src/constructs/`. Cada construct segue o
+padrão: um `*Props` por subtipo, classes dentro de um `namespace` por domínio,
+`implements BaseConstruct`, validações no construtor e `stack.addConstruct(this)`.
 
-Cada construct segue a mesma estrutura:
+Use `packages/core/src/constructs/cache.ts` como referência:
 
 ```typescript
 // packages/core/src/constructs/cache.ts
 import { Stack, BaseConstruct } from '../stack';
 
-export interface CacheOptions {
-  engine: 'redis' | 'memcached';
-  instanceType?: string;
+export interface CacheRedisProps {
+  nodeType?: 'small' | 'medium' | 'large';
+  numCacheNodes?: number;
+  automaticFailoverEnabled?: boolean;
+  atRestEncryptionEnabled?: boolean;
+  transitEncryptionEnabled?: boolean;
+  version?: string;
+  subnetGroupName?: string;
+  securityGroupIds?: string[];
 }
 
-export class CacheCluster extends BaseConstruct {
-  readonly engine: string;
-  readonly instanceType: string;
+export interface CacheMemcachedProps {
+  nodeType?: 'small' | 'medium' | 'large';
+  numCacheNodes?: number;
+  subnetGroupName?: string;
+}
 
-  constructor(stack: Stack, id: string, options: CacheOptions) {
-    super(stack, id, 'Cache.Cluster');
-    this.engine = options.engine;
-    this.instanceType = options.instanceType ?? 'cache.t3.micro';
+export namespace Cache {
+  export class Redis implements BaseConstruct {
+    readonly type = 'Cache.Redis';
+    readonly props: Record<string, unknown>;
+    constructor(stack: Stack, readonly id: string, props: CacheRedisProps) {
+      this.props = props as unknown as Record<string, unknown>;
+      stack.addConstruct(this);
+    }
+  }
+
+  export class Memcached implements BaseConstruct {
+    readonly type = 'Cache.Memcached';
+    readonly props: Record<string, unknown>;
+    constructor(stack: Stack, readonly id: string, props: CacheMemcachedProps) {
+      if ((props.numCacheNodes ?? 1) < 1)
+        throw new Error(`Cache.Memcached "${id}": numCacheNodes deve ser >= 1`);
+      this.props = props as unknown as Record<string, unknown>;
+      stack.addConstruct(this);
+    }
   }
 }
-
-export const Cache = { Cluster: CacheCluster };
 ```
 
-Depois exporte do `packages/core/src/index.ts`:
+Pontos a observar:
+
+- O `type` é uma string `Namespace.Subtipo` (ex.: `Cache.Redis`) e é o
+  discriminador que cada provider usa para sintetizar o recurso.
+- O construtor chama `stack.addConstruct(this)` no fim — é assim que o
+  construct entra no array da Stack.
+- Validações que falhariam no provider devem disparar no construtor com mensagem
+  contendo o `id` do construct.
+
+Exporte o namespace e seus props em `packages/core/src/index.ts`:
 
 ```typescript
 export { Cache } from './constructs/cache';
+export type { CacheRedisProps, CacheMemcachedProps } from './constructs/cache';
 ```
 
-Para cada novo construct, adicione também o mapeamento no provider correspondente (ex: `packages/providers/aws/src/synth/cloudformation.ts`).
+Para cada novo subtipo, adicione o `case '<Namespace.Subtipo>'` nos 4 synths
+(`packages/providers/aws|azure|gcp|terraform/src/synth/*.ts`). Sem isso o
+construct é silenciosamente ignorado nos providers não atualizados.
 
 ---
 

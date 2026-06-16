@@ -1,6 +1,6 @@
 {
   "name": "iacmp",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "IaC Multi Plataforma — CLI inteligente para AWS, Azure, GCP e Terraform com geração de stacks via IA",
   "keywords": [
     "iac",
@@ -18,11 +18,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/cmelo/iacmp"
+    "url": "https://github.com/Claudio-Fontes/iacmp"
   },
-  "homepage": "https://github.com/cmelo/iacmp#readme",
+  "homepage": "https://github.com/Claudio-Fontes/iacmp#readme",
   "bugs": {
-    "url": "https://github.com/cmelo/iacmp/issues"
+    "url": "https://github.com/Claudio-Fontes/iacmp/issues"
   },
   "bin": {
     "iacmp": "./bin/run.js"
@@ -31,12 +31,13 @@
   "files": [
     "/bin/run.js",
     "/dist",
-    "/oclif.manifest.json"
+    "/oclif.manifest.json",
+    "/LICENSE"
   ],
   "scripts": {
     "build": "tsup",
     "manifest": "oclif manifest",
-    "prepack": "tsup && oclif manifest",
+    "prepack": "cp ../../LICENSE ./LICENSE && tsup && oclif manifest",
     "dev": "tsup --watch",
     "clean": "rm -rf dist oclif.manifest.json",
     "typecheck": "tsc --noEmit",
@@ -44,7 +45,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",
-    "@iacmp/core": "^1.0.0",
+    "@iacmp/core": "^1.1.0",
     "@oclif/core": "^4.0.0",
     "chalk": "^4.1.2",
     "diff": "^5.2.0",

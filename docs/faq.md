@@ -4,7 +4,12 @@
 
 **Preciso compilar o TypeScript antes de rodar `iacmp synth`?**
 
-Não. Em modo de desenvolvimento (quando o iacmp detecta que está rodando de uma instalação local), o synth usa `ts-node` automaticamente para executar os arquivos `.ts` das stacks. Na versão publicada via npm, o build já está incluso. Você só precisa rodar `npm run build` se estiver desenvolvendo o próprio iacmp.
+Não, desde que `ts-node` esteja disponível no projeto. O `iacmp init` adiciona
+`ts-node` como devDependency e o `iacmp synth` o registra automaticamente para
+executar `.ts` direto (procurando inclusive em diretórios pai, útil em monorepos
+e nos `examples/`). Se nenhum `ts-node` for encontrado, o synth emite um aviso e
+ignora as stacks `.ts`; nesse caso compile com `tsc` ou rode `npm i -D ts-node`
+no projeto. As stacks `.js` (já compiladas) são sempre suportadas, sem ts-node.
 
 ---
 
@@ -48,11 +53,15 @@ No MVP atual, o `iacmp deploy` é simulado — imprime os passos que seriam exec
 
 **Onde ficam os templates gerados?**
 
-Em `synth-out/` na raiz do projeto. Cada stack gera um arquivo com o nome da stack e a extensão correspondente ao provider:
-- AWS: `synth-out/minha-stack.json` (CloudFormation)
-- Azure: `synth-out/minha-stack.json` (ARM Template)
-- GCP: `synth-out/minha-stack.json` (Deployment Manager)
-- Terraform: `synth-out/minha-stack.tf` (HCL)
+Em `synth-out/<provider>/` na raiz do projeto. Cada stack gera um arquivo com o
+nome da stack e a extensão correspondente ao provider:
+- AWS: `synth-out/aws/minha-stack.json` (CloudFormation)
+- Azure: `synth-out/azure/minha-stack.json` (ARM Template)
+- GCP: `synth-out/gcp/minha-stack.json` (Deployment Manager)
+- Terraform: `synth-out/terraform/minha-stack.tf` (HCL)
+
+A subpasta por provider evita que o output de um provider sobrescreva o de
+outro quando você sintetiza a mesma stack para múltiplos providers.
 
 ---
 

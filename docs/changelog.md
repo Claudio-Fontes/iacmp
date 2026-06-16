@@ -2,6 +2,62 @@
 
 ---
 
+## Em desenvolvimento
+
+Higiene de DevEx, CI e documentação a partir da auditoria
+(`docs/report.md`):
+
+### Adicionado
+
+- **`.github/workflows/ci.yml`** — pipeline de CI no GitHub Actions com matrix
+  de Node 20.x, cache `.turbo/` e `npm cache`, rodando `typecheck`, `test` e
+  `build` via Turborepo.
+- **`LICENSE`** — arquivo MIT na raiz (DOC-05/DX-06). Copiado para
+  `packages/cli/` e `packages/core/` no `prepack` para acompanhar os pacotes
+  publicados no npm.
+- **`CONTRIBUTING.md`** — stub na raiz apontando para `docs/contribuindo.md`.
+- **`.env.example`** — template versionado com `ANTHROPIC_API_KEY` e
+  `GITHUB_TOKEN` documentados.
+- Versões alinhadas em `1.1.0` em todos os 10 `package.json` do workspace
+  (DOC-04). Antes alguns ainda estavam em `1.0.0`.
+- Documentação de **todos os 13 namespaces** de constructs em
+  `docs/constructs.md` (DOC-06) — antes só 5 estavam documentados.
+
+### Corrigido
+
+- `iacmp.json` malformado agora **propaga erro** em `loadPlugins` em vez de
+  cair silenciosamente em `[]` (ARCH-07). Plugins com export ambíguo
+  (`default` vs `module.exports`) são normalizados via `m.default ?? m`.
+- `packages/cli/package.json` ganha `LICENSE` em `files` e cópia automática
+  no `prepack` — antes o pacote npm ia sem licença apesar do `"license":"MIT"`.
+- `turbo.json`: a task `test` deixa de depender de `build` (ARCH-09) — ts-jest
+  opera sobre `src` direto. `outputs` da `test` agora cobrem `coverage/**` e
+  `inputs` listam `src/**`, `test/**`, `tsconfig.*.json`, `jest.config.*` e
+  `package.json` para caching efetivo (DX-09).
+- `MVP-STATUS.md` virou pointer para README/changelog (DOC-01). Antes dizia
+  "apenas AWS" e cravava paths `/Users/cmelo/`.
+- `docs/faq.md`, `docs/manual-de-uso.md`, `docs/providers.md` agora descrevem
+  o layout real `synth-out/<provider>/<stack>.<ext>` (DOC-08) e o uso de
+  `ts-node` (DOC-09) — o synth registra ts-node quando disponível no projeto,
+  não automaticamente.
+- `docs/estudo-rag.md` reformulado como "Arquitetura (estado atual)" + seção
+  "Próximos passos" (DOC-03). Boa parte do que era "plano" já existe.
+- `docs/contribuindo.md`: exemplo de "novo construct" reescrito para o padrão
+  real (namespace, `*Props`, `implements BaseConstruct`, `stack.addConstruct`)
+  copiando `cache.ts` (DOC-07). URL de clone padronizada para
+  `https://github.com/Claudio-Fontes/iacmp` (DOC-12).
+- `docs/manual-de-uso.md`: removida contradição "Fase 3 vs Disponível" em
+  `iacmp ai` (DOC-11).
+- README: índice de docs lista todos os 10 arquivos em `docs/` (antes faltavam
+  3); URLs do GitHub alinhadas (DOC-12).
+
+### Higiene
+
+- `.gitignore` cobre `.iacmp/` (SEC-08), `tmp/` e `.DS_Store` (DX-05). Removido
+  `tmp/test-init-compute/**` do índice via `git rm --cached`.
+
+---
+
 ## [1.1.0] — 2026-06-13
 
 Templates no `init`, auditorias e diagramas de arquitetura.
