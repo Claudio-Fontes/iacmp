@@ -47,11 +47,13 @@ export function readProjectMeta(projectDir: string): string {
     const stackFiles = findStackFiles(stacksDir);
     if (stackFiles.length > 0) {
       lines.push('## Stacks existentes');
-      lines.push('Caminhos completos (use exatamente estes em "deletions"):');
+      lines.push('IMPORTANTE: Estas são as stacks reais do projeto. Ao modificar ou mover recursos, use exatamente estes caminhos — não crie arquivos novos se o destino já existe.');
       for (const filePath of stackFiles) {
         const rel = path.relative(projectDir, filePath);
-        const stat = fs.statSync(filePath);
-        lines.push(`- ${rel} (${(stat.size / 1024).toFixed(1)} KB)`);
+        lines.push(`\n### ${rel}`);
+        lines.push('```typescript');
+        lines.push(fs.readFileSync(filePath, 'utf-8').trimEnd());
+        lines.push('```');
       }
       lines.push('');
     } else {
