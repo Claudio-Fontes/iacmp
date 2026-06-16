@@ -15,6 +15,7 @@ interface TemplateFile {
 interface Template {
   description: string;
   constructs: string[];    // lista para exibir no --list
+  stackSubDir?: string;    // subpasta dentro de stacks/ para o arquivo principal (ex: 'stacks/compute')
   stackContent: (projectName: string) => string;  // arquivo principal (mantém compatibilidade)
   extraFiles?: TemplateFile[];                     // arquivos adicionais
 }
@@ -23,6 +24,7 @@ const TEMPLATES: Record<string, Template> = {
   default: {
     description: 'Lambda Hello World exposta via API Gateway REST (arquivos separados)',
     constructs: ['Fn.Lambda', 'Fn.ApiGateway'],
+    stackSubDir: 'stacks/compute',
     stackContent: (name) => `import { Stack, Fn } from '@iacmp/core';
 
 const stack = new Stack('${name}-lambda');
@@ -39,7 +41,7 @@ export default stack;
 `,
     extraFiles: [
       {
-        path: 'stacks/api-gateway-stack.ts',
+        path: 'stacks/network/api-gateway-stack.ts',
         content: (name) => `import { Stack, Fn } from '@iacmp/core';
 
 const stack = new Stack('${name}-api');
@@ -147,6 +149,7 @@ export default stack;
   serverless: {
     description: 'API serverless com múltiplas Lambdas e API Gateway',
     constructs: ['Fn.Lambda', 'Fn.ApiGateway'],
+    stackSubDir: 'stacks/compute',
     stackContent: (name) => `import { Stack, Fn } from '@iacmp/core';
 
 const stack = new Stack('${name}');
@@ -167,6 +170,15 @@ new Fn.Lambda(stack, 'UsersFn', {
   timeout: 30,
 });
 
+export default stack;
+`,
+    extraFiles: [
+      {
+        path: 'stacks/network/api-gateway-stack.ts',
+        content: (name) => `import { Stack, Fn } from '@iacmp/core';
+
+const stack = new Stack('${name}-api');
+
 new Fn.ApiGateway(stack, 'Api', {
   name: '${name}-api',
   type: 'REST',
@@ -182,6 +194,8 @@ new Fn.ApiGateway(stack, 'Api', {
 
 export default stack;
 `,
+      },
+    ],
   },
 
   fullstack: {
@@ -459,8 +473,12 @@ export default class Init extends Command {
       // tsconfig.json
       fs.writeFileSync(path.join(projectDir, 'tsconfig.json'), tsConfig(corePath));
 
-      // stack (usa o template escolhido)
-      fs.writeFileSync(path.join(stacksDir, stackFileName), template.stackContent(projectName));
+      // stack (usa o template escolhido) — subpasta por tipo de recurso
+      const stackSubDir = template.stackSubDir
+        ? path.join(projectDir, template.stackSubDir)
+        : stacksDir;
+      fs.mkdirSync(stackSubDir, { recursive: true });
+      fs.writeFileSync(path.join(stackSubDir, stackFileName), template.stackContent(projectName));
 
       // arquivos extras do template (ex: stacks separadas)
       if (template.extraFiles) {
@@ -503,7 +521,10 @@ export default class Init extends Command {
     if (flags.language === 'typescript') {
       this.log(`  ${rel}/package.json`);
       this.log(`  ${rel}/tsconfig.json`);
-      this.log(`  ${rel}/stacks/${stackFileName}`);
+      const stackRelPath = template.stackSubDir
+        ? `${template.stackSubDir}/${stackFileName}`
+        : `stacks/${stackFileName}`;
+      this.log(`  ${rel}/${stackRelPath}`);
       this.log(`  ${rel}/test/${projectName}.test.ts`);
       this.log(`  ${rel}/.github/workflows/iacmp.yml`);
       this.log(`  ${rel}/.gitlab-ci.yml`);

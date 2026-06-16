@@ -580,10 +580,10 @@ Quando o usuário pedir uma stack que depende de recursos de outra stack já exi
 1. SEMPRE use apenas constructs do @iacmp/core listados acima — nunca invente propriedades extras
 2. SEMPRE exporte a stack como default: \`export default stack;\`
 3. Nomeie o arquivo em kebab-case com sufixo \`-stack.ts\` e coloque na subpasta correta:
-   - \`stacks/compute/\` → Compute.*, Fn.Lambda, Function.ApiGateway
+   - \`stacks/compute/\` → Compute.*, Fn.Lambda
    - \`stacks/database/\` → Database.SQL, Database.DocumentDB, Database.DynamoDB, Cache.Redis, Cache.Memcached
    - \`stacks/storage/\` → Storage.Bucket, Storage.FileSystem, Storage.Archive
-   - \`stacks/network/\` → Network.VPC, Network.Subnet, Network.SecurityGroup, Network.WAF, Network.LoadBalancer, Network.CDN, Network.Dns
+   - \`stacks/network/\` → Network.VPC, Network.Subnet, Network.SecurityGroup, Network.WAF, Network.LoadBalancer, Network.CDN, Network.Dns, Function.ApiGateway
    - \`stacks/messaging/\` → Messaging.Queue, Messaging.Topic, Events.EventBridge
    - \`stacks/workflow/\` → Workflow.StepFunctions
    - \`stacks/policy/\` → Policy.IAM
