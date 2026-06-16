@@ -119,9 +119,14 @@ function createContextualProvider(base, projectContext) {
   };
 }
 
-async function runGeneration(provider, session, lastPrompt) {
+async function runGeneration(provider, session, lastPrompt, projectContext) {
   let acted = false;
-  const cached = getCached(cwd, lastPrompt);
+  // Chave do cache inclui hash do contexto para evitar resposta stale quando o projeto muda
+  const contextHash = projectContext
+    ? require('crypto').createHash('md5').update(projectContext).digest('hex').slice(0, 8)
+    : '';
+  const cacheKey = contextHash ? `${lastPrompt}__ctx:${contextHash}` : lastPrompt;
+  const cached = getCached(cwd, cacheKey);
   let raw;
   let fromCache = false;
 
@@ -135,7 +140,7 @@ async function runGeneration(provider, session, lastPrompt) {
       session.addAssistantMessage(raw);
     } catch {
       // Cache contém resposta inválida — descarta e chama o modelo
-      clearCache(cwd);
+      clearCache(cwd, cacheKey);
     }
   }
 
@@ -164,7 +169,7 @@ async function runGeneration(provider, session, lastPrompt) {
 
   // Só grava no cache depois de confirmar que o parse teve sucesso
   if (!fromCache) {
-    setCache(cwd, lastPrompt, raw);
+    setCache(cwd, cacheKey, raw);
   }
 
   // Valida TypeScript
@@ -255,7 +260,7 @@ async function main() {
     const freshContext = await readProjectContextRAG(cwd, input);
     const provider = createContextualProvider(aiProvider, freshContext);
 
-    const changed = await runGeneration(provider, session, input);
+    const changed = await runGeneration(provider, session, input, freshContext);
     // Só salva na sessão se houve ação real — evita contaminar com respostas de erro
     if (changed) saveSession(cwd, session.getMessages());
     console.log('');
