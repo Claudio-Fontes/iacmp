@@ -1,4 +1,9 @@
-import { extractResponse } from '../src/parser/code-extractor';
+import {
+  extractResponse,
+  MAX_FILES,
+  MAX_DELETIONS,
+  MAX_FILE_BYTES,
+} from '../src/parser/code-extractor';
 
 const validResponse = {
   explanation: 'Cria uma Lambda com API Gateway',
@@ -87,5 +92,52 @@ describe('extractResponse', () => {
       ],
     }));
     expect(result.files).toHaveLength(3);
+  });
+
+  describe('limites defensivos', () => {
+    test('rejeita resposta com mais de MAX_FILES arquivos', () => {
+      const files = Array.from({ length: MAX_FILES + 1 }, (_, i) => ({
+        path: `stacks/s${i}.ts`,
+        content: 'x',
+      }));
+      expect(() => extractResponse(JSON.stringify({ ...validResponse, files }))).toThrow(/limite de arquivos/i);
+    });
+
+    test('aceita resposta com exatamente MAX_FILES arquivos', () => {
+      const files = Array.from({ length: MAX_FILES }, (_, i) => ({
+        path: `stacks/s${i}.ts`,
+        content: 'x',
+      }));
+      const result = extractResponse(JSON.stringify({ ...validResponse, files }));
+      expect(result.files).toHaveLength(MAX_FILES);
+    });
+
+    test('rejeita resposta com mais de MAX_DELETIONS remocoes', () => {
+      const deletions = Array.from({ length: MAX_DELETIONS + 1 }, (_, i) => `stacks/old-${i}.ts`);
+      expect(() => extractResponse(JSON.stringify({ ...validResponse, deletions }))).toThrow(/limite de remoções/i);
+    });
+
+    test('aceita resposta com exatamente MAX_DELETIONS remocoes', () => {
+      const deletions = Array.from({ length: MAX_DELETIONS }, (_, i) => `stacks/old-${i}.ts`);
+      const result = extractResponse(JSON.stringify({ ...validResponse, deletions }));
+      expect(result.deletions).toHaveLength(MAX_DELETIONS);
+    });
+
+    test('rejeita arquivo com conteudo acima de MAX_FILE_BYTES', () => {
+      const big = 'x'.repeat(MAX_FILE_BYTES + 1);
+      expect(() => extractResponse(JSON.stringify({
+        ...validResponse,
+        files: [{ path: 'stacks/big.ts', content: big }],
+      }))).toThrow(/limite de tamanho/i);
+    });
+
+    test('aceita arquivo com conteudo exatamente no limite', () => {
+      const justRight = 'x'.repeat(MAX_FILE_BYTES);
+      const result = extractResponse(JSON.stringify({
+        ...validResponse,
+        files: [{ path: 'stacks/ok.ts', content: justRight }],
+      }));
+      expect(result.files).toHaveLength(1);
+    });
   });
 });

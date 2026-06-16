@@ -11,6 +11,12 @@ export interface AIGeneratedResponse {
   warnings: string[];
 }
 
+// Limites defensivos para resposta da IA — evita estouro de memoria/disco
+// caso o LLM gere lixo, fique em loop ou seja induzido a abuso.
+export const MAX_FILES = 50;
+export const MAX_DELETIONS = 100;
+export const MAX_FILE_BYTES = 256 * 1024;
+
 export function extractResponse(raw: string): AIGeneratedResponse {
   const trimmed = raw.trim();
 
@@ -65,8 +71,16 @@ function validate(obj: unknown): AIGeneratedResponse {
     throw new Error('Response da IA está faltando o campo "files" (array).');
   }
 
+  const rawFiles = o['files'] as unknown[];
+  if (rawFiles.length > MAX_FILES) {
+    throw new Error(
+      `Response da IA excede o limite de arquivos: ${rawFiles.length} > ${MAX_FILES}. ` +
+      `Reduza o escopo da requisição.`
+    );
+  }
+
   const files: GeneratedFile[] = [];
-  for (const f of o['files'] as unknown[]) {
+  for (const f of rawFiles) {
     if (typeof f !== 'object' || f === null) {
       throw new Error('Cada item em "files" deve ser um objeto com "path" e "content".');
     }
@@ -74,15 +88,30 @@ function validate(obj: unknown): AIGeneratedResponse {
     if (typeof file['path'] !== 'string' || typeof file['content'] !== 'string') {
       throw new Error('Cada arquivo deve ter "path" (string) e "content" (string).');
     }
+    const byteLen = Buffer.byteLength(file['content'], 'utf-8');
+    if (byteLen > MAX_FILE_BYTES) {
+      throw new Error(
+        `Arquivo "${file['path']}" excede o limite de tamanho: ${byteLen} bytes > ${MAX_FILE_BYTES} bytes. ` +
+        `Divida o conteúdo em arquivos menores.`
+      );
+    }
     files.push({ path: file['path'], content: file['content'] });
+  }
+
+  const rawDeletions = Array.isArray(o['deletions'])
+    ? (o['deletions'] as unknown[]).filter((s): s is string => typeof s === 'string')
+    : [];
+  if (rawDeletions.length > MAX_DELETIONS) {
+    throw new Error(
+      `Response da IA excede o limite de remoções: ${rawDeletions.length} > ${MAX_DELETIONS}. ` +
+      `Reduza o escopo da requisição.`
+    );
   }
 
   return {
     explanation: o['explanation'] as string,
     files,
-    deletions: Array.isArray(o['deletions'])
-      ? (o['deletions'] as unknown[]).filter((s): s is string => typeof s === 'string')
-      : [],
+    deletions: rawDeletions,
     nextSteps: Array.isArray(o['nextSteps'])
       ? (o['nextSteps'] as unknown[]).filter((s): s is string => typeof s === 'string')
       : [],

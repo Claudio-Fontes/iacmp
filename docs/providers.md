@@ -22,6 +22,20 @@ iacmp synth --provider aws
 iacmp deploy --provider azure
 ```
 
+## Onde ficam os artefatos sintetizados
+
+`iacmp synth` escreve em `synth-out/<provider>/<stack>.<ext>`. Cada provider tem
+sua subpasta, então sintetizar a mesma stack para múltiplos providers nunca
+sobrescreve resultados. Os consumidores (`deploy`, `destroy`, `diff`,
+`dashboard`) leem dessa mesma subpasta.
+
+| Provider | Path | Extensão |
+|---|---|---|
+| AWS | `synth-out/aws/<stack>.json` | CloudFormation JSON |
+| Azure | `synth-out/azure/<stack>.json` | ARM Template JSON |
+| GCP | `synth-out/gcp/<stack>.json` | Deployment Manager JSON |
+| Terraform | `synth-out/terraform/<stack>.tf` | HCL |
+
 ---
 
 ## AWS

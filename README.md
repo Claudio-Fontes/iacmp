@@ -136,7 +136,9 @@ O Mermaid é renderizado automaticamente no GitHub/GitLab. O Structurizr DSL pod
 
 ## IA
 
-Requer `ANTHROPIC_API_KEY` (Claude) ou `GITHUB_TOKEN` (Copilot):
+Requer `ANTHROPIC_API_KEY` (Claude) ou `GITHUB_TOKEN` (Copilot). Use o
+`.env.example` como base — copie para `.env` na raiz do projeto e preencha as
+chaves. O `.env` está no `.gitignore`.
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
@@ -167,6 +169,9 @@ docs/
 ├── arquitetura.md
 ├── providers.md
 ├── constructs.md
+├── contribuindo.md
+├── estudo-rag.md
+├── plano-diagramas-stacks.md
 ├── faq.md
 ├── changelog.md
 └── publicacao-npm.md
@@ -183,4 +188,4 @@ npm run typecheck  # verifica tipos sem compilar
 
 ## Licença
 
-MIT
+MIT — veja [LICENSE](LICENSE).

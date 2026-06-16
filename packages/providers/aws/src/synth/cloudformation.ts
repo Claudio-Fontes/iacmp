@@ -304,13 +304,18 @@ function synthesizeConstruct(construct: BaseConstruct): Array<[string, CloudForm
         Properties: {
           GroupDescription: (props.description as string) ?? `Security group ${logicalId}`,
           VpcId: props.vpcId as string,
-          SecurityGroupIngress: ingress.map(r => ({
-            IpProtocol: r.protocol as string,
-            FromPort: r.fromPort as number,
-            ToPort: r.toPort as number,
-            CidrIp: (r.cidr as string) ?? '0.0.0.0/0',
-            ...(r.description ? { Description: r.description } : {}),
-          })),
+          SecurityGroupIngress: ingress.map((r, i) => {
+            if (r.cidr === undefined) {
+              console.warn(`[aws] Security group rule sem CIDR; usando 0.0.0.0/0 — defina props.cidr explicitamente (${construct.id} ingress[${i}])`);
+            }
+            return {
+              IpProtocol: r.protocol as string,
+              FromPort: r.fromPort as number,
+              ToPort: r.toPort as number,
+              CidrIp: (r.cidr as string) ?? '0.0.0.0/0',
+              ...(r.description ? { Description: r.description } : {}),
+            };
+          }),
           SecurityGroupEgress: egress.length > 0
             ? egress.map(r => ({
                 IpProtocol: r.protocol as string,
@@ -984,6 +989,7 @@ function synthesizeConstruct(construct: BaseConstruct): Array<[string, CloudForm
     }
 
     default:
+      console.warn(`[aws] Construct type '${construct.type}' nao suportado — descartado.`);
       return [];
   }
 }

@@ -126,4 +126,101 @@ describe('AWSProvider', () => {
     const tpl = provider.synthesize(stack) as any;
     expect(tpl.Resources.MySecret.Type).toBe('AWS::SecretsManager::Secret');
   });
+
+  // ── Regressao TEST-02 ────────────────────────────────────────────────
+  test('regressao: Database.SQL → DeletionPolicy presente (Snapshot por default)', () => {
+    new Database.SQL(stack, 'DB', { engine: 'mysql' });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.DB.DeletionPolicy).toBe('Snapshot');
+  });
+
+  test('regressao: Database.SQL com deletionProtection → DeletionPolicy Retain', () => {
+    new Database.SQL(stack, 'DB', { engine: 'mysql', deletionProtection: true });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.DB.DeletionPolicy).toBe('Retain');
+  });
+
+  test('regressao: Database.DocumentDB → DeletionPolicy presente no cluster', () => {
+    new Database.DocumentDB(stack, 'Docs', { instances: 1 });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.DocsCluster.DeletionPolicy).toBe('Snapshot');
+  });
+
+  test('regressao: Database.DynamoDB → DeletionPolicy Retain', () => {
+    new Database.DynamoDB(stack, 'Tab', { partitionKey: 'id' });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.Tab.DeletionPolicy).toBe('Retain');
+  });
+
+  test('regressao: Fn.Lambda Environment.Variables sai como objeto (nao envelope name/value)', () => {
+    new Fn.Lambda(stack, 'Handler', {
+      runtime: 'nodejs20',
+      handler: 'index.handler',
+      code: 'dist/',
+      environment: { FOO: 'bar', BAZ: 'qux' },
+    });
+    const tpl = provider.synthesize(stack) as any;
+    const env = tpl.Resources.Handler.Properties.Environment;
+    expect(env).toBeDefined();
+    expect(env.Variables).toEqual({ FOO: 'bar', BAZ: 'qux' });
+  });
+
+  test('regressao: Fn.Lambda sem environment → propriedade omitida', () => {
+    new Fn.Lambda(stack, 'Handler', {
+      runtime: 'nodejs20',
+      handler: 'index.handler',
+      code: 'dist/',
+    });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.Handler.Properties.Environment).toBeUndefined();
+  });
+
+  test('regressao: Network.VPC com maxAzs=2 → gera 2 subnets publicas e 2 privadas', () => {
+    new Network.VPC(stack, 'Vpc', { cidr: '10.0.0.0/16', maxAzs: 2 } as any);
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.VpcPublicSubnetA).toBeDefined();
+    expect(tpl.Resources.VpcPublicSubnetB).toBeDefined();
+    expect(tpl.Resources.VpcPublicSubnetC).toBeUndefined();
+    expect(tpl.Resources.VpcPrivateSubnetA).toBeDefined();
+    expect(tpl.Resources.VpcPrivateSubnetB).toBeDefined();
+    expect(tpl.Resources.VpcIGW).toBeDefined();
+  });
+
+  test('regressao: Network.VPC com maxAzs=3 → gera 3 subnets publicas e 3 privadas', () => {
+    new Network.VPC(stack, 'Vpc', { cidr: '10.0.0.0/16', maxAzs: 3 } as any);
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.VpcPublicSubnetA).toBeDefined();
+    expect(tpl.Resources.VpcPublicSubnetB).toBeDefined();
+    expect(tpl.Resources.VpcPublicSubnetC).toBeDefined();
+    expect(tpl.Resources.VpcPublicSubnetD).toBeUndefined();
+  });
+
+  test('regressao: Network.VPC sem maxAzs → nao gera subnets filhas', () => {
+    new Network.VPC(stack, 'Vpc', { cidr: '10.0.0.0/16' });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.VpcPublicSubnetA).toBeUndefined();
+    expect(tpl.Resources.VpcIGW).toBeUndefined();
+  });
+
+  // ── SEC-04 + ARCH-06 ────────────────────────────────────────────────
+  test('SEC-04: SG ingress sem CIDR emite warn mas mantem default 0.0.0.0/0', () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation();
+    new Network.SecurityGroup(stack, 'SG', {
+      vpcId: 'vpc-1',
+      ingressRules: [{ protocol: 'tcp', fromPort: 22, toPort: 22 } as any],
+    });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.SG.Properties.SecurityGroupIngress[0].CidrIp).toBe('0.0.0.0/0');
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('sem CIDR'));
+    warnSpy.mockRestore();
+  });
+
+  test('ARCH-06: construct desconhecido emite warn e nao adiciona recurso', () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation();
+    stack.addConstruct({ id: 'X', type: 'Foo.Bar', props: {} } as any);
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources).toEqual({});
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("'Foo.Bar' nao suportado"));
+    warnSpy.mockRestore();
+  });
 });

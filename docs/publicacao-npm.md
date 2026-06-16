@@ -1,50 +1,62 @@
 # Publicando o iacmp no npm
 
+## Modelo de distribuição
+
+O `iacmp` é distribuído como **dois pacotes públicos**:
+
+| Pacote | Papel | Conteúdo |
+|---|---|---|
+| `@iacmp/core` | SDK público que os stacks do usuário importam (`import { Stack } from '@iacmp/core'`) | publicado normalmente |
+| `iacmp` (CLI) | binário `npm i -g iacmp` | **bundla** `@iacmp/ai`, `@iacmp/provider-*`, `@iacmp/dashboard`, `@iacmp/registry` e `@iacmp/plugin-sdk` (via tsup); depende de `@iacmp/core` |
+
+Por que `@iacmp/core` **não** é bundlado: o `iacmp init` referencia o pacote (`"@iacmp/core": "^x.y.z"`) e os stacks `.ts` do usuário importam dele — então core precisa existir on-disk como módulo resolvível. Os demais packages são internos do CLI e são inlinados no bundle.
+
+> **Ordem importa:** publique `@iacmp/core` **antes** do `iacmp`. O CLI declara `@iacmp/core` como dependência de registry; se core não estiver publicado, `npm i -g iacmp` falha.
+
 ## Pré-requisitos
 
-- Conta no npmjs.com
+- Conta no npmjs.com com acesso ao escopo `@iacmp`
 - `npm login` feito localmente
 
 ## Checklist antes de publicar
 
 - [ ] Todos os testes passando: `npm test`
 - [ ] Build limpo: `npm run build`
-- [ ] Versão atualizada em `packages/cli/package.json`
-- [ ] `docs/changelog.md` atualizado com as mudanças da versão
+- [ ] Versões sincronizadas entre `@iacmp/core` e `iacmp`
+- [ ] `docs/changelog.md` atualizado
 
 ## Publicar
 
 ```bash
 npm run build
-cd packages/cli
+
+# 1) Primeiro o SDK público
+cd packages/core
+npm publish            # publishConfig.access:public já está no package.json
+
+# 2) Depois o CLI (o prepack roda tsup + oclif manifest)
+cd ../cli
 npm publish --access public
 ```
 
-## Testar após publicação
+## Testar após a publicação
 
 ```bash
 npm install -g iacmp
 iacmp --version
 iacmp doctor
+iacmp init demo && cd demo && iacmp synth
 ```
 
 ## Publicar uma nova versão
 
-1. Atualize `version` em `packages/cli/package.json` (e demais packages se necessário)
+1. Bump de `version` em `packages/core/package.json` e `packages/cli/package.json` (mantenha o range `@iacmp/core` do CLI compatível)
 2. Atualize `docs/changelog.md`
-3. Rode o build e os testes:
-   ```bash
-   npm run build
-   npm test
-   ```
-4. Publique:
-   ```bash
-   cd packages/cli
-   npm publish --access public
-   ```
+3. `npm run build && npm test`
+4. Republique core e depois o CLI (mesma ordem acima)
 
 ## Notas
 
-- O campo `files` no `package.json` do CLI controla o que é incluído no pacote npm: `/bin`, `/dist`, `/oclif.manifest.json`
-- Os packages internos (`@iacmp/core`, `@iacmp/provider-*` etc.) são bundlados como dependências — não é necessário publicá-los separadamente para o funcionamento do CLI
-- Para publicar os packages internos (uso como biblioteca), siga o mesmo processo para cada um
+- O `files` do CLI controla o que vai no pacote: `/bin/run.js`, `/dist`, `/oclif.manifest.json`. O `dist/` já contém todos os packages internos inlinados.
+- `oclif.manifest.json` é gerado pelo `prepack` (`oclif manifest`) — não é versionado.
+- Para publicar os outros packages internos como bibliotecas independentes (opcional), siga o mesmo processo para cada um.

@@ -246,7 +246,7 @@ test('${projectName} stack tem pelo menos um construct', () => {
 `;
 }
 
-function packageJson(projectName: string, corePath: string): string {
+function packageJson(projectName: string, coreVersion: string): string {
   return JSON.stringify({
     name: projectName,
     version: '0.1.0',
@@ -259,7 +259,7 @@ function packageJson(projectName: string, corePath: string): string {
       deploy: 'iacmp deploy',
     },
     dependencies: {
-      '@iacmp/core': `file:${corePath}`,
+      '@iacmp/core': `^${coreVersion}`,
     },
     devDependencies: {
       '@types/jest': '^30',
@@ -276,7 +276,7 @@ function packageJson(projectName: string, corePath: string): string {
   }, null, 2) + '\n';
 }
 
-function tsConfig(corePath: string): string {
+function tsConfig(): string {
   return JSON.stringify({
     compilerOptions: {
       target: 'ES2022',
@@ -293,10 +293,7 @@ function tsConfig(corePath: string): string {
       skipLibCheck: true,
       outDir: 'dist',
       rootDir: '.',
-      paths: {
-        '@iacmp/core': [corePath],
-        '@iacmp/core/*': [`${corePath}/*`],
-      },
+      // @iacmp/core é resolvido via node_modules após `npm install`
     },
     exclude: ['node_modules', 'dist'],
   }, null, 2) + '\n';
@@ -465,13 +462,19 @@ export default class Init extends Command {
     const stackFileName = `${projectName}-stack.ts`;
 
     if (flags.language === 'typescript') {
-      // package.json
-      const corePkgJson = require.resolve('@iacmp/core/package.json');
-      const corePath = path.dirname(corePkgJson);
-      fs.writeFileSync(path.join(projectDir, 'package.json'), packageJson(projectName, corePath));
+      // package.json — referencia @iacmp/core por versão de registry (publicado)
+      const coreVersion = (() => {
+        try {
+          const corePkgJson = require.resolve('@iacmp/core/package.json');
+          return (JSON.parse(fs.readFileSync(corePkgJson, 'utf-8')) as { version: string }).version;
+        } catch {
+          return '1.0.0';
+        }
+      })();
+      fs.writeFileSync(path.join(projectDir, 'package.json'), packageJson(projectName, coreVersion));
 
       // tsconfig.json
-      fs.writeFileSync(path.join(projectDir, 'tsconfig.json'), tsConfig(corePath));
+      fs.writeFileSync(path.join(projectDir, 'tsconfig.json'), tsConfig());
 
       // stack (usa o template escolhido) — subpasta por tipo de recurso
       const stackSubDir = template.stackSubDir

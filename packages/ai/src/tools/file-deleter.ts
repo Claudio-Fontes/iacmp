@@ -3,23 +3,48 @@ import * as path from 'path';
 import * as cp from 'child_process';
 import chalk from 'chalk';
 import { AskFn } from './diff-renderer';
+import {
+  safeJoin,
+  assertValidStackName,
+  assertValidProvider,
+  errMessage,
+} from './safe-path';
 
-function synthOutPath(filePath: string, projectDir: string): string | null {
+function synthOutPaths(filePath: string, projectDir: string): string[] {
   const basename = path.basename(filePath).replace(/\.(ts|js)$/, '');
-  const candidates = [
-    path.join(projectDir, 'synth-out', `${basename}.json`),
-    path.join(projectDir, 'synth-out', `${basename}.tf`),
-  ];
-  for (const c of candidates) {
-    if (fs.existsSync(c)) return c;
+  const root = path.join(projectDir, 'synth-out');
+  if (!fs.existsSync(root)) return [];
+
+  const found: string[] = [];
+  const check = (dir: string) => {
+    for (const ext of ['.json', '.tf']) {
+      const c = path.join(dir, `${basename}${ext}`);
+      if (fs.existsSync(c) && fs.statSync(c).isFile()) found.push(c);
+    }
+  };
+
+  check(root); // layout legado/flat
+  // synth grava em synth-out/<provider>/ — varre os subdiretorios por provider
+  try {
+    for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+      if (entry.isDirectory()) check(path.join(root, entry.name));
+    }
+  } catch {
+    /* ignore */
   }
-  return null;
+  return found;
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function removeReferences(stackName: string, projectDir: string): string[] {
   const modified: string[] = [];
   const stacksDir = path.join(projectDir, 'stacks');
   if (!fs.existsSync(stacksDir)) return modified;
+
+  const escaped = escapeRegex(stackName);
 
   const findTs = (dir: string): string[] => {
     const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -35,7 +60,7 @@ function removeReferences(stackName: string, projectDir: string): string[] {
   for (const file of findTs(stacksDir)) {
     const content = fs.readFileSync(file, 'utf-8');
     const pattern = new RegExp(
-      `(import[^;]*from\\s*['"][^'"]*${stackName}[^'"]*['"]\\s*;?\\n?)|(.*${stackName}.*)`,
+      `(import[^;]*from\\s*['"][^'"]*${escaped}[^'"]*['"]\\s*;?\\n?)|(.*${escaped}.*)`,
       'g'
     );
     if (pattern.test(content)) {
@@ -49,36 +74,64 @@ function removeReferences(stackName: string, projectDir: string): string[] {
   return modified;
 }
 
+function resolveCliEntrypoint(): string | null {
+  try {
+    return require.resolve('iacmp/bin/run.js');
+  } catch {
+    return null;
+  }
+}
+
 export async function deleteFiles(
   deletions: string[],
   projectDir: string,
   iacProvider: string,
-  ask: AskFn
+  ask: AskFn,
+  options?: { providerAllowlist?: readonly string[] }
 ): Promise<void> {
+  assertValidProvider(iacProvider, options?.providerAllowlist);
+
   // Monta lista completa: .ts + synth-out correspondente
   const stackFiles = deletions.filter(f => f.match(/\.(ts|js)$/) && f.includes('stacks/'));
   const otherFiles = deletions.filter(f => !stackFiles.includes(f));
 
   const seen = new Set<string>();
-  const allToDelete: string[] = [];
+  const allToDelete: { rel: string; full: string }[] = [];
   const synthOuts: string[] = [];
 
-  const add = (f: string) => { if (!seen.has(f)) { seen.add(f); allToDelete.push(f); } };
+  const add = (rel: string, full: string) => {
+    if (!seen.has(full)) {
+      seen.add(full);
+      allToDelete.push({ rel, full });
+    }
+  };
 
   for (const filePath of stackFiles) {
-    const full = path.join(projectDir, filePath);
-    if (fs.existsSync(full)) add(filePath);
-    const synthOut = synthOutPath(filePath, projectDir);
-    if (synthOut) {
+    let full: string;
+    try {
+      full = safeJoin(projectDir, filePath);
+    } catch (err) {
+      console.log(chalk.yellow(`  ! ${errMessage(err)} — ignorando ${filePath}`));
+      continue;
+    }
+    if (fs.existsSync(full)) add(filePath, full);
+
+    for (const synthOut of synthOutPaths(filePath, projectDir)) {
       const rel = path.relative(projectDir, synthOut);
-      add(rel);
+      add(rel, synthOut);
       if (!synthOuts.includes(rel)) synthOuts.push(rel);
     }
   }
 
   for (const filePath of otherFiles) {
-    const full = path.join(projectDir, filePath);
-    if (fs.existsSync(full)) add(filePath);
+    let full: string;
+    try {
+      full = safeJoin(projectDir, filePath);
+    } catch (err) {
+      console.log(chalk.yellow(`  ! ${errMessage(err)} — ignorando ${filePath}`));
+      continue;
+    }
+    if (fs.existsSync(full)) add(filePath, full);
   }
 
   if (allToDelete.length === 0) {
@@ -89,7 +142,7 @@ export async function deleteFiles(
   console.log('');
   console.log(chalk.red.bold('  Arquivos que serão removidos:'));
   for (const f of allToDelete) {
-    console.log(chalk.red(`  - ${f}`));
+    console.log(chalk.red(`  - ${f.rel}`));
   }
   console.log('');
 
@@ -97,14 +150,30 @@ export async function deleteFiles(
   if (synthOuts.length > 0) {
     const runDestroy = await ask('Rodar `iacmp destroy` para remover os recursos na nuvem antes de apagar? [y/n] ');
     if (runDestroy.toLowerCase() === 'y') {
+      const cliEntry = resolveCliEntrypoint();
       for (const synthOut of synthOuts) {
         const stackName = path.basename(synthOut).replace(/\.(json|tf)$/, '');
+        try {
+          assertValidStackName(stackName);
+        } catch (err) {
+          console.log(chalk.yellow(`  ! ${errMessage(err)} — pulando destroy de ${stackName}`));
+          continue;
+        }
         console.log(chalk.dim(`\n  Rodando destroy para ${stackName}...`));
         try {
-          cp.execSync(`iacmp destroy --stack ${stackName} --provider ${iacProvider} --force`, {
-            cwd: projectDir,
-            stdio: 'inherit',
-          });
+          if (cliEntry) {
+            cp.execFileSync(
+              process.execPath,
+              [cliEntry, 'destroy', '--stack', stackName, '--provider', iacProvider, '--force'],
+              { cwd: projectDir, stdio: 'inherit' }
+            );
+          } else {
+            cp.execFileSync(
+              'npx',
+              ['iacmp', 'destroy', '--stack', stackName, '--provider', iacProvider, '--force'],
+              { cwd: projectDir, stdio: 'inherit' }
+            );
+          }
         } catch {
           console.log(chalk.yellow(`  ! destroy falhou para ${stackName} — continuando com remoção local`));
         }
@@ -112,24 +181,23 @@ export async function deleteFiles(
     }
   }
 
-  // Confirma remoção dos arquivos locais
+  // Confirma remocao dos arquivos locais
   const confirm = await ask('\nApagar arquivos locais? [y/n] ');
   if (confirm.toLowerCase() !== 'y') {
     console.log(chalk.dim('  Remoção cancelada.\n'));
     return;
   }
 
-  for (const filePath of allToDelete) {
-    const full = path.join(projectDir, filePath);
+  for (const { rel, full } of allToDelete) {
     try {
       fs.rmSync(full, { force: true });
-      console.log(chalk.red(`  ✗ ${filePath}`));
+      console.log(chalk.red(`  ✗ ${rel}`));
     } catch {
-      console.log(chalk.yellow(`  ! Não foi possível remover: ${filePath}`));
+      console.log(chalk.yellow(`  ! Não foi possível remover: ${rel}`));
     }
   }
 
-  // Remove referências nos outros arquivos
+  // Remove referencias nos outros arquivos
   for (const filePath of stackFiles) {
     const stackName = path.basename(filePath).replace(/\.(ts|js)$/, '');
     const modified = removeReferences(stackName, projectDir);

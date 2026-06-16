@@ -1,7 +1,15 @@
-import { Command } from '@oclif/core';
+import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import { readConfig, loadStacks, saveReport, today } from '../audit';
 import { Stack } from '@iacmp/core';
+
+type FailOn = 'critical' | 'warning' | 'none';
+
+function shouldFail(failOn: FailOn, critical: number, warnings: number): boolean {
+  if (failOn === 'critical') return critical > 0;
+  if (failOn === 'warning') return critical > 0 || warnings > 0;
+  return false;
+}
 
 interface DRCheck {
   label: string;
@@ -130,9 +138,22 @@ function scoreLabel(score: number): string {
 
 export default class AuditDR extends Command {
   static description = 'Audit stacks for disaster recovery (DR) readiness';
-  static examples = ['$ iacmp audit-dr'];
+  static examples = [
+    '$ iacmp audit-dr',
+    '$ iacmp audit-dr --fail-on=critical',
+  ];
+
+  static flags = {
+    'fail-on': Flags.string({
+      description: 'Sai com exit 1 quando há achados no nível indicado',
+      options: ['critical', 'warning', 'none'],
+      default: 'none',
+    }),
+  };
 
   async run(): Promise<void> {
+    const { flags } = await this.parse(AuditDR);
+    const failOn = flags['fail-on'] as FailOn;
     const cwd = process.cwd();
     let config;
     try {
@@ -200,5 +221,17 @@ export default class AuditDR extends Command {
 
     const relPath = saveReport(cwd, 'dr', md);
     this.log(`\nReport saved to ${relPath}`);
+
+    let noDr = 0;
+    let warnings = 0;
+    for (const r of results) {
+      for (const d of r.details) {
+        if (d.level === 'no-dr') noDr++;
+        else if (d.level === 'warning') warnings++;
+      }
+    }
+    if (shouldFail(failOn, noDr, warnings)) {
+      this.exit(1);
+    }
   }
 }

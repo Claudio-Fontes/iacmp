@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { Stack } from '@iacmp/core';
+import { readJsonFile, errMessage } from './utils';
 
 export interface AuditConfig {
   name: string;
@@ -10,7 +11,7 @@ export interface AuditConfig {
 export function readConfig(cwd: string): AuditConfig {
   const configPath = path.join(cwd, 'iacmp.json');
   if (!fs.existsSync(configPath)) throw new Error('iacmp.json não encontrado. Rode: iacmp init');
-  const config = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
+  const config = readJsonFile<Record<string, unknown>>(configPath);
   return {
     name: (config.name as string) ?? path.basename(cwd),
     provider: (config.provider as string) ?? 'aws',
@@ -77,10 +78,13 @@ export function loadStacks(cwd: string): Array<{ name: string; stack: Stack }> {
     try {
       const mod = require(stackPath) as Record<string, unknown>;
       const raw = mod.default ?? mod.stack ?? mod;
-      if (!raw || typeof raw !== 'object' || !('constructs' in raw)) continue;
+      if (!raw || typeof raw !== 'object' || !('constructs' in raw)) {
+        console.warn(`[audit] ${path.basename(stackPath)} não exporta uma Stack válida — ignorado.`);
+        continue;
+      }
       result.push({ name: stackName, stack: raw as Stack });
-    } catch {
-      // silently skip invalid stacks
+    } catch (err) {
+      console.warn(`[audit] falha ao carregar ${path.basename(stackPath)}: ${errMessage(err)}`);
     }
   }
   return result;

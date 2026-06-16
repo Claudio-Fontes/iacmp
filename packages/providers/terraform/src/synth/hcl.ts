@@ -37,13 +37,24 @@ function block(type: string, labels: string[], body: string): string {
   return `${type}${labelStr} {\n${body}\n}\n`;
 }
 
+// HCL string escape: barra, aspas e interpoladores ${..} / %{..} precisam ser neutralizados
+// para que valores arbitrarios (gerados por IA, vindos de prompts) nao quebrem o template.
+// Nota: em replacement de String.replace, '$$' significa '$' literal; por isso usamos '$$$$' p/ emitir '$$'.
+export function hclString(value: unknown): string {
+  return String(value ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\$\{/g, '$$$${')
+    .replace(/%\{/g, '%%{');
+}
+
 function attr(key: string, value: string | number | boolean): string {
-  if (typeof value === 'string') return `${key} = "${value}"`;
+  if (typeof value === 'string') return `${key} = "${hclString(value)}"`;
   return `${key} = ${value}`;
 }
 
 function tagsBlock(name: string): string {
-  return indent(`tags = {\n${indent(`Name = "${name}"`)}\n}`);
+  return indent(`tags = {\n${indent(`Name = "${hclString(name)}"`)}\n}`);
 }
 
 function synthesizeConstruct(construct: BaseConstruct): string {
@@ -57,7 +68,7 @@ function synthesizeConstruct(construct: BaseConstruct): string {
       const instanceType = INSTANCE_TYPE_MAP[props.instanceType as string] ?? 't3.small';
       const ami = AMI_MAP[props.image as string];
       const body = indent([
-        `ami           = ${ami ? ami : `"${props.image}"`}`,
+        `ami           = ${ami ? ami : `"${hclString(props.image)}"`}`,
         attr('instance_type', instanceType),
         '',
         tagsBlock(construct.id),
@@ -70,7 +81,7 @@ function synthesizeConstruct(construct: BaseConstruct): string {
       const image = props.image as string;
 
       const lcBody = indent([
-        `image_id      = "${image}"`,
+        `image_id      = "${hclString(image)}"`,
         attr('instance_type', instanceType),
       ].join('\n'));
 
@@ -202,7 +213,7 @@ function synthesizeConstruct(construct: BaseConstruct): string {
             `  rule {`,
             `    id     = "rule-${i}"`,
             `    status = "Enabled"`,
-            r.prefix ? `    filter {\n      prefix = "${r.prefix}"\n    }` : '',
+            r.prefix ? `    filter {\n      prefix = "${hclString(r.prefix)}"\n    }` : '',
             r.expireAfterDays ? `    expiration {\n      days = ${r.expireAfterDays}\n    }` : '',
             r.transitionToGlacierDays ? `    transition {\n      days          = ${r.transitionToGlacierDays}\n      storage_class = "GLACIER"\n    }` : '',
             `  }`,
@@ -232,7 +243,7 @@ function synthesizeConstruct(construct: BaseConstruct): string {
         const apId = `${id}_ap_${(ap.name as string).replace(/[^a-zA-Z0-9_]/g, '_')}`;
         const apBody = indent([
           `file_system_id = aws_efs_file_system.${id}.id`,
-          `root_directory {\n  path = "${ap.path}"\n}`,
+          `root_directory {\n  path = "${hclString(ap.path)}"\n}`,
           ap.uid ? `posix_user {\n  uid = ${ap.uid}\n  gid = ${ap.gid ?? ap.uid}\n}` : '',
         ].filter(Boolean).join('\n'));
         parts.push(block('resource', ['aws_efs_access_point', apId], apBody));
@@ -267,7 +278,7 @@ function synthesizeConstruct(construct: BaseConstruct): string {
     case 'Network.Subnet': {
       const isPublic = (props.public as boolean) ?? false;
       const lines = [
-        `vpc_id = "${props.vpcId as string}"`,
+        `vpc_id = "${hclString(props.vpcId)}"`,
         attr('cidr_block', props.cidr as string),
         attr('map_public_ip_on_launch', isPublic),
         ...(props.availabilityZone ? [attr('availability_zone', props.availabilityZone as string)] : []),
@@ -281,17 +292,22 @@ function synthesizeConstruct(construct: BaseConstruct): string {
       const ingress = (props.ingressRules as Array<Record<string, unknown>>) ?? [];
       const egress = (props.egressRules as Array<Record<string, unknown>>) ?? [];
 
-      const ingressBlocks = ingress.map(r => indent([
-        'ingress {',
-        indent([
-          attr('protocol', r.protocol as string),
-          attr('from_port', r.fromPort as number),
-          attr('to_port', r.toPort as number),
-          `cidr_blocks = ["${(r.cidr as string) ?? '0.0.0.0/0'}"]`,
-          r.description ? attr('description', r.description as string) : '',
-        ].filter(Boolean).join('\n')),
-        '}',
-      ].join('\n'))).join('\n');
+      const ingressBlocks = ingress.map((r, i) => {
+        if (r.cidr === undefined) {
+          console.warn(`[terraform] Security group rule sem CIDR; usando 0.0.0.0/0 — defina props.cidr explicitamente (${construct.id} ingress[${i}])`);
+        }
+        return indent([
+          'ingress {',
+          indent([
+            attr('protocol', r.protocol as string),
+            attr('from_port', r.fromPort as number),
+            attr('to_port', r.toPort as number),
+            `cidr_blocks = ["${hclString((r.cidr as string) ?? '0.0.0.0/0')}"]`,
+            r.description ? attr('description', r.description as string) : '',
+          ].filter(Boolean).join('\n')),
+          '}',
+        ].join('\n'));
+      }).join('\n');
 
       const egressList = egress.length > 0 ? egress : [{ protocol: '-1', fromPort: 0, toPort: 0, cidr: '0.0.0.0/0' }];
       const egressBlocks = egressList.map((r: Record<string, unknown>) => indent([
@@ -300,13 +316,13 @@ function synthesizeConstruct(construct: BaseConstruct): string {
           attr('protocol', r.protocol as string),
           attr('from_port', r.fromPort as number),
           attr('to_port', r.toPort as number),
-          `cidr_blocks = ["${(r.cidr as string) ?? '0.0.0.0/0'}"]`,
+          `cidr_blocks = ["${hclString((r.cidr as string) ?? '0.0.0.0/0')}"]`,
         ].join('\n')),
         '}',
       ].join('\n'))).join('\n');
 
       const body = indent([
-        `vpc_id      = "${props.vpcId as string}"`,
+        `vpc_id      = "${hclString(props.vpcId)}"`,
         attr('description', (props.description as string) ?? `Security group ${id}`),
         '',
         ingressBlocks,
@@ -328,8 +344,8 @@ function synthesizeConstruct(construct: BaseConstruct): string {
         const action = (r.action as string) ?? 'allow';
         const ruleId = ((r.name as string) ?? `rule${i}`).replace(/[^a-zA-Z0-9_]/g, '_');
         const statement = r.managedGroup
-          ? `statement {\n    managed_rule_group_statement {\n      name        = "${r.managedGroup}"\n      vendor_name = "AWS"\n    }\n  }`
-          : `statement {\n    byte_match_statement {\n      search_string = "${((r.matchValues as string[]) ?? ['BadBot'])[0]}"\n      field_to_match { single_header { name = "user-agent" } }\n      text_transformation { priority = 0 type = "NONE" }\n      positional_constraint = "CONTAINS"\n    }\n  }`;
+          ? `statement {\n    managed_rule_group_statement {\n      name        = "${hclString(r.managedGroup)}"\n      vendor_name = "AWS"\n    }\n  }`
+          : `statement {\n    byte_match_statement {\n      search_string = "${hclString(((r.matchValues as string[]) ?? ['BadBot'])[0])}"\n      field_to_match { single_header { name = "user-agent" } }\n      text_transformation { priority = 0 type = "NONE" }\n      positional_constraint = "CONTAINS"\n    }\n  }`;
         return indent([
           'rule {',
           indent([
@@ -382,7 +398,7 @@ function synthesizeConstruct(construct: BaseConstruct): string {
           attr('protocol', tg.protocol as string),
           `vpc_id      = ""`,
           `target_type = "ip"`,
-          `health_check {\n  path = "${(tg.healthCheckPath as string) ?? '/'}"\n}`,
+          `health_check {\n  path = "${hclString((tg.healthCheckPath as string) ?? '/')}"\n}`,
         ].join('\n'));
         parts.push(block('resource', ['aws_lb_target_group', tgId], tgBody));
       }
@@ -408,13 +424,13 @@ function synthesizeConstruct(construct: BaseConstruct): string {
     case 'Network.CDN': {
       const origins = (props.origins as Array<Record<string, unknown>>) ?? [];
       const body = indent([
-        `origin {\n  domain_name = "${origins[0]?.domainName ?? ''}"\n  origin_id   = "${origins[0]?.id ?? 'default'}"\n}`,
+        `origin {\n  domain_name = "${hclString(origins[0]?.domainName ?? '')}"\n  origin_id   = "${hclString(origins[0]?.id ?? 'default')}"\n}`,
         `enabled             = true`,
         attr('default_root_object', (props.defaultRootObject as string) ?? 'index.html'),
         attr('price_class', (props.priceClass as string) ?? 'PriceClass_100'),
-        `default_cache_behavior {\n  target_origin_id       = "${origins[0]?.id ?? 'default'}"\n  viewer_protocol_policy = "redirect-to-https"\n  allowed_methods        = ["GET", "HEAD"]\n  cached_methods         = ["GET", "HEAD"]\n  compress               = true\n  forwarded_values {\n    query_string = false\n    cookies { forward = "none" }\n  }\n}`,
+        `default_cache_behavior {\n  target_origin_id       = "${hclString(origins[0]?.id ?? 'default')}"\n  viewer_protocol_policy = "redirect-to-https"\n  allowed_methods        = ["GET", "HEAD"]\n  cached_methods         = ["GET", "HEAD"]\n  compress               = true\n  forwarded_values {\n    query_string = false\n    cookies { forward = "none" }\n  }\n}`,
         ...(props.certificateArn
-          ? [`viewer_certificate {\n  acm_certificate_arn = "${props.certificateArn}"\n  ssl_support_method  = "sni-only"\n}`]
+          ? [`viewer_certificate {\n  acm_certificate_arn = "${hclString(props.certificateArn)}"\n  ssl_support_method  = "sni-only"\n}`]
           : [`viewer_certificate {\n  cloudfront_default_certificate = true\n}`]),
         `restrictions {\n  geo_restriction {\n    restriction_type = "none"\n  }\n}`,
         '',
@@ -489,7 +505,7 @@ function synthesizeConstruct(construct: BaseConstruct): string {
         attr('instance_class', (props.instanceType as string) ?? defaultInstanceMap[engine] ?? 'db.t3.micro'),
         attr('allocated_storage', (props.storageGb as number) ?? 20),
         attr('username', usernameMap[engine] ?? 'dbadmin'),
-        attr('password', 'changeme'),
+        `password = var.db_password`,
         attr('multi_az', (props.multiAz as boolean) ?? false),
         attr('skip_final_snapshot', false),
         attr('storage_encrypted', true),
@@ -509,7 +525,7 @@ function synthesizeConstruct(construct: BaseConstruct): string {
         attr('cluster_identifier', construct.id.toLowerCase()),
         attr('engine', 'docdb'),
         attr('master_username', 'docdbadmin'),
-        attr('master_password', 'changeme'),
+        `master_password = var.db_password`,
         attr('backup_retention_period', 7),
         attr('skip_final_snapshot', false),
         attr('storage_encrypted', true),
@@ -553,11 +569,11 @@ function synthesizeConstruct(construct: BaseConstruct): string {
         ] : []),
         attr('hash_key', props.partitionKey as string),
         ...(props.sortKey ? [attr('range_key', props.sortKey as string)] : []),
-        `attribute {\n  name = "${props.partitionKey}"\n  type = "S"\n}`,
-        ...(props.sortKey ? [`attribute {\n  name = "${props.sortKey}"\n  type = "S"\n}`] : []),
-        ...gsis.map(g => `attribute {\n  name = "${g.partitionKey}"\n  type = "S"\n}`),
+        `attribute {\n  name = "${hclString(props.partitionKey)}"\n  type = "S"\n}`,
+        ...(props.sortKey ? [`attribute {\n  name = "${hclString(props.sortKey)}"\n  type = "S"\n}`] : []),
+        ...gsis.map(g => `attribute {\n  name = "${hclString(g.partitionKey)}"\n  type = "S"\n}`),
         gsiBlocks,
-        ...(props.ttlAttribute ? [`ttl {\n  attribute_name = "${props.ttlAttribute}"\n  enabled        = true\n}`] : []),
+        ...(props.ttlAttribute ? [`ttl {\n  attribute_name = "${hclString(props.ttlAttribute)}"\n  enabled        = true\n}`] : []),
         `point_in_time_recovery {\n  enabled = ${(props.pointInTimeRecovery as boolean) ?? true}\n}`,
         ...(props.streamEnabled ? [`stream_enabled   = true`, `stream_view_type = "NEW_AND_OLD_IMAGES"`] : []),
         '',
@@ -612,7 +628,7 @@ function synthesizeConstruct(construct: BaseConstruct): string {
       const envBlock = environment && Object.keys(environment).length > 0
         ? '\n' + indent([
             'environment {',
-            indent(`variables = {\n${Object.entries(environment).map(([k, v]) => `  ${k} = "${v}"`).join('\n')}\n}`),
+            indent(`variables = {\n${Object.entries(environment).map(([k, v]) => `  ${k} = "${hclString(v)}"`).join('\n')}\n}`),
             '}',
           ].join('\n'))
         : '';
@@ -690,9 +706,9 @@ function synthesizeConstruct(construct: BaseConstruct): string {
       const principalService = attachType === 'lambda' ? 'lambda.amazonaws.com' : 'ec2.amazonaws.com';
 
       const policyStmts = statements.map(s => {
-        const actions = (s.actions as string[]).map(a => `"${a}"`).join(', ');
-        const resources = ((s.resources as string[]) ?? ['*']).map(r => `"${r}"`).join(', ');
-        return `    {\n      "Effect": "${s.effect}",\n      "Action": [${actions}],\n      "Resource": [${resources}]\n    }`;
+        const actions = (s.actions as string[]).map(a => `"${hclString(a)}"`).join(', ');
+        const resources = ((s.resources as string[]) ?? ['*']).map(r => `"${hclString(r)}"`).join(', ');
+        return `    {\n      "Effect": "${hclString(s.effect)}",\n      "Action": [${actions}],\n      "Resource": [${resources}]\n    }`;
       }).join(',\n');
 
       const roleBody = indent([
@@ -746,7 +762,7 @@ function synthesizeConstruct(construct: BaseConstruct): string {
 
         const ruleBody = indent([
           attr('name', r.name as string),
-          `event_bus_name = "${busName}"`,
+          `event_bus_name = "${hclString(busName)}"`,
           `event_pattern  = jsonencode(${JSON.stringify(pattern)})`,
           attr('state', 'ENABLED'),
         ].join('\n'));
@@ -798,7 +814,7 @@ function synthesizeConstruct(construct: BaseConstruct): string {
         attr('delay_seconds', (props.delaySeconds as number) ?? 0),
         attr('fifo_queue', fifo),
         attr('sqs_managed_sse_enabled', (props.encrypted as boolean) ?? true),
-        ...(props.dlqArn ? [`redrive_policy = jsonencode({\n  deadLetterTargetArn = "${props.dlqArn}"\n  maxReceiveCount     = ${(props.maxReceiveCount as number) ?? 3}\n})`] : []),
+        ...(props.dlqArn ? [`redrive_policy = jsonencode({\n  deadLetterTargetArn = "${hclString(props.dlqArn)}"\n  maxReceiveCount     = ${(props.maxReceiveCount as number) ?? 3}\n})`] : []),
         '',
         tagsBlock(construct.id),
       ].join('\n'));
@@ -859,7 +875,7 @@ function synthesizeConstruct(construct: BaseConstruct): string {
     case 'Monitoring.Alarm': {
       const dimensions = props.dimensions as Record<string, string> | undefined;
       const dimBlock = dimensions
-        ? `dimensions = {\n${Object.entries(dimensions).map(([k, v]) => `  ${k} = "${v}"`).join('\n')}\n}`
+        ? `dimensions = {\n${Object.entries(dimensions).map(([k, v]) => `  ${k} = "${hclString(v)}"`).join('\n')}\n}`
         : '';
 
       const body = indent([
@@ -924,6 +940,7 @@ function synthesizeConstruct(construct: BaseConstruct): string {
     }
 
     default:
+      console.warn(`[terraform] Construct type '${construct.type}' nao suportado — descartado.`);
       return '';
   }
 }
@@ -934,7 +951,18 @@ export function synthesize(stack: Stack): string {
   const terraformBlock = block('terraform', [], indent(requiredProvidersBlock));
   const providerBlock = block('provider', ['aws'], indent(attr('region', 'us-east-1')));
 
-  const header = [terraformBlock, providerBlock].join('\n');
+  const needsDbPassword = stack.constructs.some(
+    c => c.type === 'Database.SQL' || c.type === 'Database.DocumentDB',
+  );
+  const dbPasswordVar = needsDbPassword
+    ? block('variable', ['db_password'], indent([
+        'type        = string',
+        'sensitive   = true',
+        attr('description', 'Senha do administrador do banco de dados (Database.SQL/DocumentDB). Forneca via TF_VAR_db_password ou tfvars.'),
+      ].join('\n')))
+    : '';
+
+  const header = [terraformBlock, providerBlock, dbPasswordVar].filter(Boolean).join('\n');
 
   const resources = stack.constructs
     .map(c => synthesizeConstruct(c))

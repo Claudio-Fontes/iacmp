@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
 import { startDashboard, ProjectInfo, StackInfo } from '@iacmp/dashboard';
+import { listTemplates } from '../synth-out';
 
 function parseResources(filePath: string, provider: string): Array<{ type: string; id: string }> {
   try {
@@ -73,16 +74,11 @@ export default class Dashboard extends Command {
       region: string;
     };
 
-    const outDir = path.join(cwd, 'synth-out');
     const stacks: StackInfo[] = [];
 
-    if (fs.existsSync(outDir)) {
-      const files = fs.readdirSync(outDir).filter(f => f.endsWith('.json'));
-      for (const file of files) {
-        const stackName = file.replace(/\.json$/, '');
-        const resources = parseResources(path.join(outDir, file), config.provider);
-        stacks.push({ name: stackName, provider: config.provider, resources });
-      }
+    for (const t of listTemplates(cwd, config.provider)) {
+      const resources = parseResources(t.filePath, config.provider);
+      stacks.push({ name: t.stackName, provider: config.provider, resources });
     }
 
     const info: ProjectInfo = {

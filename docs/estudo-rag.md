@@ -1,4 +1,11 @@
-# RAG no iacmp — Plano de Implementação
+# RAG no iacmp — Arquitetura (estado atual)
+
+> Este documento descreve a **arquitetura do RAG já existente** no `@iacmp/ai`.
+> Os arquivos listados em "Arquivos a criar / modificar" e as "Fases" abaixo
+> são preservados como histórico do plano original — boa parte deles já está
+> implementada (`packages/ai/src/rag/`, `packages/ai/src/knowledge/`,
+> `packages/ai/src/tools/context-reader.ts`). Para o que ainda falta, veja a
+> seção [Próximos passos](#proximos-passos) no fim do arquivo.
 
 ## O problema concreto
 
@@ -340,3 +347,27 @@ Anthropic não tem API de embeddings. As opções:
 - Docker ou servidor dedicado
 - GPU (coseno em Float32Array roda em menos de 5ms para 15.000 vetores)
 - Dependência pesada nova para fase 1
+
+---
+
+## Próximos passos
+
+Apontados pela auditoria adversarial (ver `docs/report.md`):
+
+- **Religar o vector store ao retriever (RAG-01)** — `vectorStore.search()` já
+  existe e o pipeline gera embeddings Voyage, mas o retriever só consulta BM25.
+  Fundir resultados via RRF ou remover a metade vetorial se for legado.
+- **Plugar o query-router no fluxo real (RAG-03)** — `routeQuery()` é testado
+  mas não é chamado em `readProjectContextRAG`; hoje busca-se sempre nos 3
+  corpora.
+- **Normalização Unicode no tokenizer (RAG-02)** — o regex atual remove acentos
+  do português, degradando recuperação em pt-BR.
+- **Contextual Retrieval para knowledge corpus (RAG-04)** — hoje só
+  project/docs passam pelo Contextualizer; o conhecimento curado vai cru.
+- **Carregar `corpus3-index.json` pré-construído (RAG-07)** — o `ingest-knowledge.ts`
+  gera o índice no build, mas o runtime re-chunka tudo a cada `buildIndexes`.
+- **Cache de índices em memória (RAG-08)** — o `indexCache` é escrito mas
+  nunca lido; reindexa a cada mensagem.
+
+Esses itens são incrementais sobre a arquitetura descrita acima — não exigem
+redesign.

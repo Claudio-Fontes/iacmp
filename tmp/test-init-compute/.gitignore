@@ -1,9 +1,0 @@
-node_modules/
-dist/
-synth-out/
-audit/
-*.js.map
-*.d.ts
-.DS_Store
-.env
-.iacmp/

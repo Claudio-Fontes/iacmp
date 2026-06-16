@@ -1,6 +1,11 @@
 import { Command, Flags } from '@oclif/core';
 import * as fs from 'fs';
 import * as path from 'path';
+import chalk from 'chalk';
+import { listTemplates, countResources } from '../synth-out';
+import { readJsonFile, errMessage } from '../utils';
+
+const MVP_BANNER = 'MVP: deploy/destroy real ainda não implementado nesta fase. Os arquivos foram impressos como dry-run.';
 
 const PROVIDER_LABELS: Record<string, string> = {
   aws: 'AWS (CloudFormation)',
@@ -8,28 +13,6 @@ const PROVIDER_LABELS: Record<string, string> = {
   gcp: 'GCP (Deployment Manager)',
   terraform: 'Terraform',
 };
-
-function getResourceCount(templatePath: string, provider: string): number {
-  const content = fs.readFileSync(templatePath, 'utf-8');
-
-  if (provider === 'terraform') {
-    const matches = content.match(/^resource\s+"/gm);
-    return matches ? matches.length : 0;
-  }
-
-  const parsed = JSON.parse(content);
-
-  if (provider === 'aws' || provider === 'azure') {
-    if (Array.isArray(parsed.resources)) return parsed.resources.length;
-    if (parsed.Resources) return Object.keys(parsed.Resources).length;
-  }
-
-  if (provider === 'gcp') {
-    if (Array.isArray(parsed.resources)) return parsed.resources.length;
-  }
-
-  return 0;
-}
 
 export default class Deploy extends Command {
   static description = 'Faz deploy das stacks no provider configurado';
@@ -56,32 +39,30 @@ export default class Deploy extends Command {
       this.error('Projeto não inicializado. Rode: iacmp init');
     }
 
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    let config: { provider?: string };
+    try {
+      config = readJsonFile<{ provider?: string }>(configPath);
+    } catch (err) {
+      this.error(errMessage(err));
+    }
     const provider = flags.provider ?? config.provider ?? 'aws';
     const label = PROVIDER_LABELS[provider] ?? provider.toUpperCase();
 
+    this.log(chalk.yellow.bold(MVP_BANNER));
+    this.log('');
     this.log(`Sintetizando stacks para ${provider}...`);
 
-    const outDir = path.join(cwd, 'synth-out');
-    if (!fs.existsSync(outDir)) {
-      this.error('Nenhum output de synth encontrado. Rode: iacmp synth');
-    }
-
-    const ext = provider === 'terraform' ? '.tf' : '.json';
-    const templates = fs.readdirSync(outDir)
-      .filter(f => f.endsWith(ext))
-      .filter(f => !flags.stack || f.replace(ext, '') === flags.stack);
+    const templates = listTemplates(cwd, provider, flags.stack);
 
     if (templates.length === 0) {
-      this.error(`Nenhum template encontrado em synth-out/. Rode: iacmp synth --provider ${provider}`);
+      this.error(`Nenhum template encontrado para '${provider}'. Rode: iacmp synth --provider ${provider}`);
     }
 
     let totalResources = 0;
-    for (const file of templates) {
-      const templatePath = path.join(outDir, file);
-      const resourceCount = getResourceCount(templatePath, provider);
+    for (const t of templates) {
+      const resourceCount = countResources(t.filePath, provider);
       totalResources += resourceCount;
-      this.log(`  Stack: ${file.replace(ext, '')} — ${resourceCount} recurso(s)`);
+      this.log(`  Stack: ${t.stackName} — ${resourceCount} recurso(s)`);
     }
 
     this.log('');

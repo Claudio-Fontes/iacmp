@@ -16,7 +16,23 @@ export default class Ls extends Command {
       return;
     }
 
-    const files = fs.readdirSync(stacksDir).filter(f => f.endsWith('.ts'));
+    // Descoberta idêntica ao synth/deploy (ver src/commands/synth.ts): recursa
+    // em subpastas de stacks/ e reconhece tanto .ts quanto .js.
+    const findStackFiles = (dir: string): string[] => {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      const files: string[] = [];
+      for (const entry of entries) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          files.push(...findStackFiles(full));
+        } else if (entry.name.endsWith('.ts') || entry.name.endsWith('.js')) {
+          files.push(full);
+        }
+      }
+      return files;
+    };
+
+    const files = findStackFiles(stacksDir);
 
     if (files.length === 0) {
       this.log('Nenhuma stack encontrada em stacks/');
@@ -24,11 +40,12 @@ export default class Ls extends Command {
     }
 
     this.log('Stacks disponíveis:\n');
-    for (const file of files) {
-      const filePath = path.join(stacksDir, file);
+    for (const filePath of files) {
       const stat = fs.statSync(filePath);
       const modified = stat.mtime.toLocaleString('pt-BR');
-      const name = file.replace(/\.ts$/, '');
+      // nome relativo a stacks/ sem extensão (ex.: network/vpc), evitando
+      // ambiguidade entre stacks de mesmo basename em subpastas distintas.
+      const name = path.relative(stacksDir, filePath).replace(/\.(ts|js)$/, '');
       this.log(`  ${name.padEnd(30)} modificado: ${modified}`);
     }
   }

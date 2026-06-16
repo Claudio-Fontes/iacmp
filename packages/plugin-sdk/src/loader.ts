@@ -11,8 +11,12 @@ export function loadPlugins(projectDir: string): IacmpProvider[] {
   let config: { plugins?: string[] };
   try {
     config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-  } catch {
-    return [];
+  } catch (err) {
+    // iacmp.json existe mas e invalido — falhar alto e claro em vez de seguir com config vazia,
+    // senao o usuario perde plugins silenciosamente e nao entende por que comandos divergem.
+    throw new Error(
+      `[iacmp] Falha ao ler ${configPath}: ${(err as Error).message}`,
+    );
   }
 
   if (!config.plugins || config.plugins.length === 0) {
@@ -24,15 +28,21 @@ export function loadPlugins(projectDir: string): IacmpProvider[] {
   for (const pluginName of config.plugins) {
     try {
       const pluginPath = require.resolve(pluginName, { paths: [projectDir] });
-      const pluginModule = require(pluginPath) as IacmpPlugin;
+      const raw = require(pluginPath) as IacmpPlugin | { default?: IacmpPlugin };
+      // Plugin pode ser exportado como `module.exports = definePlugin(...)` (CJS) ou
+      // `export default definePlugin(...)` (ESM transpilado). Tratamos os dois casos.
+      const mod = (raw as { default?: IacmpPlugin }).default ?? (raw as IacmpPlugin);
 
-      if (pluginModule && Array.isArray(pluginModule.providers)) {
-        providers.push(...pluginModule.providers);
-      } else {
-        console.warn(`[iacmp] Plugin '${pluginName}' não exporta providers válidos.`);
+      if (!mod || !Array.isArray(mod.providers)) {
+        console.warn(
+          `[iacmp] Plugin '${pluginName}' nao exporta um IacmpPlugin valido (esperado { providers: IacmpProvider[] }).`,
+        );
+        continue;
       }
+
+      providers.push(...mod.providers);
     } catch (err) {
-      console.warn(`[iacmp] Plugin '${pluginName}' não pôde ser carregado: ${(err as Error).message}`);
+      console.warn(`[iacmp] Plugin '${pluginName}' nao pode ser carregado: ${(err as Error).message}`);
     }
   }
 

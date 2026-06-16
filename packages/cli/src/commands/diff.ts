@@ -8,6 +8,9 @@ import { AzureProvider } from '@iacmp/provider-azure';
 import { GCPProvider } from '@iacmp/provider-gcp';
 import { TerraformProvider } from '@iacmp/provider-terraform';
 import { Stack } from '@iacmp/core';
+import { resolveTemplateDir, templateExt } from '../synth-out';
+import { findStackFiles } from '../load-stacks';
+import { readJsonFile, errMessage } from '../utils';
 
 const CONTEXT_LINES = 2;
 
@@ -64,19 +67,21 @@ function renderDiff(oldText: string, newText: string): boolean {
   return true;
 }
 
+// Deve reproduzir EXATAMENTE o que `synth` grava em disco, senão o diff acusa
+// uma mudança fantasma (ex.: synth grava JSON com '\n' final). Ver synth.ts.
 function synthStack(stack: Stack, provider: string): string {
   switch (provider) {
     case 'aws': {
       const p = new AWSProvider();
-      return JSON.stringify(p.synthesize(stack), null, 2);
+      return JSON.stringify(p.synthesize(stack), null, 2) + '\n';
     }
     case 'azure': {
       const p = new AzureProvider();
-      return JSON.stringify(p.synthesize(stack), null, 2);
+      return JSON.stringify(p.synthesize(stack), null, 2) + '\n';
     }
     case 'gcp': {
       const p = new GCPProvider();
-      return JSON.stringify(p.synthesize(stack), null, 2);
+      return JSON.stringify(p.synthesize(stack), null, 2) + '\n';
     }
     case 'terraform': {
       const p = new TerraformProvider();
@@ -110,16 +115,21 @@ export default class Diff extends Command {
       this.error('Projeto não inicializado. Rode: iacmp init');
     }
 
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    let config: { provider?: string };
+    try {
+      config = readJsonFile<{ provider?: string }>(configPath);
+    } catch (err) {
+      this.error(errMessage(err));
+    }
     const provider = flags.provider ?? config.provider ?? 'aws';
-    const outDir = path.join(cwd, 'synth-out');
+    const outDir = resolveTemplateDir(cwd, provider);
 
-    if (!fs.existsSync(outDir)) {
+    if (!outDir) {
       this.log('Nenhum synth anterior encontrado. Rode: iacmp synth');
       return;
     }
 
-    const ext = provider === 'terraform' ? '.tf' : '.json';
+    const ext = templateExt(provider);
     const existingFiles = fs.readdirSync(outDir).filter(f => f.endsWith(ext));
 
     if (existingFiles.length === 0) {
@@ -132,9 +142,8 @@ export default class Diff extends Command {
       this.error('Diretório stacks/ não encontrado.');
     }
 
-    const stackFiles = fs.readdirSync(stacksDir)
-      .filter(f => f.endsWith('.ts') || f.endsWith('.js'))
-      .filter(f => !flags.stack || f.replace(/\.(ts|js)$/, '') === flags.stack);
+    const stackFiles = findStackFiles(stacksDir)
+      .filter(f => !flags.stack || path.basename(f).replace(/\.(ts|js)$/, '') === flags.stack);
 
     if (stackFiles.length === 0) {
       this.error('Nenhuma stack encontrada em stacks/');
@@ -142,9 +151,9 @@ export default class Diff extends Command {
 
     let anyDiff = false;
 
-    for (const file of stackFiles) {
+    for (const stackPath of stackFiles) {
+      const file = path.basename(stackPath);
       const stackName = file.replace(/\.(ts|js)$/, '');
-      const stackPath = path.join(stacksDir, file);
       const savedPath = path.join(outDir, `${stackName}${ext}`);
 
       if (!fs.existsSync(savedPath)) {
@@ -157,7 +166,7 @@ export default class Diff extends Command {
       try {
         stackModule = require(stackPath) as Record<string, unknown>;
       } catch (err) {
-        this.warn(`Não foi possível carregar ${file}: ${(err as Error).message}`);
+        this.warn(`Não foi possível carregar ${file}: ${errMessage(err)}`);
         continue;
       }
 
@@ -172,7 +181,7 @@ export default class Diff extends Command {
       try {
         newText = synthStack(stack as Stack, provider);
       } catch (err) {
-        this.warn(`Erro ao sintetizar ${stackName}: ${(err as Error).message}`);
+        this.warn(`Erro ao sintetizar ${stackName}: ${errMessage(err)}`);
         continue;
       }
 

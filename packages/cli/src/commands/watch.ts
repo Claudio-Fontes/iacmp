@@ -2,6 +2,27 @@ import { Command, Flags } from '@oclif/core';
 import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
+import { readJsonFile, errMessage } from '../utils';
+
+// Editores (vim/jetbrains/vscode) geram swap/temporários durante o salvamento;
+// dispará-los re-sintetiza com arquivos meio-gravados. Filtramos esse ruído.
+function isTempArtifact(name: string): boolean {
+  if (!name) return true;
+  const base = path.basename(name);
+  return (
+    base.endsWith('.swp') ||
+    base.endsWith('.swx') ||
+    base.endsWith('.tmp') ||
+    base.endsWith('~') ||
+    base.startsWith('.#') ||
+    base.startsWith('#') ||
+    base.startsWith('.DS_Store')
+  );
+}
+
+function isStackSource(name: string): boolean {
+  return name.endsWith('.ts') || name.endsWith('.js');
+}
 
 export default class Watch extends Command {
   static description = 'Monitora stacks/ e sintetiza automaticamente ao detectar mudanças';
@@ -24,7 +45,12 @@ export default class Watch extends Command {
       this.error('Projeto não inicializado. Rode: iacmp init');
     }
 
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    let config: { provider?: string };
+    try {
+      config = readJsonFile<{ provider?: string }>(configPath);
+    } catch (err) {
+      this.error(errMessage(err));
+    }
     const provider = flags.provider ?? config.provider ?? 'aws';
     const stacksDir = path.join(cwd, 'stacks');
 
@@ -58,7 +84,10 @@ export default class Watch extends Command {
     };
 
     fs.watch(stacksDir, { recursive: true }, (_event, filename) => {
-      const name = filename ?? 'arquivo';
+      const name = (filename ?? '').toString();
+      if (!name) return;
+      if (isTempArtifact(name)) return;
+      if (!isStackSource(name)) return;
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => runSynth(name), 300);
     });

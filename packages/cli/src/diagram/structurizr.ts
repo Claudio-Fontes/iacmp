@@ -96,12 +96,19 @@ function ind(n: number): string {
   return '  '.repeat(n);
 }
 
+// Structurizr DSL delimita strings com aspas duplas e não documenta um escape
+// portátil; o caminho seguro é remover as aspas (e quebras de linha) das labels
+// para não derrubar o parser.
+function escapeStructurizr(s: string): string {
+  return s.replace(/"/g, "'").replace(/[\r\n]+/g, ' ');
+}
+
 function containerBlock(node: DiagramNode, depth: number, tagMap: Record<string, string>): string {
   const tag = tagMap[node.constructType] ?? 'Resource';
   const desc = node.description || '';
   const lines = [
-    `${ind(depth)}${node.id} = container "${node.label}" "${desc}" "${node.technology}" {`,
-    `${ind(depth + 1)}tags "${tag}"`,
+    `${ind(depth)}${node.id} = container "${escapeStructurizr(node.label)}" "${escapeStructurizr(desc)}" "${escapeStructurizr(node.technology)}" {`,
+    `${ind(depth + 1)}tags "${escapeStructurizr(tag)}"`,
     `${ind(depth)}}`,
   ];
   return lines.join('\n');
@@ -112,14 +119,14 @@ export function renderStructurizr(model: DiagramModel): string {
   const themeUrl = PROVIDER_THEME[model.provider] ?? PROVIDER_THEME['aws'];
   const tagMap = PROVIDER_TAGS[model.provider] ?? AWS_TYPE_TAG;
 
-  lines.push(`workspace "${model.projectName}" {`);
+  lines.push(`workspace "${escapeStructurizr(model.projectName)}" {`);
   lines.push('');
   lines.push(`${ind(1)}model {`);
-  lines.push(`${ind(2)}${sanitize(model.projectName)} = softwareSystem "${model.projectName}" "Provider: ${model.provider}, Region: ${model.region}" {`);
+  lines.push(`${ind(2)}${sanitize(model.projectName)} = softwareSystem "${escapeStructurizr(model.projectName)}" "Provider: ${escapeStructurizr(model.provider)}, Region: ${escapeStructurizr(model.region)}" {`);
 
   for (const stack of model.stacks) {
     lines.push('');
-    lines.push(`${ind(3)}group "${stack.name}" {`);
+    lines.push(`${ind(3)}group "${escapeStructurizr(stack.name)}" {`);
     for (const node of stack.nodes) {
       lines.push(containerBlock(node, 4, tagMap));
     }
@@ -133,7 +140,7 @@ export function renderStructurizr(model: DiagramModel): string {
       if (rel.inferred) {
         lines.push(`${ind(2)}${rel.sourceId} -> ${rel.targetId} "[inferred]" "" "Inferred"`);
       } else {
-        lines.push(`${ind(2)}${rel.sourceId} -> ${rel.targetId} "${rel.label}"`);
+        lines.push(`${ind(2)}${rel.sourceId} -> ${rel.targetId} "${escapeStructurizr(rel.label)}"`);
       }
     }
   }
@@ -146,7 +153,7 @@ export function renderStructurizr(model: DiagramModel): string {
   for (const stack of model.stacks) {
     const viewId = sanitize(`${stack.name}View`);
     lines.push('');
-    lines.push(`${ind(2)}container ${sysId} "${viewId}" "${stack.name}" {`);
+    lines.push(`${ind(2)}container ${sysId} "${viewId}" "${escapeStructurizr(stack.name)}" {`);
     lines.push(`${ind(3)}include *`);
     lines.push(`${ind(3)}autoLayout`);
     lines.push(`${ind(2)}}`);
