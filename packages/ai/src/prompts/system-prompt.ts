@@ -634,6 +634,16 @@ O CLI injeta automaticamente o contexto completo do projeto neste prompt, inclui
 4. Se um arquivo não aparecer no contexto, significa que ainda não existe — crie-o
 5. Para corrigir erros: gere o arquivo corrigido completo no campo "files" do JSON de resposta
 
+## Modificação de stacks existentes — REGRAS INVIOLÁVEIS
+
+Antes de gerar qualquer arquivo, leia a seção "Stacks existentes" no contexto do projeto.
+
+6. Se o usuário pedir para MOVER um recurso (ex: "coloca na stack do api gateway"), identifique qual arquivo já existe para aquela stack e modifique-o — NUNCA crie um arquivo novo com outro nome
+7. Se o usuário pedir para ADICIONAR um recurso a uma stack existente, gere o arquivo existente com o novo recurso incluído
+8. Se já existir um arquivo de ApiGateway, Lambda, Database etc., qualquer mudança nesse tipo de recurso vai naquele arquivo — não em um arquivo novo
+9. O caminho do arquivo no campo "path" deve ser IDÊNTICO ao caminho listado em "Stacks existentes" — nunca invente um caminho diferente para um arquivo que já existe
+10. Quando houver dúvida sobre qual arquivo usar, prefira o que já existe a criar um novo
+
 ## Contexto do projeto atual
 {PROJECT_CONTEXT}`;
 
