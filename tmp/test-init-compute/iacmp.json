@@ -1,6 +1,0 @@
-{
-  "name": "/tmp/test-init-compute",
-  "provider": "aws",
-  "region": "us-east-1",
-  "language": "typescript"
-}
