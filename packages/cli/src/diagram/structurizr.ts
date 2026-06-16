@@ -153,7 +153,6 @@ export function renderStructurizr(model: DiagramModel): string {
   }
 
   lines.push('');
-  lines.push(`${ind(2)}!theme default`);
   lines.push(`${ind(2)}theme "${themeUrl}"`);
   lines.push('');
   lines.push(`${ind(2)}styles {`);
