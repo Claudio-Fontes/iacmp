@@ -18,6 +18,14 @@ export { deleteFiles } from './tools/file-deleter';
 export { renderAndConfirm, FileDiff, AskFn } from './tools/diff-renderer';
 export { runSynth } from './tools/synth-runner';
 export {
+  safeJoin,
+  isWithin,
+  errMessage,
+  assertValidStackName,
+  assertValidProvider,
+  NATIVE_PROVIDERS,
+} from './tools/safe-path';
+export {
   readProjectContext,
   readProjectMeta,
   readProjectContextRAG,
