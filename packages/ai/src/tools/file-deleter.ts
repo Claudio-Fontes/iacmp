@@ -4,16 +4,29 @@ import * as cp from 'child_process';
 import chalk from 'chalk';
 import { AskFn } from './diff-renderer';
 
-function synthOutPath(filePath: string, projectDir: string): string | null {
+function synthOutPaths(filePath: string, projectDir: string): string[] {
   const basename = path.basename(filePath).replace(/\.(ts|js)$/, '');
-  const candidates = [
-    path.join(projectDir, 'synth-out', `${basename}.json`),
-    path.join(projectDir, 'synth-out', `${basename}.tf`),
-  ];
-  for (const c of candidates) {
-    if (fs.existsSync(c)) return c;
+  const root = path.join(projectDir, 'synth-out');
+  if (!fs.existsSync(root)) return [];
+
+  const found: string[] = [];
+  const check = (dir: string) => {
+    for (const ext of ['.json', '.tf']) {
+      const c = path.join(dir, `${basename}${ext}`);
+      if (fs.existsSync(c) && fs.statSync(c).isFile()) found.push(c);
+    }
+  };
+
+  check(root); // layout legado/flat
+  // synth grava em synth-out/<provider>/ — varre os subdiretórios por provider
+  try {
+    for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+      if (entry.isDirectory()) check(path.join(root, entry.name));
+    }
+  } catch {
+    /* ignore */
   }
-  return null;
+  return found;
 }
 
 function removeReferences(stackName: string, projectDir: string): string[] {
@@ -68,8 +81,7 @@ export async function deleteFiles(
   for (const filePath of stackFiles) {
     const full = path.join(projectDir, filePath);
     if (fs.existsSync(full)) add(filePath);
-    const synthOut = synthOutPath(filePath, projectDir);
-    if (synthOut) {
+    for (const synthOut of synthOutPaths(filePath, projectDir)) {
       const rel = path.relative(projectDir, synthOut);
       add(rel);
       if (!synthOuts.includes(rel)) synthOuts.push(rel);

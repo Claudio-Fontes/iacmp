@@ -8,6 +8,7 @@ import { AzureProvider } from '@iacmp/provider-azure';
 import { GCPProvider } from '@iacmp/provider-gcp';
 import { TerraformProvider } from '@iacmp/provider-terraform';
 import { Stack } from '@iacmp/core';
+import { resolveTemplateDir, templateExt } from '../synth-out';
 
 const CONTEXT_LINES = 2;
 
@@ -64,19 +65,21 @@ function renderDiff(oldText: string, newText: string): boolean {
   return true;
 }
 
+// Deve reproduzir EXATAMENTE o que `synth` grava em disco, senão o diff acusa
+// uma mudança fantasma (ex.: synth grava JSON com '\n' final). Ver synth.ts.
 function synthStack(stack: Stack, provider: string): string {
   switch (provider) {
     case 'aws': {
       const p = new AWSProvider();
-      return JSON.stringify(p.synthesize(stack), null, 2);
+      return JSON.stringify(p.synthesize(stack), null, 2) + '\n';
     }
     case 'azure': {
       const p = new AzureProvider();
-      return JSON.stringify(p.synthesize(stack), null, 2);
+      return JSON.stringify(p.synthesize(stack), null, 2) + '\n';
     }
     case 'gcp': {
       const p = new GCPProvider();
-      return JSON.stringify(p.synthesize(stack), null, 2);
+      return JSON.stringify(p.synthesize(stack), null, 2) + '\n';
     }
     case 'terraform': {
       const p = new TerraformProvider();
@@ -112,14 +115,14 @@ export default class Diff extends Command {
 
     const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
     const provider = flags.provider ?? config.provider ?? 'aws';
-    const outDir = path.join(cwd, 'synth-out');
+    const outDir = resolveTemplateDir(cwd, provider);
 
-    if (!fs.existsSync(outDir)) {
+    if (!outDir) {
       this.log('Nenhum synth anterior encontrado. Rode: iacmp synth');
       return;
     }
 
-    const ext = provider === 'terraform' ? '.tf' : '.json';
+    const ext = templateExt(provider);
     const existingFiles = fs.readdirSync(outDir).filter(f => f.endsWith(ext));
 
     if (existingFiles.length === 0) {

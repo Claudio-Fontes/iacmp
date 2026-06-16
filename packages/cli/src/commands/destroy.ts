@@ -2,6 +2,7 @@ import { Command, Flags } from '@oclif/core';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';
+import { listTemplates, countResources } from '../synth-out';
 
 export default class Destroy extends Command {
   static description = 'Destroi a infraestrutura do provider configurado';
@@ -40,27 +41,17 @@ export default class Destroy extends Command {
     const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
     const provider = flags.provider ?? config.provider ?? 'aws';
 
-    const outDir = path.join(cwd, 'synth-out');
-    if (!fs.existsSync(outDir)) {
-      this.error('Nenhum output encontrado. Rode: iacmp synth');
-    }
-
-    const templates = fs.readdirSync(outDir)
-      .filter(f => f.endsWith('.json'))
-      .filter(f => !flags.stack || f.replace('.json', '') === flags.stack);
+    const templates = listTemplates(cwd, provider, flags.stack);
 
     if (templates.length === 0) {
-      this.error('Nenhuma stack encontrada para destruir.');
+      this.error(`Nenhuma stack encontrada para destruir. Rode: iacmp synth --provider ${provider}`);
     }
 
     let totalResources = 0;
     const stackNames: string[] = [];
-    for (const file of templates) {
-      const templatePath = path.join(outDir, file);
-      const template = JSON.parse(fs.readFileSync(templatePath, 'utf-8'));
-      const resourceCount = Object.keys(template.Resources ?? {}).length;
-      totalResources += resourceCount;
-      stackNames.push(file.replace('.json', ''));
+    for (const t of templates) {
+      totalResources += countResources(t.filePath, provider);
+      stackNames.push(t.stackName);
     }
 
     this.log(`Stacks a destruir: ${stackNames.join(', ')}`);

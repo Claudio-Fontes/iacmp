@@ -7,6 +7,7 @@ import { GCPProvider } from '@iacmp/provider-gcp';
 import { TerraformProvider } from '@iacmp/provider-terraform';
 import { Stack } from '@iacmp/core';
 import { loadPlugins } from '@iacmp/plugin-sdk';
+import { synthRoot, providerOutDir } from '../synth-out';
 
 export default class Synth extends Command {
   static description = 'Sintetiza as stacks para o formato nativo do provider';
@@ -63,7 +64,7 @@ export default class Synth extends Command {
       this.error('Nenhuma stack encontrada em stacks/');
     }
 
-    const outDir = path.join(cwd, 'synth-out');
+    const outDir = synthRoot(cwd);
     if (!fs.existsSync(outDir)) {
       fs.mkdirSync(outDir, { recursive: true });
     }
@@ -117,15 +118,17 @@ export default class Synth extends Command {
 
       const typedStack = stack as Stack;
 
-      // BUG-04 fix: subdiretório por provider para evitar sobrescrita entre providers
-      const providerOutDir = path.join(outDir, provider);
-      fs.mkdirSync(providerOutDir, { recursive: true });
+      // Subdiretório por provider (synth-out/<provider>/) para evitar sobrescrita
+      // entre providers. Os comandos consumidores resolvem este mesmo caminho via
+      // o módulo synth-out.
+      const provOutDir = providerOutDir(cwd, provider);
+      fs.mkdirSync(provOutDir, { recursive: true });
 
       switch (provider) {
         case 'aws': {
           const p = new AWSProvider();
           const template = p.synthesize(typedStack);
-          const outPath = path.join(providerOutDir, `${stackName}.json`);
+          const outPath = path.join(provOutDir, `${stackName}.json`);
           fs.writeFileSync(outPath, JSON.stringify(template, null, 2) + '\n');
           this.log(`Sintetizado: ${outPath}`);
           break;
@@ -134,7 +137,7 @@ export default class Synth extends Command {
         case 'azure': {
           const p = new AzureProvider();
           const template = p.synthesize(typedStack);
-          const outPath = path.join(providerOutDir, `${stackName}.json`);
+          const outPath = path.join(provOutDir, `${stackName}.json`);
           fs.writeFileSync(outPath, JSON.stringify(template, null, 2) + '\n');
           this.log(`Sintetizado: ${outPath}`);
           break;
@@ -143,7 +146,7 @@ export default class Synth extends Command {
         case 'gcp': {
           const p = new GCPProvider();
           const deployment = p.synthesize(typedStack);
-          const outPath = path.join(providerOutDir, `${stackName}.json`);
+          const outPath = path.join(provOutDir, `${stackName}.json`);
           fs.writeFileSync(outPath, JSON.stringify(deployment, null, 2) + '\n');
           this.log(`Sintetizado: ${outPath}`);
           break;
@@ -152,7 +155,7 @@ export default class Synth extends Command {
         case 'terraform': {
           const p = new TerraformProvider();
           const hcl = p.synthesize(typedStack);
-          const outPath = path.join(providerOutDir, `${stackName}.tf`);
+          const outPath = path.join(provOutDir, `${stackName}.tf`);
           fs.writeFileSync(outPath, hcl);
           this.log(`Sintetizado: ${outPath}`);
           break;
@@ -161,7 +164,7 @@ export default class Synth extends Command {
         default: {
           if (pluginProvider) {
             const output = pluginProvider.synthesize(typedStack);
-            const outPath = path.join(outDir, `${stackName}.json`);
+            const outPath = path.join(provOutDir, `${stackName}.json`);
             fs.writeFileSync(outPath, JSON.stringify(output, null, 2) + '\n');
             this.log(`Sintetizado via plugin '${provider}': ${outPath}`);
           }

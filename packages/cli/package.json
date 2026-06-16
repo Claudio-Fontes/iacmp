@@ -39,7 +39,8 @@
     "manifest": "oclif manifest",
     "dev": "tsc --watch",
     "clean": "rm -rf dist oclif.manifest.json",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "jest"
   },
   "dependencies": {
     "@iacmp/ai": "*",
@@ -60,7 +61,11 @@
   "devDependencies": {
     "@oclif/dev-cli": "^1.26.10",
     "@types/diff": "^5.2.1",
+    "@types/jest": "^29",
+    "@types/node": "^20",
+    "jest": "^29",
     "oclif": "^4.0.0",
+    "ts-jest": "^29",
     "typescript": "^5.5.0"
   },
   "oclif": {
@@ -71,5 +76,17 @@
   },
   "engines": {
     "node": ">=20.0.0"
+  },
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "node",
+    "testMatch": [
+      "**/test/**/*.test.ts"
+    ],
+    "globals": {
+      "ts-jest": {
+        "tsconfig": "tsconfig.test.json"
+      }
+    }
   }
 }
