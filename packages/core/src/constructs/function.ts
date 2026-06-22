@@ -21,6 +21,7 @@ export interface FunctionApiGatewayProps {
   stageName?: string;
   cors?: boolean;
   authType?: 'NONE' | 'JWT' | 'AWS_IAM' | 'COGNITO';
+  authorizerLambdaId?: string;
   throttlingBurstLimit?: number;
   throttlingRateLimit?: number;
   routes?: Array<{

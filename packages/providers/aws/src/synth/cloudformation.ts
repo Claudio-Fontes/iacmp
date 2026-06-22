@@ -717,6 +717,22 @@ function synthesizeConstruct(construct: BaseConstruct): Array<[string, CloudForm
         },
       }]);
 
+      const authorizerLambdaId = props.authorizerLambdaId as string | undefined;
+      const authorizerId = authorizerLambdaId ? `${logicalId}Authorizer` : undefined;
+      if (authorizerLambdaId) {
+        entries.push([authorizerId!, {
+          Type: 'AWS::ApiGatewayV2::Authorizer',
+          Properties: {
+            ApiId: { Ref: logicalId },
+            AuthorizerType: 'REQUEST',
+            Name: `${props.name as string}-authorizer`,
+            AuthorizerUri: { 'Fn::Sub': `arn:aws:apigateway:\${AWS::Region}:lambda:path/2015-03-31/functions/\${${authorizerLambdaId}.Arn}/invocations` },
+            AuthorizerPayloadFormatVersion: '2.0',
+            IdentitySource: ['$request.header.Authorization'],
+          },
+        }]);
+      }
+
       for (const r of routes) {
         const routeId = `${logicalId}${(r.method as string)}${(r.path as string).replace(/[^a-zA-Z0-9]/g, '')}Route`;
         entries.push([routeId, {
@@ -725,6 +741,7 @@ function synthesizeConstruct(construct: BaseConstruct): Array<[string, CloudForm
             ApiId: { Ref: logicalId },
             RouteKey: `${r.method} ${r.path}`,
             ...(r.lambdaId ? { Target: { 'Fn::Sub': `integrations/\${${routeId}Integration}` } } : {}),
+            ...(authorizerId ? { AuthorizationType: 'CUSTOM', AuthorizerId: { Ref: authorizerId } } : {}),
           },
         }]);
 
@@ -986,6 +1003,12 @@ function synthesizeConstruct(construct: BaseConstruct): Array<[string, CloudForm
         }]);
       }
       return entries;
+    }
+
+    case 'Custom.Resource': {
+      const cfn = props.cloudformation as { type: string; properties: Record<string, unknown> } | undefined;
+      if (!cfn) return [];
+      return [[logicalId, { Type: cfn.type, Properties: cfn.properties }]];
     }
 
     default:

@@ -72,3 +72,6 @@ export type {
   MonitoringDashboardWidget,
   LoggingStreamProps,
 } from './constructs/monitoring';
+
+export { Custom } from './constructs/custom';
+export type { CustomResourceProps } from './constructs/custom';

@@ -151,6 +151,7 @@ async function runGeneration(provider, session, lastPrompt, projectContext) {
       await provider.stream(session.getMessages(), chunk => chunks.push(chunk));
     } catch (err) {
       process.stderr.write(chalk.red('Erro: ' + err.message + '\n'));
+      process.stderr.write(chalk.dim('Sua mensagem não foi salva na sessão — pode repetir o pedido.\n'));
       return;
     }
     raw = chunks.join('');

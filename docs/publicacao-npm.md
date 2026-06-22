@@ -39,6 +39,12 @@ cd ../cli
 npm publish --access public
 ```
 
+## Status atual (verificado)
+
+- `npm view iacmp` e `npm view @iacmp/core` retornam 404 — nenhum dos dois nomes foi publicado ainda; ambos estão livres no registry.
+- `npm pack --dry-run` em `packages/core` e `packages/cli` confirma que os tarballs já saem corretos (LICENSE, dist/, registry.json, oclif.manifest.json presentes; nenhum caminho absoluto vazado).
+- Sintoma real de não estar publicado: projetos gerados por `iacmp init` (ex: `nv-vs-iac4`) falham no `npm install` com `404 Not Found - @iacmp/core` e, em consequência, comandos como `iacmp diagram`/`iacmp synth` falham com `Cannot find package '@iacmp/core'` por falta de `node_modules`. Contorno local sem publicar: `npm link` em `packages/core` e depois `npm link @iacmp/core` no projeto do usuário — resolve só na máquina onde o monorepo existe, não substitui o publish real.
+
 ## Testar após a publicação
 
 ```bash

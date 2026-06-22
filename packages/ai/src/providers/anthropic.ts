@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { AIProvider, AIMessage, AIResponse } from './base';
 import { SYSTEM_PROMPT } from '../prompts/system-prompt';
+import { withRetry } from './retry';
 
 export class AnthropicProvider implements AIProvider {
   name = 'anthropic';
@@ -15,12 +16,12 @@ export class AnthropicProvider implements AIProvider {
       .filter(m => m.role !== 'system')
       .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
 
-    const response = await this.client.messages.create({
+    const response = await withRetry(() => this.client.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 8192,
       system: SYSTEM_PROMPT,
       messages: filtered,
-    });
+    }));
 
     const block = response.content[0];
     return {
@@ -37,17 +38,25 @@ export class AnthropicProvider implements AIProvider {
       .filter(m => m.role !== 'system')
       .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
 
-    const stream = this.client.messages.stream({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 8192,
-      system: SYSTEM_PROMPT,
-      messages: filtered,
-    });
+    // Retry só cobre falhas antes do primeiro chunk emitido — depois disso,
+    // repetir geraria texto duplicado, então o erro é propagado direto (sem novas tentativas).
+    let emittedAny = false;
+    await withRetry(async () => {
+      if (emittedAny) throw Object.assign(new Error('stream interrompido após início — sem retry'), { noRetry: true });
 
-    for await (const chunk of stream) {
-      if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
-        onChunk(chunk.delta.text);
+      const stream = this.client.messages.stream({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 8192,
+        system: SYSTEM_PROMPT,
+        messages: filtered,
+      });
+
+      for await (const chunk of stream) {
+        if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
+          emittedAny = true;
+          onChunk(chunk.delta.text);
+        }
       }
-    }
+    });
   }
 }

@@ -1,4 +1,4 @@
-import { Stack, Compute, Storage, Network, Database, Fn, Cache, Messaging, Secret } from '@iacmp/core';
+import { Stack, Compute, Storage, Network, Database, Fn, Cache, Messaging, Secret, Custom } from '@iacmp/core';
 import { AWSProvider } from '../src';
 
 describe('AWSProvider', () => {
@@ -222,5 +222,39 @@ describe('AWSProvider', () => {
     expect(tpl.Resources).toEqual({});
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("'Foo.Bar' nao suportado"));
     warnSpy.mockRestore();
+  });
+
+  test('Fn.ApiGateway com authorizerLambdaId → gera AWS::ApiGatewayV2::Authorizer e referencia nas rotas', () => {
+    new Fn.Lambda(stack, 'AuthFn', { runtime: 'nodejs20', handler: 'index.handler', code: 'dist/' });
+    new Fn.Lambda(stack, 'HelloFn', { runtime: 'nodejs20', handler: 'index.handler', code: 'dist/' });
+    new Fn.ApiGateway(stack, 'Api', {
+      name: 'my-api',
+      authorizerLambdaId: 'AuthFn',
+      routes: [{ method: 'GET', path: '/hello', lambdaId: 'HelloFn' }],
+    });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.ApiAuthorizer.Type).toBe('AWS::ApiGatewayV2::Authorizer');
+    expect(tpl.Resources.ApiAuthorizer.Properties.AuthorizerUri['Fn::Sub']).toContain('AuthFn.Arn');
+    const route = tpl.Resources.ApiGEThelloRoute;
+    expect(route.Properties.AuthorizationType).toBe('CUSTOM');
+    expect(route.Properties.AuthorizerId).toEqual({ Ref: 'ApiAuthorizer' });
+  });
+
+  test('Fn.ApiGateway sem authorizerLambdaId → não gera Authorizer', () => {
+    new Fn.ApiGateway(stack, 'Api', { name: 'my-api', routes: [] });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.ApiAuthorizer).toBeUndefined();
+  });
+
+  test('Custom.Resource → gera resource CloudFormation a partir do props.cloudformation', () => {
+    new Custom.Resource(stack, 'RotationSchedule', {
+      cloudformation: {
+        type: 'AWS::SecretsManager::RotationSchedule',
+        properties: { SecretId: { Ref: 'MySecret' }, RotationRules: { AutomaticallyAfterDays: 30 } },
+      },
+    });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.RotationSchedule.Type).toBe('AWS::SecretsManager::RotationSchedule');
+    expect(tpl.Resources.RotationSchedule.Properties.RotationRules.AutomaticallyAfterDays).toBe(30);
   });
 });

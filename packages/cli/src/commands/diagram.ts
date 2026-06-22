@@ -2,6 +2,7 @@ import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import * as fs from 'fs';
 import * as path from 'path';
+import { execFile } from 'child_process';
 import { readConfig, loadStacks } from '../audit';
 import { buildModel } from '../diagram/builder';
 import { renderStructurizr } from '../diagram/structurizr';
@@ -14,6 +15,33 @@ const OUTPUT_FILE: Record<Format, string> = {
   structurizr: 'workspace.dsl',
   mermaid:     'workspace.md',
 };
+
+const STRUCTURIZR_PLAYGROUND_URL = 'https://structurizr.com/dsl';
+
+function copyToClipboard(text: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const cmd = process.platform === 'darwin'
+      ? 'pbcopy'
+      : process.platform === 'win32'
+        ? 'clip'
+        : 'xclip';
+    const args = process.platform === 'linux' ? ['-selection', 'clipboard'] : [];
+    const child = execFile(cmd, args, (err) => err ? reject(err) : resolve());
+    child.stdin?.write(text);
+    child.stdin?.end();
+  });
+}
+
+function openBrowser(url: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const cmd = process.platform === 'darwin'
+      ? 'open'
+      : process.platform === 'win32'
+        ? 'start'
+        : 'xdg-open';
+    execFile(cmd, [url], (err) => err ? reject(err) : resolve());
+  });
+}
 
 export default class Diagram extends Command {
   static description = 'Gera diagramas de arquitetura a partir das stacks do projeto.';
@@ -37,6 +65,14 @@ export default class Diagram extends Command {
       description: 'Diretório de saída',
       default: 'diagrams',
     }),
+    ha: Flags.boolean({
+      description: 'Representa alta disponibilidade: replica a rede e o compute privado em duas AZs (AZ-A/AZ-B) na deployment view',
+      default: false,
+    }),
+    open: Flags.boolean({
+      description: 'Copia o DSL gerado para a área de transferência e abre o Structurizr Playground no navegador',
+      default: false,
+    }),
   };
 
   static examples = [
@@ -46,6 +82,8 @@ export default class Diagram extends Command {
     '$ iacmp diagram --format mermaid',
     '$ iacmp diagram --stack database',
     '$ iacmp diagram --provider azure --format mermaid',
+    '$ iacmp diagram --provider aws --ha',
+    '$ iacmp diagram --provider aws --open',
   ];
 
   async run(): Promise<void> {
@@ -85,7 +123,7 @@ export default class Diagram extends Command {
 
     // Constrói modelo intermediário — provider da flag sobrepõe o do iacmp.json
     const provider = flags.provider ?? config.provider;
-    const model = buildModel(config.name, provider, 'us-east-1', stacks);
+    const model = buildModel(config.name, provider, 'us-east-1', stacks, flags.ha);
 
     // Renderiza
     const content = format === 'structurizr'
@@ -107,7 +145,8 @@ export default class Diagram extends Command {
     this.log(`Projeto:  ${config.name}`);
     this.log(`Provider: ${provider}${flags.provider ? ' (via --provider)' : ''}`);
     this.log(`Formato:  ${format}`);
-    this.log(`Stacks:   ${stacks.map(s => s.name).join(', ')}`);
+    if (flags.ha) this.log(`HA:       ${chalk.green('on')} (replicado em AZ-A/AZ-B)`);
+    this.log(`Stacks:   ${model.stacks.map(s => s.name).join(', ')}`);
     this.log(`Nodes:    ${model.stacks.reduce((n, s) => n + s.nodes.length, 0)}`);
     this.log('');
 
@@ -123,10 +162,25 @@ export default class Diagram extends Command {
     this.log(`Arquivo salvo em ${chalk.cyan(relOut)}`);
 
     if (format === 'structurizr') {
-      this.log(chalk.dim('\nAbra em: https://structurizr.com/dsl'));
+      this.log(chalk.dim(`\nAbra em: ${STRUCTURIZR_PLAYGROUND_URL}`));
     } else {
       this.log(chalk.dim('\nRenderizado automaticamente no GitHub, GitLab e Notion.'));
     }
+
+    if (flags.open) {
+      if (format !== 'structurizr') {
+        this.warn('A flag --open só tem efeito com --format structurizr.');
+      } else {
+        try {
+          await copyToClipboard(content);
+          await openBrowser(STRUCTURIZR_PLAYGROUND_URL);
+          this.log(chalk.dim('\nDSL copiado para a área de transferência. Cole (Cmd/Ctrl+V) no editor que abriu.'));
+        } catch (err) {
+          this.warn(`Não foi possível abrir o navegador/copiar automaticamente: ${(err as Error).message}`);
+        }
+      }
+    }
+
     this.log('');
   }
 }

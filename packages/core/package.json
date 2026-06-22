@@ -4,7 +4,7 @@
   "description": "Constructs agnósticos de provider para o iacmp — a API que os stacks do usuário importam",
   "keywords": ["iacmp", "iac", "infrastructure", "cdk", "constructs"],
   "license": "MIT",
-  "author": "Caio Melo",
+  "author": "Claudio Melo",
   "repository": {
     "type": "git",
     "url": "https://github.com/Claudio-Fontes/iacmp",

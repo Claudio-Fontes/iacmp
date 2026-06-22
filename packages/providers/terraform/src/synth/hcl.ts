@@ -57,6 +57,23 @@ function tagsBlock(name: string): string {
   return indent(`tags = {\n${indent(`Name = "${hclString(name)}"`)}\n}`);
 }
 
+function hclValue(value: unknown): string {
+  if (typeof value === 'string') {
+    // permite que a IA passe referências cruas do Terraform (ex: aws_lambda_function.x.arn)
+    if (/^[a-zA-Z_][a-zA-Z0-9_.\[\]]*$/.test(value) && /\./.test(value)) return value;
+    return `"${hclString(value)}"`;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) return `[${value.map(hclValue).join(', ')}]`;
+  if (value && typeof value === 'object') return hclBody(value as Record<string, unknown>);
+  return 'null';
+}
+
+function hclBody(obj: Record<string, unknown>): string {
+  const lines = Object.entries(obj).map(([k, v]) => `${k} = ${hclValue(v)}`);
+  return `{\n${indent(lines.join('\n'))}\n}`;
+}
+
 function synthesizeConstruct(construct: BaseConstruct): string {
   const props = construct.props as Record<string, unknown>;
   const id = construct.id.replace(/[^a-zA-Z0-9_]/g, '_');
@@ -675,12 +692,29 @@ function synthesizeConstruct(construct: BaseConstruct): string {
         block('resource', ['aws_apigatewayv2_stage', `${id}_stage`], stageBody),
       ];
 
+      const authorizerLambdaId = props.authorizerLambdaId as string | undefined;
+      if (authorizerLambdaId) {
+        const authorizerBody = indent([
+          `api_id           = aws_apigatewayv2_api.${id}.id`,
+          attr('authorizer_type', 'REQUEST'),
+          attr('name', `${(props.name as string)}-authorizer`),
+          `authorizer_uri                    = aws_lambda_function.${authorizerLambdaId}.invoke_arn`,
+          attr('authorizer_payload_format_version', '2.0'),
+          `identity_sources = ["$request.header.Authorization"]`,
+        ].join('\n'));
+        parts.push(block('resource', ['aws_apigatewayv2_authorizer', `${id}_authorizer`], authorizerBody));
+      }
+
       for (const r of routes) {
         const routeId = `${id}_${(r.method as string).toLowerCase()}_${(r.path as string).replace(/[^a-zA-Z0-9]/g, '_')}`;
         const routeBody = indent([
           `api_id    = aws_apigatewayv2_api.${id}.id`,
           attr('route_key', `${r.method} ${r.path}`),
           ...(r.lambdaId ? [`target    = "integrations/\${aws_apigatewayv2_integration.${routeId}_integ.id}"`] : []),
+          ...(authorizerLambdaId ? [
+            attr('authorization_type', 'CUSTOM'),
+            `authorizer_id      = aws_apigatewayv2_authorizer.${id}_authorizer.id`,
+          ] : []),
         ].join('\n'));
         parts.push(block('resource', ['aws_apigatewayv2_route', routeId], routeBody));
 
@@ -937,6 +971,13 @@ function synthesizeConstruct(construct: BaseConstruct): string {
       }
 
       return parts.join('\n');
+    }
+
+    case 'Custom.Resource': {
+      const tf = props.terraform as { type: string; body: Record<string, unknown> } | undefined;
+      if (!tf) return '';
+      const body = indent(Object.entries(tf.body).map(([k, v]) => `${k} = ${hclValue(v)}`).join('\n'));
+      return block('resource', [tf.type, id], body);
     }
 
     default:

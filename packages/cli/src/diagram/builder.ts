@@ -4,21 +4,21 @@ import { DiagramModel, DiagramStack, DiagramNode, DiagramRelationship } from './
 const TYPE_META: Record<string, { emoji: string; technology: string }> = {
   'Compute.Instance':         { emoji: '⚙️',  technology: 'Virtual Machine'        },
   'Compute.AutoScaling':      { emoji: '⚙️',  technology: 'Auto Scaling Group'     },
-  'Compute.Container':        { emoji: '📦',  technology: 'Container (ECS/Fargate)'},
-  'Compute.Kubernetes':       { emoji: '☸️',  technology: 'Kubernetes (EKS)'       },
+  'Compute.Container':        { emoji: '📦',  technology: 'Container'              },
+  'Compute.Kubernetes':       { emoji: '☸️',  technology: 'Kubernetes'             },
   'Storage.Bucket':           { emoji: '🗂️',  technology: 'Object Storage'         },
-  'Storage.FileSystem':       { emoji: '🗄️',  technology: 'File System (EFS)'      },
-  'Storage.Archive':          { emoji: '🗃️',  technology: 'Archive (Glacier)'      },
+  'Storage.FileSystem':       { emoji: '🗄️',  technology: 'File System'            },
+  'Storage.Archive':          { emoji: '🗃️',  technology: 'Archive Storage'        },
   'Network.VPC':              { emoji: '🌐',  technology: 'Virtual Network'        },
   'Network.Subnet':           { emoji: '🔀',  technology: 'Subnet'                 },
   'Network.SecurityGroup':    { emoji: '🛡️',  technology: 'Security Group'         },
   'Network.WAF':              { emoji: '🔒',  technology: 'WAF'                    },
   'Network.LoadBalancer':     { emoji: '⚖️',  technology: 'Load Balancer'          },
-  'Network.CDN':              { emoji: '🌍',  technology: 'CDN (CloudFront)'       },
-  'Network.Dns':              { emoji: '🌐',  technology: 'DNS (Route53)'          },
+  'Network.CDN':              { emoji: '🌍',  technology: 'CDN'                    },
+  'Network.Dns':              { emoji: '🌐',  technology: 'DNS'                    },
   'Database.SQL':             { emoji: '🗄️',  technology: 'Relational DB'          },
   'Database.DocumentDB':      { emoji: '📄',  technology: 'Document DB'            },
-  'Database.DynamoDB':        { emoji: '⚡',  technology: 'DynamoDB'               },
+  'Database.DynamoDB':        { emoji: '⚡',  technology: 'NoSQL Database'         },
   'Cache.Redis':              { emoji: '⚡',  technology: 'Redis Cache'            },
   'Cache.Memcached':          { emoji: '⚡',  technology: 'Memcached Cache'        },
   'Function.Lambda':          { emoji: '⚡',  technology: 'Serverless'             },
@@ -26,13 +26,70 @@ const TYPE_META: Record<string, { emoji: string; technology: string }> = {
   'Policy.IAM':               { emoji: '🔑',  technology: 'IAM Policy'             },
   'Events.EventBridge':       { emoji: '📡',  technology: 'Event Bus'              },
   'Workflow.StepFunctions':   { emoji: '🔄',  technology: 'Step Functions'         },
-  'Messaging.Queue':          { emoji: '📨',  technology: 'Queue (SQS)'            },
-  'Messaging.Topic':          { emoji: '📢',  technology: 'Topic (SNS)'            },
+  'Messaging.Queue':          { emoji: '📨',  technology: 'Queue'                  },
+  'Messaging.Topic':          { emoji: '📢',  technology: 'Topic'                  },
   'Secret.Vault':             { emoji: '🔐',  technology: 'Secrets Manager'        },
-  'Certificate.TLS':          { emoji: '🔏',  technology: 'TLS Certificate (ACM)'  },
-  'Monitoring.Alarm':         { emoji: '🚨',  technology: 'CloudWatch Alarm'       },
-  'Monitoring.Dashboard':     { emoji: '📊',  technology: 'CloudWatch Dashboard'   },
-  'Logging.Stream':           { emoji: '📋',  technology: 'CloudWatch Logs'        },
+  'Certificate.TLS':          { emoji: '🔏',  technology: 'TLS Certificate'        },
+  'Monitoring.Alarm':         { emoji: '🚨',  technology: 'Monitoring Alarm'       },
+  'Monitoring.Dashboard':     { emoji: '📊',  technology: 'Monitoring Dashboard'   },
+  'Logging.Stream':           { emoji: '📋',  technology: 'Log Stream'             },
+};
+
+// Nomes de tecnologia nativos por provider — usados apenas para exibição no diagrama,
+// não afetam tags/ícones do theme (ver structurizr.ts)
+const PROVIDER_TECH_OVERRIDE: Record<string, Record<string, string>> = {
+  aws: {
+    'Compute.Container':      'Container (ECS/Fargate)',
+    'Compute.Kubernetes':     'Kubernetes (EKS)',
+    'Storage.FileSystem':     'File System (EFS)',
+    'Storage.Archive':        'Archive (Glacier)',
+    'Network.CDN':            'CDN (CloudFront)',
+    'Network.Dns':            'DNS (Route53)',
+    'Database.DynamoDB':      'DynamoDB',
+    'Function.ApiGateway':    'API Gateway',
+    'Messaging.Queue':        'Queue (SQS)',
+    'Messaging.Topic':        'Topic (SNS)',
+    'Certificate.TLS':        'TLS Certificate (ACM)',
+    'Monitoring.Alarm':       'CloudWatch Alarm',
+    'Monitoring.Dashboard':   'CloudWatch Dashboard',
+    'Logging.Stream':         'CloudWatch Logs',
+  },
+  azure: {
+    'Compute.Container':      'Container Instances',
+    'Compute.Kubernetes':     'Kubernetes Service (AKS)',
+    'Storage.FileSystem':     'Azure Files',
+    'Storage.Archive':        'Archive Storage',
+    'Network.VPC':            'Virtual Network (VNet)',
+    'Network.Subnet':         'Subnet',
+    'Network.CDN':            'CDN Profile',
+    'Network.Dns':            'DNS Zone',
+    'Database.DynamoDB':      'Table Storage',
+    'Function.ApiGateway':    'API Management',
+    'Messaging.Queue':        'Queue (Service Bus)',
+    'Messaging.Topic':        'Topic (Service Bus)',
+    'Certificate.TLS':        'TLS Certificate (Key Vault)',
+    'Monitoring.Alarm':       'Monitor Alert',
+    'Monitoring.Dashboard':   'Monitor Dashboard',
+    'Logging.Stream':         'Log Analytics',
+  },
+  gcp: {
+    'Compute.Container':      'Cloud Run',
+    'Compute.Kubernetes':     'Kubernetes Engine (GKE)',
+    'Storage.FileSystem':     'Filestore',
+    'Storage.Archive':        'Archive Storage',
+    'Network.VPC':            'VPC Network',
+    'Network.Subnet':         'Subnet',
+    'Network.CDN':            'Cloud CDN',
+    'Network.Dns':            'Cloud DNS',
+    'Database.DynamoDB':      'Bigtable',
+    'Function.ApiGateway':    'Cloud Endpoints',
+    'Messaging.Queue':        'Pub/Sub Queue',
+    'Messaging.Topic':        'Pub/Sub Topic',
+    'Certificate.TLS':        'TLS Certificate',
+    'Monitoring.Alarm':       'Cloud Monitoring Alert',
+    'Monitoring.Dashboard':   'Cloud Monitoring Dashboard',
+    'Logging.Stream':         'Cloud Logging',
+  },
 };
 
 function safeId(raw: string): string {
@@ -185,14 +242,16 @@ function describeProps(c: BaseConstruct): string {
   return parts.join(', ');
 }
 
-function buildStackDiagram(name: string, stack: Stack): DiagramStack {
+function buildStackDiagram(name: string, stack: Stack, provider: string): DiagramStack {
+  const techOverride = PROVIDER_TECH_OVERRIDE[provider] ?? {};
   const nodes: DiagramNode[] = stack.constructs.map(c => {
     const meta = TYPE_META[c.type] ?? { emoji: '□', technology: c.type };
+    const technology = techOverride[c.type] ?? meta.technology;
     return {
       id: safeId(`${name}_${c.id}`),
       label: c.id,
       constructType: c.type,
-      technology: meta.technology,
+      technology,
       description: describeProps(c),
       props: c.props,
     };
@@ -233,6 +292,15 @@ function buildStackDiagram(name: string, stack: Stack): DiagramStack {
       const lambdaNode = nodes.find(n => n.label === route.lambdaId);
       if (lambdaNode) {
         relationships.push({ sourceId: gwNode.id, targetId: lambdaNode.id, label: 'invokes', inferred: false });
+      }
+    }
+
+    // ApiGateway → Lambda Authorizer via authorizerLambdaId (mesma stack)
+    const authorizerLambdaId = gw.props?.authorizerLambdaId as string | undefined;
+    if (authorizerLambdaId) {
+      const authorizerNode = nodes.find(n => n.label === authorizerLambdaId);
+      if (authorizerNode) {
+        relationships.push({ sourceId: gwNode.id, targetId: authorizerNode.id, label: 'authorizes', inferred: false });
       }
     }
   }
@@ -317,6 +385,18 @@ function inferCrossStackRelationships(
           }
         }
       }
+
+      // ApiGateway cross-stack → Lambda Authorizer via authorizerLambdaId
+      const authorizerLambdaId = srcNode.props?.authorizerLambdaId as string | undefined;
+      if (authorizerLambdaId) {
+        for (const tgtStack of builtStacks) {
+          if (tgtStack.name === srcStack.name) continue;
+          const tgtNode = tgtStack.nodes.find(n => n.label === authorizerLambdaId);
+          if (tgtNode) {
+            relationships.push({ sourceId: srcNode.id, targetId: tgtNode.id, label: 'authorizes', inferred: false });
+          }
+        }
+      }
     }
   }
 
@@ -328,8 +408,9 @@ export function buildModel(
   provider: string,
   region: string,
   stacks: Array<{ name: string; stack: Stack }>,
+  ha = false,
 ): DiagramModel {
-  const builtStacks = stacks.map(({ name, stack }) => buildStackDiagram(name, stack));
+  const builtStacks = stacks.map(({ name, stack }) => buildStackDiagram(name, stack, provider));
 
   // Deduplica nós com mesmo id global (ex: dois arquivos produzem o mesmo construct)
   const seenNodeIds = new Set<string>();
@@ -345,8 +426,21 @@ export function buildModel(
     );
   }
 
+  // Mescla stacks com o mesmo nome de grupo (ex: dois arquivos geram a mesma stack lógica)
+  const mergedByName = new Map<string, DiagramStack>();
+  for (const s of builtStacks) {
+    const existing = mergedByName.get(s.name);
+    if (existing) {
+      existing.nodes.push(...s.nodes);
+      existing.relationships.push(...s.relationships);
+    } else {
+      mergedByName.set(s.name, { name: s.name, nodes: [...s.nodes], relationships: [...s.relationships] });
+    }
+  }
+  const mergedStacks = [...mergedByName.values()];
+
   // Remove stacks que ficaram sem nós após deduplicação
-  const nonEmptyStacks = builtStacks.filter(s => s.nodes.length > 0);
+  const nonEmptyStacks = mergedStacks.filter(s => s.nodes.length > 0);
   // Mas mantemos referências completas para inferência cross-stack
   const crossRelationships = inferCrossStackRelationships(builtStacks);
 
@@ -365,5 +459,6 @@ export function buildModel(
     provider,
     region,
     stacks: nonEmptyStacks,
+    ha,
   };
 }

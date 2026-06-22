@@ -1,4 +1,4 @@
-import { Stack, Compute, Storage, Network, Database, Fn } from '@iacmp/core';
+import { Stack, Compute, Storage, Network, Database, Fn, Custom } from '@iacmp/core';
 import { GCPProvider } from '../src';
 
 describe('GCPProvider', () => {
@@ -167,5 +167,45 @@ describe('GCPProvider', () => {
     new GCPProvider().synthesize(stack);
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("'Foo.Bar' nao suportado"));
     warnSpy.mockRestore();
+  });
+
+  test('Function.ApiGateway com authorizerLambdaId → securityDefinition customizada no OpenAPI', () => {
+    const stack = new Stack('test');
+    new Fn.ApiGateway(stack, 'Api', {
+      name: 'my-api',
+      authorizerLambdaId: 'OAuthAuthorizerFn',
+      routes: [{ method: 'GET', path: '/hello', lambdaId: 'HelloFn' }],
+    });
+    const tpl = new GCPProvider().synthesize(stack) as any;
+    const configResource = tpl.resources.find((r: any) => r.type === 'apigateway.v1.apiConfig');
+    const doc = configResource.properties.openapiDocuments[0].document;
+    const openapi = JSON.parse(Buffer.from(doc.contents, 'base64').toString());
+    expect(openapi.securityDefinitions.lambdaAuthorizer['x-google-authorizer-backend'].address).toContain('OAuthAuthorizerFn');
+    expect(openapi.paths['/hello'].get.security).toEqual([{ lambdaAuthorizer: [] }]);
+  });
+
+  test('Function.ApiGateway sem authorizerLambdaId → sem securityDefinitions', () => {
+    const stack = new Stack('test');
+    new Fn.ApiGateway(stack, 'Api', { name: 'my-api', routes: [{ method: 'GET', path: '/hello', lambdaId: 'HelloFn' }] });
+    const tpl = new GCPProvider().synthesize(stack) as any;
+    const configResource = tpl.resources.find((r: any) => r.type === 'apigateway.v1.apiConfig');
+    const doc = configResource.properties.openapiDocuments[0].document;
+    const openapi = JSON.parse(Buffer.from(doc.contents, 'base64').toString());
+    expect(openapi.securityDefinitions).toBeUndefined();
+    expect(openapi.paths['/hello'].get.security).toBeUndefined();
+  });
+
+  test('Custom.Resource → gera resource Deployment Manager a partir do props.deploymentManager', () => {
+    const stack = new Stack('test');
+    new Custom.Resource(stack, 'PubSubTopic', {
+      deploymentManager: {
+        type: 'pubsub.v1.topic',
+        properties: { topic: 'projects/PROJECT_ID/topics/my-topic' },
+      },
+    });
+    const tpl = new GCPProvider().synthesize(stack) as any;
+    const resource = tpl.resources.find((r: any) => r.type === 'pubsub.v1.topic');
+    expect(resource).toBeDefined();
+    expect(resource.properties.topic).toBe('projects/PROJECT_ID/topics/my-topic');
   });
 });

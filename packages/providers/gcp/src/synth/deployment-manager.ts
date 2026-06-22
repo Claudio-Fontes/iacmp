@@ -621,6 +621,15 @@ function synthesizeConstruct(construct: BaseConstruct): GCPResource[] {
 
     case 'Function.ApiGateway': {
       const routes = (props.routes as Array<Record<string, unknown>>) ?? [];
+      const authorizerLambdaId = props.authorizerLambdaId as string | undefined;
+      const securityDefinitions = authorizerLambdaId ? {
+        lambdaAuthorizer: {
+          type: 'apiKey',
+          name: 'Authorization',
+          in: 'header',
+          'x-google-authorizer-backend': { address: `https://${region}-PROJECT_ID.cloudfunctions.net/${authorizerLambdaId}` },
+        },
+      } : undefined;
       return [
         {
           name: (props.name as string) ?? construct.id,
@@ -641,9 +650,11 @@ function synthesizeConstruct(construct: BaseConstruct): GCPResource[] {
                 contents: Buffer.from(JSON.stringify({
                   openapi: '3.0.0',
                   info: { title: (props.name as string) ?? construct.id, version: '1.0' },
+                  ...(securityDefinitions ? { securityDefinitions } : {}),
                   paths: Object.fromEntries(routes.map(r => [r.path as string, {
                     [(r.method as string).toLowerCase()]: {
                       'x-google-backend': { address: `https://${region}-PROJECT_ID.cloudfunctions.net/${r.lambdaId ?? 'function'}` },
+                      ...(securityDefinitions ? { security: [{ lambdaAuthorizer: [] }] } : {}),
                       responses: { '200': { description: 'OK' } },
                     },
                   }])),
@@ -955,6 +966,12 @@ function synthesizeConstruct(construct: BaseConstruct): GCPResource[] {
       }
 
       return resources;
+    }
+
+    case 'Custom.Resource': {
+      const dm = props.deploymentManager as { type: string; properties: Record<string, unknown> } | undefined;
+      if (!dm) return [];
+      return [{ name: (props.name as string) ?? construct.id, type: dm.type, properties: dm.properties }];
     }
 
     default:

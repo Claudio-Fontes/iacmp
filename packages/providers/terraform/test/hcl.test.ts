@@ -1,4 +1,4 @@
-import { Stack, Compute, Storage, Network, Database, Fn, Cache } from '@iacmp/core';
+import { Stack, Compute, Storage, Network, Database, Fn, Cache, Custom } from '@iacmp/core';
 import { TerraformProvider } from '../src';
 import { hclString } from '../src/synth/hcl';
 
@@ -159,5 +159,38 @@ describe('TerraformProvider', () => {
     new TerraformProvider().synthesize(stack);
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("'Foo.Bar' nao suportado"));
     warnSpy.mockRestore();
+  });
+
+  test('Fn.ApiGateway com authorizerLambdaId → HCL contém aws_apigatewayv2_authorizer e authorization_type CUSTOM', () => {
+    const stack = new Stack('test');
+    new Fn.Lambda(stack, 'AuthFn', { runtime: 'nodejs20', handler: 'index.handler', code: 'dist/' });
+    new Fn.Lambda(stack, 'HelloFn', { runtime: 'nodejs20', handler: 'index.handler', code: 'dist/' });
+    new Fn.ApiGateway(stack, 'Api', {
+      name: 'my-api',
+      authorizerLambdaId: 'AuthFn',
+      routes: [{ method: 'GET', path: '/hello', lambdaId: 'HelloFn' }],
+    });
+    const hcl = new TerraformProvider().synthesize(stack);
+    expect(hcl).toContain('resource "aws_apigatewayv2_authorizer" "Api_authorizer"');
+    expect(hcl).toContain('aws_lambda_function.AuthFn.invoke_arn');
+    expect(hcl).toContain('authorization_type');
+    expect(hcl).toContain('aws_apigatewayv2_authorizer.Api_authorizer.id');
+  });
+
+  test('Custom.Resource → gera resource Terraform a partir do props.terraform', () => {
+    const stack = new Stack('test');
+    new Custom.Resource(stack, 'RotationSchedule', {
+      terraform: {
+        type: 'aws_secretsmanager_rotation_schedule',
+        body: {
+          secret_id: 'aws_secretsmanager_secret.MySecret.id',
+          rotation_rules: { automatically_after_days: 30 },
+        },
+      },
+    });
+    const hcl = new TerraformProvider().synthesize(stack);
+    expect(hcl).toContain('resource "aws_secretsmanager_rotation_schedule" "RotationSchedule"');
+    expect(hcl).toContain('secret_id = aws_secretsmanager_secret.MySecret.id');
+    expect(hcl).toContain('automatically_after_days = 30');
   });
 });

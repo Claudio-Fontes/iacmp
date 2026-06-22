@@ -747,11 +747,13 @@ function synthesizeConstruct(construct: BaseConstruct): ARMResource[] {
       }];
     }
 
-    case 'Function.ApiGateway':
-      return [{
+    case 'Function.ApiGateway': {
+      const apimName = (props.name as string) ?? construct.id;
+      const authorizerLambdaId = props.authorizerLambdaId as string | undefined;
+      const resources: ARMResource[] = [{
         type: 'Microsoft.ApiManagement/service',
         apiVersion: '2023-05-01-preview',
-        name: (props.name as string) ?? construct.id,
+        name: apimName,
         location,
         tags: tag(construct.id),
         sku: { name: 'Consumption', capacity: 0 },
@@ -765,6 +767,25 @@ function synthesizeConstruct(construct: BaseConstruct): ARMResource[] {
           },
         },
       }];
+      if (authorizerLambdaId) {
+        resources.push({
+          type: 'Microsoft.ApiManagement/service/backends',
+          apiVersion: '2023-05-01-preview',
+          name: `${apimName}/authorizer-backend`,
+          location,
+          properties: {
+            description: `Lambda authorizer backend (${authorizerLambdaId})`,
+            url: `[reference(resourceId('Microsoft.Web/sites', '${authorizerLambdaId}')).defaultHostName]`,
+            protocol: 'http',
+          },
+          dependsOn: [
+            `[resourceId('Microsoft.ApiManagement/service', '${apimName}')]`,
+            `[resourceId('Microsoft.Web/sites', '${authorizerLambdaId}')]`,
+          ],
+        } as ARMResource);
+      }
+      return resources;
+    }
 
     // ── Policy ────────────────────────────────────────────────────────────
     case 'Policy.IAM': {
@@ -1077,6 +1098,21 @@ function synthesizeConstruct(construct: BaseConstruct): ARMResource[] {
           retentionInDays: (props.retentionDays as number) ?? 30,
           features: { enableLogAccessUsingOnlyResourcePermissions: true },
         },
+      }];
+    }
+
+    case 'Custom.Resource': {
+      const arm = props.arm as { type: string; apiVersion: string; properties: Record<string, unknown>; sku?: Record<string, unknown>; kind?: string } | undefined;
+      if (!arm) return [];
+      return [{
+        type: arm.type,
+        apiVersion: arm.apiVersion,
+        name: (props.name as string) ?? construct.id,
+        location,
+        tags: tag(construct.id),
+        properties: arm.properties,
+        ...(arm.sku ? { sku: arm.sku } : {}),
+        ...(arm.kind ? { kind: arm.kind } : {}),
       }];
     }
 

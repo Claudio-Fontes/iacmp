@@ -1,4 +1,4 @@
-import { Stack, Compute, Storage, Database, Cache, Messaging, Network } from '@iacmp/core';
+import { Stack, Compute, Storage, Database, Cache, Messaging, Network, Fn, Custom } from '@iacmp/core';
 import { AzureProvider } from '../src';
 
 describe('AzureProvider', () => {
@@ -149,5 +149,42 @@ describe('AzureProvider', () => {
     new AzureProvider().synthesize(stack);
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("'Foo.Bar' nao suportado"));
     warnSpy.mockRestore();
+  });
+
+  test('Function.ApiGateway sem authorizerLambdaId → só o serviço API Management', () => {
+    const stack = new Stack('test');
+    new Fn.ApiGateway(stack, 'Api', { name: 'my-api' });
+    const tpl = new AzureProvider().synthesize(stack) as any;
+    const apimResources = tpl.resources.filter((r: any) => r.type.startsWith('Microsoft.ApiManagement'));
+    expect(apimResources).toHaveLength(1);
+    expect(apimResources[0].type).toBe('Microsoft.ApiManagement/service');
+  });
+
+  test('Function.ApiGateway com authorizerLambdaId → cria backend referenciando a Function App', () => {
+    const stack = new Stack('test');
+    new Fn.ApiGateway(stack, 'Api', { name: 'my-api', authorizerLambdaId: 'OAuthAuthorizerFn' });
+    const tpl = new AzureProvider().synthesize(stack) as any;
+    const backend = tpl.resources.find((r: any) => r.type === 'Microsoft.ApiManagement/service/backends');
+    expect(backend).toBeDefined();
+    expect(backend.name).toBe('my-api/authorizer-backend');
+    expect(backend.properties.url).toContain('OAuthAuthorizerFn');
+    expect(backend.dependsOn.some((d: string) => d.includes('OAuthAuthorizerFn'))).toBe(true);
+  });
+
+  test('Custom.Resource → gera resource ARM a partir do props.arm', () => {
+    const stack = new Stack('test');
+    new Custom.Resource(stack, 'StaticWebApp', {
+      arm: {
+        type: 'Microsoft.Web/staticSites',
+        apiVersion: '2023-01-01',
+        properties: { repositoryUrl: 'https://github.com/example/repo', branch: 'main' },
+        sku: { name: 'Free' },
+      },
+    });
+    const tpl = new AzureProvider().synthesize(stack) as any;
+    const resource = tpl.resources.find((r: any) => r.type === 'Microsoft.Web/staticSites');
+    expect(resource).toBeDefined();
+    expect(resource.properties.repositoryUrl).toBe('https://github.com/example/repo');
+    expect(resource.sku.name).toBe('Free');
   });
 });

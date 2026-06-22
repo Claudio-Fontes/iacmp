@@ -25,4 +25,5 @@ export interface DiagramModel {
   provider: string;
   region: string;
   stacks: DiagramStack[];
+  ha: boolean;
 }

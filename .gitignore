@@ -10,6 +10,7 @@ audit/
 .env
 .env.*
 !.env.example
+.npmrc
 
 # build artifacts
 oclif.manifest.json
