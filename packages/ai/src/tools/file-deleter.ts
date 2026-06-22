@@ -9,6 +9,8 @@ import {
   assertValidProvider,
   errMessage,
 } from './safe-path';
+import { Language, DEFAULT_LANGUAGE } from '../i18n/languages';
+import { MESSAGES } from '../i18n/messages';
 
 function synthOutPaths(filePath: string, projectDir: string): string[] {
   const basename = path.basename(filePath).replace(/\.(ts|js)$/, '');
@@ -87,8 +89,10 @@ export async function deleteFiles(
   projectDir: string,
   iacProvider: string,
   ask: AskFn,
-  options?: { providerAllowlist?: readonly string[] }
+  options?: { providerAllowlist?: readonly string[] },
+  lang: Language = DEFAULT_LANGUAGE
 ): Promise<void> {
+  const t = MESSAGES[lang].fileDeleter;
   assertValidProvider(iacProvider, options?.providerAllowlist);
 
   // Monta lista completa: .ts + synth-out correspondente
@@ -111,7 +115,7 @@ export async function deleteFiles(
     try {
       full = safeJoin(projectDir, filePath);
     } catch (err) {
-      console.log(chalk.yellow(`  ! ${errMessage(err)} — ignorando ${filePath}`));
+      console.log(chalk.yellow(t.ignoring(errMessage(err), filePath)));
       continue;
     }
     if (fs.existsSync(full)) add(filePath, full);
@@ -128,19 +132,19 @@ export async function deleteFiles(
     try {
       full = safeJoin(projectDir, filePath);
     } catch (err) {
-      console.log(chalk.yellow(`  ! ${errMessage(err)} — ignorando ${filePath}`));
+      console.log(chalk.yellow(t.ignoring(errMessage(err), filePath)));
       continue;
     }
     if (fs.existsSync(full)) add(filePath, full);
   }
 
   if (allToDelete.length === 0) {
-    console.log(chalk.dim('\n  Nenhum arquivo encontrado para remover.\n'));
+    console.log(chalk.dim(t.noFilesFound));
     return;
   }
 
   console.log('');
-  console.log(chalk.red.bold('  Arquivos que serão removidos:'));
+  console.log(chalk.red.bold(t.filesToRemove));
   for (const f of allToDelete) {
     console.log(chalk.red(`  - ${f.rel}`));
   }
@@ -148,7 +152,7 @@ export async function deleteFiles(
 
   // Pergunta se quer rodar destroy antes de apagar
   if (synthOuts.length > 0) {
-    const runDestroy = await ask('Rodar `iacmp destroy` para remover os recursos na nuvem antes de apagar? [y/n] ');
+    const runDestroy = await ask(t.runDestroyPrompt);
     if (runDestroy.toLowerCase() === 'y') {
       const cliEntry = resolveCliEntrypoint();
       for (const synthOut of synthOuts) {
@@ -156,10 +160,10 @@ export async function deleteFiles(
         try {
           assertValidStackName(stackName);
         } catch (err) {
-          console.log(chalk.yellow(`  ! ${errMessage(err)} — pulando destroy de ${stackName}`));
+          console.log(chalk.yellow(t.destroySkipped(errMessage(err), stackName)));
           continue;
         }
-        console.log(chalk.dim(`\n  Rodando destroy para ${stackName}...`));
+        console.log(chalk.dim(t.runningDestroy(stackName)));
         try {
           if (cliEntry) {
             cp.execFileSync(
@@ -175,16 +179,16 @@ export async function deleteFiles(
             );
           }
         } catch {
-          console.log(chalk.yellow(`  ! destroy falhou para ${stackName} — continuando com remoção local`));
+          console.log(chalk.yellow(t.destroyFailed(stackName)));
         }
       }
     }
   }
 
   // Confirma remocao dos arquivos locais
-  const confirm = await ask('\nApagar arquivos locais? [y/n] ');
+  const confirm = await ask(t.confirmDeleteLocal);
   if (confirm.toLowerCase() !== 'y') {
-    console.log(chalk.dim('  Remoção cancelada.\n'));
+    console.log(chalk.dim(t.deletionCancelled));
     return;
   }
 
@@ -193,7 +197,7 @@ export async function deleteFiles(
       fs.rmSync(full, { force: true });
       console.log(chalk.red(`  ✗ ${rel}`));
     } catch {
-      console.log(chalk.yellow(`  ! Não foi possível remover: ${rel}`));
+      console.log(chalk.yellow(t.couldNotRemove(rel)));
     }
   }
 
@@ -202,7 +206,7 @@ export async function deleteFiles(
     const stackName = path.basename(filePath).replace(/\.(ts|js)$/, '');
     const modified = removeReferences(stackName, projectDir);
     for (const f of modified) {
-      console.log(chalk.yellow(`  ~ referências removidas em: ${f}`));
+      console.log(chalk.yellow(t.referencesRemoved(f)));
     }
   }
 

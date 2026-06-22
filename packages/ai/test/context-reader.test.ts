@@ -219,3 +219,42 @@ export default stack;`,
     expect(ctx).toContain('stacks/network/api-gateway-stack.ts');
   });
 });
+
+describe('readProjectMeta — estrutura de pastas do projeto', () => {
+  test('inclui pastas e arquivos do projeto além de stacks/', () => {
+    const dir = makeProject({ name: 'test', provider: 'aws' }, {
+      'compute/fn.ts': 'export default {};',
+    });
+    fs.mkdirSync(path.join(dir, 'src'));
+    fs.writeFileSync(path.join(dir, 'src', 'index.ts'), '');
+    fs.writeFileSync(path.join(dir, 'package.json'), '{}');
+
+    const ctx = readProjectMeta(dir);
+    expect(ctx).toContain('Estrutura de pastas do projeto');
+    expect(ctx).toContain('src/');
+    expect(ctx).toContain('index.ts');
+    expect(ctx).toContain('package.json');
+    expect(ctx).toContain('stacks/');
+  });
+
+  test('exclui node_modules, .git e outras pastas de build do ruído', () => {
+    const dir = makeProject({ name: 'test', provider: 'aws' });
+    fs.mkdirSync(path.join(dir, 'node_modules', 'alguma-lib'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'node_modules', 'alguma-lib', 'index.js'), '');
+    fs.mkdirSync(path.join(dir, '.git'));
+
+    const ctx = readProjectMeta(dir);
+    expect(ctx).not.toContain('node_modules');
+    expect(ctx).not.toContain('.git');
+  });
+
+  test('readProjectContext (legado) também inclui a estrutura de pastas', () => {
+    const dir = makeProject({ name: 'test', provider: 'aws' });
+    fs.mkdirSync(path.join(dir, 'test'));
+    fs.writeFileSync(path.join(dir, 'test', 'index.test.ts'), '');
+
+    const ctx = readProjectContext(dir);
+    expect(ctx).toContain('Estrutura de pastas do projeto');
+    expect(ctx).toContain('test/');
+  });
+});

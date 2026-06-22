@@ -3,7 +3,7 @@ function isRetryable(err: unknown): boolean {
   const status = (err as { status?: number })?.status;
   if (status === 429 || status === 500 || status === 502 || status === 503 || status === 504) return true;
   const code = (err as { code?: string })?.code;
-  if (code === 'ECONNRESET' || code === 'ETIMEDOUT') return true;
+  if (code === 'ECONNRESET' || code === 'ETIMEDOUT' || code === 'ERR_STREAM_PREMATURE_CLOSE') return true;
   return false;
 }
 

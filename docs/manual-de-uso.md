@@ -182,6 +182,32 @@ iacmp ai — Modo Chat Interativo
 Comandos especiais no modo chat:
 - `/sair` ou `/quit` — encerra o chat
 - `/limpar` — limpa o histórico da conversa
+- `/lang pt|en|es` — troca o idioma da interface e da resposta do Claude em tempo real (default: `pt`, ou o valor de `IACMP_LANG` no `.env`)
+- `/voz` — grava um áudio e transcreve para texto (veja "Entrada por voz" abaixo)
+
+#### Entrada por voz
+
+O comando `/voz` grava um áudio do microfone e transcreve automaticamente em português, inglês ou espanhol, sem substituir a digitação — a qualquer momento você pode continuar digitando normalmente.
+
+Pré-requisitos:
+- Binário `sox` no PATH — usado para gravar o áudio.
+- Binário do [whisper.cpp](https://github.com/ggerganov/whisper.cpp) (`whisper-cli` ou `main`) no PATH, ou apontado em `IACMP_WHISPER_BIN`.
+- Um modelo `ggml` do whisper.cpp baixado localmente, com o caminho configurado em `IACMP_WHISPER_MODEL` no `.env`.
+
+Rode `iacmp doctor --fix` para checar e instalar automaticamente o que faltar (sox via brew/apt/winget/choco conforme o sistema, whisper.cpp via brew no macOS, e o modelo `ggml-base` baixado e configurado em `IACMP_WHISPER_MODEL`) — ele pede confirmação antes de cada ação e nunca instala nada sem você aprovar. Em plataformas sem instalação automática conhecida (ex: whisper.cpp no Linux/Windows), o `doctor` mostra o link e o caminho manual. Rode só `iacmp doctor` (sem `--fix`) para apenas checar o que está faltando.
+
+Fluxo:
+```
+> Você: /voz
+gravando... pressione Enter para parar
+[Enter]
+Você disse (pt): cria uma fila SQS para processar pedidos
+[Enter] usar, /voz regravar, ou digite para corrigir:
+```
+
+Pressione Enter para aceitar a transcrição, digite `/voz` para regravar, ou digite um texto para corrigir/substituir antes de enviar. A resposta do Claude sai no mesmo idioma detectado na fala (pt/en/es); se a detecção falhar, usa o idioma atual da interface.
+
+Se `sox` ou o whisper.cpp não estiverem configurados, o `/voz` mostra uma mensagem de erro clara e o chat continua funcionando normalmente por texto.
 
 #### Modo dry-run
 
@@ -293,6 +319,13 @@ Verifica:
 - iacmp instalado
 - AWS CLI (para provider AWS)
 - ANTHROPIC_API_KEY (necessário para `iacmp ai`)
+- sox, whisper.cpp e modelo ggml (necessários para `/voz` no chat — veja "Entrada por voz")
+
+Use `--fix` para tentar corrigir automaticamente os itens de voz que estiverem faltando (pede confirmação antes de cada ação):
+
+```bash
+iacmp doctor --fix
+```
 
 ---
 

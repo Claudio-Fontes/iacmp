@@ -12,6 +12,7 @@ export class AnthropicProvider implements AIProvider {
   }
 
   async chat(messages: AIMessage[]): Promise<AIResponse> {
+    const system = messages.find(m => m.role === 'system')?.content ?? SYSTEM_PROMPT;
     const filtered = messages
       .filter(m => m.role !== 'system')
       .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
@@ -19,7 +20,7 @@ export class AnthropicProvider implements AIProvider {
     const response = await withRetry(() => this.client.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 8192,
-      system: SYSTEM_PROMPT,
+      system,
       messages: filtered,
     }));
 
@@ -34,6 +35,7 @@ export class AnthropicProvider implements AIProvider {
   }
 
   async stream(messages: AIMessage[], onChunk: (chunk: string) => void): Promise<void> {
+    const system = messages.find(m => m.role === 'system')?.content ?? SYSTEM_PROMPT;
     const filtered = messages
       .filter(m => m.role !== 'system')
       .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
@@ -47,7 +49,7 @@ export class AnthropicProvider implements AIProvider {
       const stream = this.client.messages.stream({
         model: 'claude-sonnet-4-6',
         max_tokens: 8192,
-        system: SYSTEM_PROMPT,
+        system,
         messages: filtered,
       });
 

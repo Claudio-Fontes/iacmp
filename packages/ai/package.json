@@ -12,7 +12,7 @@
     "test": "jest"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.30.0",
+    "@anthropic-ai/sdk": "^0.105.0",
     "@iacmp/core": "*",
     "chalk": "^4.1.2",
     "diff": "^5.2.0",

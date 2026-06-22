@@ -55,11 +55,15 @@ const {
   runSynth, readProjectContextRAG, printExplanation, printWarnings,
   printNextSteps, buildSystemPrompt,
   loadSession, saveSession, clearSession, getCached, setCache, clearCache,
+  resolveLanguage, SUPPORTED_LANGUAGES, MESSAGES,
+  startRecording, transcribeAudio, checkVoicePrerequisites,
 } = require('@iacmp/ai');
 
 const cwd = process.env.IACMP_CWD || process.cwd();
 const iacProvider = process.env.IACMP_PROVIDER || 'aws';
 const dryRun = process.env.IACMP_DRYRUN === '1';
+
+let currentLang = resolveLanguage(process.env.IACMP_LANG);
 
 // --- Sistema de leitura de stdin robusto ---
 // Usa rl.on('line') com fila interna — evita ERR_USE_AFTER_CLOSE em pipes
@@ -107,11 +111,11 @@ function ask(question) {
 function resolveProvider() {
   if (process.env.ANTHROPIC_API_KEY) return new AnthropicProvider(process.env.ANTHROPIC_API_KEY);
   if (process.env.GITHUB_TOKEN) return new CopilotProvider(process.env.GITHUB_TOKEN);
-  throw new Error('Configure ANTHROPIC_API_KEY no .env do projeto');
+  throw new Error(MESSAGES[currentLang].chat.configureKey);
 }
 
-function createContextualProvider(base, projectContext) {
-  const systemPrompt = buildSystemPrompt(projectContext);
+function createContextualProvider(base, projectContext, responseLang) {
+  const systemPrompt = buildSystemPrompt(projectContext, responseLang);
   return {
     name: base.name,
     chat: (msgs) => base.chat([{ role: 'system', content: systemPrompt }, ...msgs]),
@@ -120,6 +124,7 @@ function createContextualProvider(base, projectContext) {
 }
 
 async function runGeneration(provider, session, lastPrompt, projectContext) {
+  const t = MESSAGES[currentLang].chat;
   let acted = false;
   // Chave do cache inclui hash do contexto para evitar resposta stale quando o projeto muda
   const contextHash = projectContext
@@ -134,7 +139,7 @@ async function runGeneration(provider, session, lastPrompt, projectContext) {
     // Valida antes de usar o cache: só reutiliza se for JSON válido
     try {
       extractResponse(cached);
-      process.stderr.write(chalk.dim('  ↩ resposta do cache\n'));
+      process.stderr.write(chalk.dim(t.cachedResponse));
       raw = cached;
       fromCache = true;
       session.addAssistantMessage(raw);
@@ -145,13 +150,13 @@ async function runGeneration(provider, session, lastPrompt, projectContext) {
   }
 
   if (!raw) {
-    process.stderr.write(chalk.dim('Gerando...\n'));
+    process.stderr.write(chalk.dim(t.generating));
     const chunks = [];
     try {
       await provider.stream(session.getMessages(), chunk => chunks.push(chunk));
     } catch (err) {
-      process.stderr.write(chalk.red('Erro: ' + err.message + '\n'));
-      process.stderr.write(chalk.dim('Sua mensagem não foi salva na sessão — pode repetir o pedido.\n'));
+      process.stderr.write(chalk.red(t.errorPrefix + err.message + '\n'));
+      process.stderr.write(chalk.dim(t.messageNotSaved));
       return;
     }
     raw = chunks.join('');
@@ -177,7 +182,7 @@ async function runGeneration(provider, session, lastPrompt, projectContext) {
   if (tsFiles.length > 0) {
     const result = validateTypeScript(tsFiles, cwd);
     if (!result.valid) {
-      process.stderr.write(chalk.dim('Validação falhou — corrigindo...\n'));
+      process.stderr.write(chalk.dim(t.validationFailedRetrying));
       session.addUserMessage(`Erros TypeScript:\n${result.errors.join('\n')}\n\nCorrija e retorne o JSON completo.`);
       const retryChunks = [];
       try {
@@ -186,26 +191,61 @@ async function runGeneration(provider, session, lastPrompt, projectContext) {
         session.addAssistantMessage(retryRaw);
         try { parsed = extractResponse(retryRaw); } catch {}
       } catch (err) {
-        process.stderr.write(chalk.red('Erro no retry: ' + err.message + '\n'));
+        process.stderr.write(chalk.red(t.retryError + err.message + '\n'));
       }
     }
   }
 
-  printExplanation(parsed.explanation);
-  printWarnings(parsed.warnings);
+  printExplanation(parsed.explanation, currentLang);
+  printWarnings(parsed.warnings, currentLang);
 
   if (parsed.deletions && parsed.deletions.length > 0) {
-    await deleteFiles(parsed.deletions, cwd, iacProvider, ask);
+    await deleteFiles(parsed.deletions, cwd, iacProvider, ask, undefined, currentLang);
     acted = true;
   }
 
   if (parsed.files.length > 0) {
-    await writeGeneratedFiles(parsed.files, cwd, dryRun, ask);
+    await writeGeneratedFiles(parsed.files, cwd, dryRun, ask, currentLang);
     acted = true;
   }
 
-  printNextSteps(parsed.nextSteps);
+  printNextSteps(parsed.nextSteps, currentLang);
   return true; // assistente respondeu — sempre salva a sessão
+}
+
+async function handleVoiceCommand() {
+  const t = MESSAGES[currentLang].chat.voice;
+  const issue = checkVoicePrerequisites();
+  if (issue === 'sox') { console.log(chalk.red(t.soxMissing)); return null; }
+  if (issue === 'bin') { console.log(chalk.red(t.binMissing)); return null; }
+  if (issue === 'model') { console.log(chalk.red(t.modelMissing)); return null; }
+
+  while (true) {
+    console.log(chalk.dim(t.recording));
+    const recording = startRecording();
+    await ask('');
+    await recording.stop();
+
+    let result;
+    try {
+      result = transcribeAudio(recording.filePath);
+    } catch (err) {
+      console.log(chalk.red(t.transcribeError(err.message)));
+      return null;
+    }
+
+    if (!result.text) {
+      console.log(chalk.dim(t.empty));
+      return null;
+    }
+
+    console.log(chalk.bold(t.said(result.language || currentLang, result.text)));
+    const confirm = await ask(chalk.dim(t.confirmPrompt));
+
+    if (confirm === '/voz') continue;
+    if (confirm === '') return result;
+    return { text: confirm, language: result.language };
+  }
 }
 
 async function main() {
@@ -226,18 +266,18 @@ async function main() {
     if (contaminated) {
       clearSession(cwd);
       clearCache(cwd);
-      console.log(chalk.dim('\n  Sessão anterior descartada (contexto desatualizado)'));
+      console.log(chalk.dim(MESSAGES[currentLang].chat.sessionDiscarded));
     } else {
       for (const msg of previous) {
         if (msg.role === 'user') session.addUserMessage(msg.content);
         else session.addAssistantMessage(msg.content);
       }
-      console.log(chalk.dim(`\n  Sessão anterior carregada (${previous.length} mensagens)`));
+      console.log(chalk.dim(MESSAGES[currentLang].chat.sessionLoaded(previous.length)));
     }
   }
 
-  console.log(chalk.cyan.bold('\niacmp ai — Modo Chat Interativo'));
-  console.log(chalk.dim('Comandos: /sair, /quit — encerra | /limpar — limpa sessão e cache\n'));
+  console.log(chalk.cyan.bold(MESSAGES[currentLang].chat.bannerTitle));
+  console.log(chalk.dim(MESSAGES[currentLang].chat.bannerCommands));
 
   let aiProvider;
   try {
@@ -249,7 +289,8 @@ async function main() {
   }
 
   while (true) {
-    const input = await ask(chalk.bold('> Você: '));
+    let input = await ask(chalk.bold(MESSAGES[currentLang].chat.prompt));
+    let voiceLanguageForThisTurn = null;
 
     if (!input) {
       // EOF ou string vazia — só continua se for TTY
@@ -258,7 +299,7 @@ async function main() {
     }
 
     if (input === '/sair' || input === '/quit') {
-      console.log(chalk.dim('\nEncerrando chat.'));
+      console.log(chalk.dim(MESSAGES[currentLang].chat.exiting));
       break;
     }
 
@@ -266,8 +307,31 @@ async function main() {
       session.clear();
       clearSession(cwd);
       clearCache(cwd);
-      console.log(chalk.dim('Sessão e cache limpos.\n'));
+      console.log(chalk.dim(MESSAGES[currentLang].chat.sessionCleared));
       continue;
+    }
+
+    if (input === '/lang' || input.startsWith('/lang ')) {
+      const arg = input.slice('/lang'.length).trim().toLowerCase();
+      if (!arg) {
+        console.log(chalk.yellow(MESSAGES[currentLang].chat.langUsage));
+        continue;
+      }
+      if (!SUPPORTED_LANGUAGES.includes(arg)) {
+        console.log(chalk.yellow(MESSAGES[currentLang].chat.langInvalid(SUPPORTED_LANGUAGES.join(', '))));
+        continue;
+      }
+      currentLang = arg;
+      console.log(chalk.dim(MESSAGES[currentLang].chat.langChanged(currentLang)));
+      continue;
+    }
+
+    if (input === '/voz') {
+      const voiceResult = await handleVoiceCommand();
+      console.log('');
+      if (!voiceResult) continue;
+      input = voiceResult.text;
+      voiceLanguageForThisTurn = voiceResult.language;
     }
 
     console.log('');
@@ -284,7 +348,8 @@ async function main() {
 
     session.addUserMessage(userMessageContent);
 
-    const provider = createContextualProvider(aiProvider, freshContext);
+    const responseLang = voiceLanguageForThisTurn || currentLang;
+    const provider = createContextualProvider(aiProvider, freshContext, responseLang);
 
     const responded = await runGeneration(provider, session, input, freshContext);
     if (responded) {
@@ -300,6 +365,6 @@ async function main() {
 }
 
 main().catch(err => {
-  console.error(chalk.red('Erro: ' + err.message));
+  console.error(chalk.red(MESSAGES[currentLang].chat.errorPrefix + err.message));
   process.exit(1);
 });

@@ -10,13 +10,15 @@ function buildIndexes(
   projectChunks: Chunk[],
   docsChunks: Chunk[],
   knowledgeChunks: Chunk[],
+  sourceChunks: Chunk[] = [],
 ): RetrieverIndexes {
-  const all = [...projectChunks, ...docsChunks, ...knowledgeChunks];
+  const all = [...projectChunks, ...docsChunks, ...knowledgeChunks, ...sourceChunks];
   const chunkMap = new Map(all.map(c => [c.id, c]));
   return {
     projectIndex: buildBM25Index(projectChunks),
     docsIndex: buildBM25Index(docsChunks),
     knowledgeIndex: buildBM25Index(knowledgeChunks),
+    sourceIndex: buildBM25Index(sourceChunks),
     chunkMap,
   };
 }
@@ -122,15 +124,41 @@ describe('formatRetrievedContext', () => {
     expect(ctx).toContain('conhecimento de plataforma');
   });
 
-  test('inclui todas as seções quando há os três tipos', () => {
+  test('inclui seção de código-fonte quando há project-source', () => {
+    const results = [
+      {
+        chunk: chunk('s1', 'conteúdo de src/handler.ts', 'project-source'),
+        score: 1,
+        source: 'project-source' as const,
+      },
+    ];
+    const ctx = formatRetrievedContext(results);
+    expect(ctx).toContain('Código-fonte do projeto');
+    expect(ctx).toContain('conteúdo de src/handler.ts');
+  });
+
+  test('inclui todas as seções quando há os quatro tipos', () => {
     const results = [
       { chunk: chunk('p1', 'stack content', 'project-stack'), score: 1, source: 'project-stack' as const },
       { chunk: chunk('d1', 'docs content', 'iacmp-docs'), score: 0.9, source: 'iacmp-docs' as const },
       { chunk: chunk('k1', 'knowledge content', 'platform-knowledge'), score: 0.8, source: 'platform-knowledge' as const },
+      { chunk: chunk('s1', 'source content', 'project-source'), score: 0.7, source: 'project-source' as const },
     ];
     const ctx = formatRetrievedContext(results);
     expect(ctx).toContain('stack content');
     expect(ctx).toContain('docs content');
     expect(ctx).toContain('knowledge content');
+    expect(ctx).toContain('source content');
+  });
+});
+
+describe('retrieve — corpus project-source', () => {
+  test('busca tambem no sourceIndex e propaga metadata.source', () => {
+    const sourceChunks = [
+      chunk('s1', 'function handler() { return 42; }', 'project-source'),
+    ];
+    const indexes = buildIndexes([], [], [], sourceChunks);
+    const results = retrieve(indexes, 'handler function', { minScore: 0 });
+    expect(results.some(r => r.source === 'project-source')).toBe(true);
   });
 });

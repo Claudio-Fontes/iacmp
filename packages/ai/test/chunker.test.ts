@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { chunkStackFile, chunkIacmpDocs, chunkKnowledgeFile } from '../src/rag/chunker';
+import { chunkStackFile, chunkIacmpDocs, chunkKnowledgeFile, chunkSourceFile } from '../src/rag/chunker';
 
 describe('chunkStackFile', () => {
   let tmpDir: string;
@@ -177,5 +177,56 @@ Processamento de eventos, APIs REST, automações.
 
     const chunks = chunkKnowledgeFile(file, 'gcp');
     expect(chunks[0].content).toContain('[GCP]');
+  });
+});
+
+describe('chunkSourceFile', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'iacmp-test-source-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true });
+  });
+
+  test('arquivo pequeno gera um único chunk com metadata.source project-source', () => {
+    const file = path.join(tmpDir, 'handler.ts');
+    fs.writeFileSync(file, 'export function handler() { return 42; }\n');
+
+    const chunks = chunkSourceFile(file, tmpDir);
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].metadata.source).toBe('project-source');
+    expect(chunks[0].metadata.file).toBe('handler.ts');
+    expect(chunks[0].content).toContain('export function handler');
+  });
+
+  test('arquivo vazio não gera chunks', () => {
+    const file = path.join(tmpDir, 'empty.ts');
+    fs.writeFileSync(file, '   \n');
+
+    expect(chunkSourceFile(file, tmpDir)).toHaveLength(0);
+  });
+
+  test('arquivo grande é dividido em múltiplos chunks por blocos de linhas', () => {
+    const file = path.join(tmpDir, 'big.ts');
+    const lines = Array.from({ length: 400 }, (_, i) => `const x${i} = ${i};`).join('\n');
+    fs.writeFileSync(file, lines);
+
+    const chunks = chunkSourceFile(file, tmpDir);
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.every(c => c.metadata.source === 'project-source')).toBe(true);
+    expect(chunks[0].id).toContain('big.ts');
+  });
+
+  test('caminho relativo usa path.relative ao projectDir', () => {
+    const subDir = path.join(tmpDir, 'src');
+    fs.mkdirSync(subDir);
+    const file = path.join(subDir, 'index.ts');
+    fs.writeFileSync(file, 'export const a = 1;');
+
+    const chunks = chunkSourceFile(file, tmpDir);
+    expect(chunks[0].metadata.file).toBe('src/index.ts');
   });
 });

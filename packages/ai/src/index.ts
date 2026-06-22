@@ -40,3 +40,15 @@ export { Contextualizer } from './rag/contextualizer';
 export { buildBM25Index, bm25Search, BM25Index } from './rag/bm25';
 export { retrieve, formatRetrievedContext, RetrieverIndexes, RetrievalResult } from './rag/retriever';
 export { buildIndexes, IndexerOptions } from './rag/indexer';
+// i18n
+export { Language, SUPPORTED_LANGUAGES, DEFAULT_LANGUAGE, resolveLanguage } from './i18n/languages';
+export { MESSAGES, Messages } from './i18n/messages';
+// Voz
+export {
+  startRecording,
+  transcribeAudio,
+  checkVoicePrerequisites,
+  Recording,
+  TranscriptionResult,
+  VoicePrerequisiteIssue,
+} from './voice/transcribe';

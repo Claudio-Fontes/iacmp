@@ -6,7 +6,7 @@ export interface Chunk {
   content: string;
   contextualContent?: string; // preenchido pelo contextualizer após enriquecimento
   metadata: {
-    source: 'project-stack' | 'iacmp-docs' | 'platform-knowledge';
+    source: 'project-stack' | 'iacmp-docs' | 'platform-knowledge' | 'project-source';
     file?: string;
     stackName?: string;
     constructType?: string;
@@ -161,5 +161,38 @@ export function chunkKnowledgeFile(
     }
   }
 
+  return chunks;
+}
+
+const SOURCE_CHUNK_MAX_LINES = 150;
+
+// Divide um arquivo de código-fonte (fora de stacks/) ou config do projeto em
+// chunks — por blocos de linhas quando o arquivo é grande, ou o arquivo
+// inteiro quando é pequeno o suficiente.
+export function chunkSourceFile(filePath: string, projectDir: string): Chunk[] {
+  const content = fs.readFileSync(filePath, 'utf-8');
+  const rel = path.relative(projectDir, filePath);
+  if (content.trim().length === 0) return [];
+
+  const lines = content.split('\n');
+  if (lines.length <= SOURCE_CHUNK_MAX_LINES) {
+    return [{
+      id: `source:${rel}`,
+      content: `[arquivo] ${rel}\n${content}`,
+      metadata: { source: 'project-source', file: rel },
+    }];
+  }
+
+  const chunks: Chunk[] = [];
+  for (let i = 0; i < lines.length; i += SOURCE_CHUNK_MAX_LINES) {
+    const part = lines.slice(i, i + SOURCE_CHUNK_MAX_LINES).join('\n');
+    const startLine = i + 1;
+    const endLine = Math.min(i + SOURCE_CHUNK_MAX_LINES, lines.length);
+    chunks.push({
+      id: `source:${rel}:${startLine}-${endLine}`,
+      content: `[arquivo] ${rel} (linhas ${startLine}-${endLine})\n${part}`,
+      metadata: { source: 'project-source', file: rel },
+    });
+  }
   return chunks;
 }

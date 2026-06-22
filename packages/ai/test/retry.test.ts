@@ -43,6 +43,15 @@ describe('withRetry', () => {
     expect(fn).toHaveBeenCalledTimes(2);
   });
 
+  test('tenta novamente em ERR_STREAM_PREMATURE_CLOSE (conexão de stream encerrada antes do fim)', async () => {
+    const fn = jest.fn()
+      .mockRejectedValueOnce(errWithCode('ERR_STREAM_PREMATURE_CLOSE'))
+      .mockResolvedValueOnce('ok');
+    const result = await withRetry(fn, 3);
+    expect(result).toBe('ok');
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
   test('desiste após esgotar as tentativas e propaga o último erro', async () => {
     const fn = jest.fn().mockRejectedValue(errWithStatus(500));
     await expect(withRetry(fn, 3)).rejects.toThrow('erro 500');

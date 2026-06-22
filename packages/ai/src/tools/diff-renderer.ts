@@ -1,5 +1,7 @@
 import chalk from 'chalk';
 import * as DiffLib from 'diff';
+import { Language, DEFAULT_LANGUAGE } from '../i18n/languages';
+import { MESSAGES } from '../i18n/messages';
 
 export interface FileDiff {
   path: string;
@@ -9,14 +11,19 @@ export interface FileDiff {
 
 export type AskFn = (question: string) => Promise<string>;
 
-export async function renderAndConfirm(diffs: FileDiff[], ask: AskFn): Promise<boolean> {
+export async function renderAndConfirm(
+  diffs: FileDiff[],
+  ask: AskFn,
+  lang: Language = DEFAULT_LANGUAGE
+): Promise<boolean> {
+  const t = MESSAGES[lang].diff;
   console.log('');
 
   for (const file of diffs) {
     const isNew = file.oldContent === null;
     const label = isNew
-      ? `  ${chalk.bold(file.path)}  ${chalk.blue('[novo]')}`
-      : `  ${chalk.bold(file.path)}  ${chalk.yellow('[modificado]')}`;
+      ? `  ${chalk.bold(file.path)}  ${chalk.blue(t.newLabel)}`
+      : `  ${chalk.bold(file.path)}  ${chalk.yellow(t.modifiedLabel)}`;
 
     console.log('\n' + label);
     console.log(chalk.dim('─'.repeat(62)));
@@ -48,10 +55,10 @@ export async function renderAndConfirm(diffs: FileDiff[], ask: AskFn): Promise<b
   const newCount = diffs.filter(d => d.oldContent === null).length;
   const modCount = diffs.filter(d => d.oldContent !== null).length;
   const parts: string[] = [];
-  if (modCount > 0) parts.push(`${modCount} modificado(s)`);
-  if (newCount > 0) parts.push(`${newCount} novo(s)`);
+  if (modCount > 0) parts.push(t.modifiedCount(modCount));
+  if (newCount > 0) parts.push(t.newCount(newCount));
   console.log(chalk.dim('\n  ' + parts.join(' · ') + '\n'));
 
-  const answer = await ask('Aplicar mudanças? [y/n] ');
+  const answer = await ask(t.applyPrompt);
   return answer.toLowerCase() === 'y';
 }

@@ -13,8 +13,9 @@ export class CopilotProvider implements AIProvider {
   }
 
   private buildMessages(messages: AIMessage[]): Array<{ role: string; content: string }> {
+    const system = messages.find(m => m.role === 'system')?.content ?? SYSTEM_PROMPT;
     const result: Array<{ role: string; content: string }> = [
-      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'system', content: system },
     ];
     for (const m of messages) {
       if (m.role !== 'system') {

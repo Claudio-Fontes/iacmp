@@ -8,6 +8,58 @@ import { fetchLive, shouldFetchLive } from '../rag/live-retriever';
 // Cache de índices em memória por projectDir (evita reindexar em cada mensagem)
 const indexCache = new Map<string, RetrieverIndexes>();
 
+const TREE_EXCLUDED_DIRS = new Set(['node_modules', '.git', 'dist', 'synth-out', '.iacmp', 'coverage', '.next', '.turbo', 'build', '.cache']);
+const TREE_MAX_DEPTH = 4;
+const TREE_MAX_ENTRIES = 200;
+
+// Lista nomes de pastas/arquivos do projeto (sem conteúdo) — dá ao modelo
+// visão da estrutura geral além de stacks/, sem custar tokens com conteúdo.
+function buildDirectoryTree(projectDir: string): string {
+  const lines: string[] = [];
+  let count = 0;
+
+  const walk = (dir: string, depth: number, prefix: string): void => {
+    if (depth > TREE_MAX_DEPTH || count >= TREE_MAX_ENTRIES) return;
+
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    const sorted = entries
+      .filter(e => !e.name.startsWith('.') && !TREE_EXCLUDED_DIRS.has(e.name))
+      .sort((a, b) => {
+        if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+
+    for (const entry of sorted) {
+      if (count >= TREE_MAX_ENTRIES) {
+        lines.push(`${prefix}... (mais itens omitidos)`);
+        return;
+      }
+      count++;
+      if (entry.isDirectory()) {
+        lines.push(`${prefix}${entry.name}/`);
+        walk(path.join(dir, entry.name), depth + 1, prefix + '  ');
+      } else {
+        lines.push(`${prefix}${entry.name}`);
+      }
+    }
+  };
+
+  walk(projectDir, 0, '');
+  return lines.join('\n');
+}
+
+function readProjectStructure(projectDir: string): string {
+  const tree = buildDirectoryTree(projectDir);
+  if (!tree) return '';
+  return `## Estrutura de pastas do projeto\n\`\`\`\n${tree}\n\`\`\`\n`;
+}
+
 // Lê metadados básicos do projeto (config + lista de stacks) — sem conteúdo completo
 export function readProjectMeta(projectDir: string): string {
   const lines: string[] = [];
@@ -30,6 +82,8 @@ export function readProjectMeta(projectDir: string): string {
     lines.push('Nenhum iacmp.json encontrado — projeto não inicializado.');
     lines.push('');
   }
+
+  lines.push(readProjectStructure(projectDir));
 
   const stacksDir = path.join(projectDir, 'stacks');
   if (fs.existsSync(stacksDir)) {
@@ -90,6 +144,8 @@ export function readProjectContext(projectDir: string): string {
     lines.push('Nenhum iacmp.json encontrado — projeto não inicializado.');
     lines.push('');
   }
+
+  lines.push(readProjectStructure(projectDir));
 
   const stacksDir = path.join(projectDir, 'stacks');
   if (fs.existsSync(stacksDir)) {
@@ -161,6 +217,7 @@ export async function readProjectContextRAG(
       projectK: 5,
       docsK: 3,
       knowledgeK: 5,
+      sourceK: 5,
       minScore: 0.05,
     });
 

@@ -4,13 +4,17 @@ import chalk from 'chalk';
 import { GeneratedFile } from '../parser/code-extractor';
 import { renderAndConfirm, FileDiff, AskFn } from './diff-renderer';
 import { safeJoin } from './safe-path';
+import { Language, DEFAULT_LANGUAGE } from '../i18n/languages';
+import { MESSAGES } from '../i18n/messages';
 
 export async function writeGeneratedFiles(
   files: GeneratedFile[],
   projectDir: string,
   dryRun: boolean,
-  ask: AskFn
+  ask: AskFn,
+  lang: Language = DEFAULT_LANGUAGE
 ): Promise<void> {
+  const t = MESSAGES[lang].fileWriter;
   const validated: { file: GeneratedFile; fullPath: string }[] = [];
   for (const file of files) {
     const fullPath = safeJoin(projectDir, file.path);
@@ -18,7 +22,7 @@ export async function writeGeneratedFiles(
   }
 
   if (dryRun) {
-    console.log(chalk.dim('\n[dry-run] Arquivos que seriam gerados:\n'));
+    console.log(chalk.dim(t.dryRunHeader));
     for (const { file } of validated) {
       console.log(chalk.cyan(`  ${file.path}`));
       console.log(chalk.dim('─'.repeat(62)));
@@ -28,7 +32,7 @@ export async function writeGeneratedFiles(
       console.log(chalk.dim('─'.repeat(62)));
       console.log('');
     }
-    console.log(chalk.dim('[dry-run] Nenhum arquivo foi salvo.\n'));
+    console.log(chalk.dim(t.dryRunFooter));
     return;
   }
 
@@ -42,17 +46,21 @@ export async function writeGeneratedFiles(
     return { path: file.path, oldContent, newContent: file.content };
   });
 
-  const confirmed = await renderAndConfirm(diffs, ask);
+  const confirmed = await renderAndConfirm(diffs, ask, lang);
 
   if (!confirmed) {
-    console.log(chalk.dim('\n  Operação cancelada. Nenhum arquivo foi alterado.\n'));
+    console.log(chalk.dim(t.operationCancelled));
     return;
   }
+
+  const isNewByPath = new Map(diffs.map(d => [d.path, d.oldContent === null]));
 
   for (const { file, fullPath } of validated) {
     fs.mkdirSync(path.dirname(fullPath), { recursive: true });
     fs.writeFileSync(fullPath, file.content, 'utf-8');
-    console.log(chalk.green(`  ✓ ${file.path}`));
+    const isNew = isNewByPath.get(file.path);
+    const color = isNew ? chalk.green : chalk.hex('#FFA500');
+    console.log(color(`  ✓ ${file.path}`));
   }
   console.log('');
 }

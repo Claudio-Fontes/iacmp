@@ -1,8 +1,15 @@
 import { Command, Flags } from '@oclif/core';
-import { execSync } from 'child_process';
+import { execFileSync, execSync } from 'child_process';
+import * as readline from 'readline';
 import * as path from 'path';
 import * as fs from 'fs';
 import { readJsonFile } from '../utils';
+import { downloadDefaultWhisperModel } from '../utils/whisper-setup';
+
+interface Fix {
+  description: string;
+  run: () => Promise<void>;
+}
 
 interface Check {
   label: string;
@@ -11,11 +18,23 @@ interface Check {
   required: boolean;
   value?: string;
   hint?: string;
+  fix?: Fix;
 }
 
 function tryExec(cmd: string): string | null {
   try {
     return execSync(cmd, { stdio: 'pipe' }).toString().trim();
+  } catch {
+    return null;
+  }
+}
+
+/** Existência de um binário no PATH, cross-platform (where no Windows, which no resto). */
+function commandExists(bin: string): string | null {
+  const finder = process.platform === 'win32' ? 'where' : 'which';
+  try {
+    const out = execFileSync(finder, [bin], { stdio: 'pipe' }).toString().trim();
+    return out.split(/\r?\n/)[0] || null;
   } catch {
     return null;
   }
@@ -68,12 +87,157 @@ function checkAnthropicKey(): Check {
   };
 }
 
+// --- Voz no chat (/voz): sox + whisper.cpp + modelo ggml ---
+
+function fixSox(): Fix | undefined {
+  if (process.platform === 'darwin' && commandExists('brew')) {
+    return { description: 'brew install sox', run: async () => { execSync('brew install sox', { stdio: 'inherit' }); } };
+  }
+  if (process.platform === 'linux' && commandExists('apt-get')) {
+    return {
+      description: 'sudo apt-get install -y sox',
+      run: async () => { execSync('sudo apt-get install -y sox', { stdio: 'inherit' }); },
+    };
+  }
+  if (process.platform === 'win32') {
+    if (commandExists('winget')) {
+      return {
+        description: 'winget install -e --id ChrisBagwell.SoX',
+        run: async () => {
+          execSync(
+            'winget install -e --id ChrisBagwell.SoX --silent --accept-source-agreements --accept-package-agreements',
+            { stdio: 'inherit' }
+          );
+        },
+      };
+    }
+    if (commandExists('choco')) {
+      return { description: 'choco install sox -y', run: async () => { execSync('choco install sox -y', { stdio: 'inherit' }); } };
+    }
+  }
+  return undefined;
+}
+
+function soxHint(): string {
+  switch (process.platform) {
+    case 'darwin':
+      return 'Instale com: brew install sox (ou rode: iacmp doctor --fix)';
+    case 'linux':
+      return 'Instale com: sudo apt-get install -y sox (ou equivalente da sua distro) — ou rode: iacmp doctor --fix';
+    case 'win32':
+      return 'Instale com: winget install -e --id ChrisBagwell.SoX (ou choco install sox) — ou rode: iacmp doctor --fix';
+    default:
+      return 'Instale o sox manualmente — necessário para o comando /voz do chat.';
+  }
+}
+
+function checkSox(): Check {
+  if (commandExists('sox')) {
+    const out = tryExec('sox --version');
+    return { label: 'sox', ok: true, required: false, value: out ?? 'instalado' };
+  }
+  return { label: 'sox', ok: false, required: false, hint: soxHint(), fix: fixSox() };
+}
+
+function fixWhisperBinary(): Fix | undefined {
+  if (process.platform === 'darwin' && commandExists('brew')) {
+    return {
+      description: 'brew install whisper-cpp',
+      run: async () => { execSync('brew install whisper-cpp', { stdio: 'inherit' }); },
+    };
+  }
+  return undefined;
+}
+
+function whisperBinaryHint(): string {
+  if (process.platform === 'darwin') {
+    return 'Instale com: brew install whisper-cpp (ou rode: iacmp doctor --fix)';
+  }
+  return 'Sem instalação automática nesta plataforma — baixe um binário em https://github.com/ggerganov/whisper.cpp/releases ou compile localmente, e configure IACMP_WHISPER_BIN.';
+}
+
+function checkWhisperBinary(): Check {
+  const candidates = process.env.IACMP_WHISPER_BIN
+    ? [process.env.IACMP_WHISPER_BIN]
+    : ['whisper-cli', 'main', 'whisper'];
+  for (const candidate of candidates) {
+    const found = commandExists(candidate);
+    if (found) return { label: 'whisper.cpp', ok: true, required: false, value: found };
+  }
+  return { label: 'whisper.cpp', ok: false, required: false, hint: whisperBinaryHint(), fix: fixWhisperBinary() };
+}
+
+function checkWhisperModel(cwd: string): Check {
+  const modelPath = process.env.IACMP_WHISPER_MODEL;
+  if (modelPath && fs.existsSync(modelPath)) {
+    return { label: 'modelo whisper (ggml)', ok: true, required: false, value: modelPath };
+  }
+  return {
+    label: 'modelo whisper (ggml)',
+    ok: false,
+    required: false,
+    hint: 'Necessário para o comando /voz — rode: iacmp doctor --fix para baixar um modelo padrão (~148MB) e configurar IACMP_WHISPER_MODEL',
+    fix: {
+      description: 'baixar modelo ggml-base (~148MB) e configurar IACMP_WHISPER_MODEL no .env',
+      run: async () => {
+        // upsertEnvVar só grava no arquivo .env — o processo atual não relê o
+        // .env automaticamente, então sem isso a re-checagem abaixo falharia
+        // mesmo com o download/gravação tendo funcionado.
+        process.env.IACMP_WHISPER_MODEL = await downloadDefaultWhisperModel(cwd);
+      },
+    },
+  };
+}
+
+interface Asker {
+  ask: (question: string) => Promise<string>;
+  close: () => void;
+}
+
+// readline.question() perde perguntas subsequentes quando o stdin é um pipe
+// não-interativo (ex: testes, scripts) — todas as linhas chegam de uma vez e
+// as que não têm listener ainda anexado no momento se perdem. Usa fila interna
+// (mesmo padrão de packages/cli/bin/chat.js) para funcionar em TTY e em pipe.
+function createAsker(): Asker {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: process.stdin.isTTY });
+  const queue: string[] = [];
+  const waiters: Array<(line: string) => void> = [];
+  let done = false;
+
+  rl.on('line', line => {
+    const trimmed = line.trim();
+    if (waiters.length > 0) waiters.shift()!(trimmed);
+    else queue.push(trimmed);
+  });
+  rl.on('close', () => {
+    done = true;
+    while (waiters.length > 0) waiters.shift()!('');
+  });
+
+  function ask(question: string): Promise<string> {
+    process.stdout.write(question);
+    return new Promise(resolve => {
+      if (queue.length > 0) resolve(queue.shift()!);
+      else if (done) resolve('');
+      else waiters.push(resolve);
+    });
+  }
+
+  return { ask, close: () => rl.close() };
+}
+
+async function confirm(asker: Asker, question: string): Promise<boolean> {
+  const answer = await asker.ask(`${question} [y/N] `);
+  return answer.trim().toLowerCase() === 'y';
+}
+
 export default class Doctor extends Command {
   static description = 'Verifica o ambiente e dependências do iacmp';
 
   static examples = [
     '$ iacmp doctor',
     '$ iacmp doctor --strict',
+    '$ iacmp doctor --fix',
   ];
 
   static flags = {
@@ -81,19 +245,29 @@ export default class Doctor extends Command {
       description: 'Falha (exit 1) também para checagens opcionais (AWS CLI, etc.)',
       default: false,
     }),
+    fix: Flags.boolean({
+      description: 'Tenta corrigir itens ausentes com instalação conhecida (sox, whisper.cpp, modelo), pedindo confirmação antes de cada ação.',
+      default: false,
+    }),
   };
 
   async run(): Promise<void> {
     const { flags } = await this.parse(Doctor);
+    const cwd = process.cwd();
     this.log('Verificando ambiente...\n');
 
-    const checks: Check[] = [
+    const makeChecks = (): Check[] => [
       checkNode(),
       checkNpm(),
       checkIacmp(),
       checkAwsCli(),
       checkAnthropicKey(),
+      checkSox(),
+      checkWhisperBinary(),
+      checkWhisperModel(cwd),
     ];
+
+    let checks = makeChecks();
 
     for (const check of checks) {
       const icon = check.ok ? '✓' : '✗';
@@ -109,15 +283,43 @@ export default class Doctor extends Command {
     }
 
     this.log('');
-    const allOk = checks.every(c => c.ok);
-    if (allOk) {
+    if (checks.every(c => c.ok)) {
       this.log('Ambiente OK. Pronto para uso.');
     } else {
       this.log('Alguns itens precisam de atenção.');
     }
 
+    if (flags.fix) {
+      const fixableCount = checks.filter(c => !c.ok && c.fix).length;
+      if (fixableCount === 0) {
+        this.log('\nNada para corrigir automaticamente nesta plataforma.');
+      } else {
+        this.log('\nCorrigindo...');
+        const asker = createAsker();
+        for (let i = 0; i < checks.length; i++) {
+          const check = checks[i];
+          if (check.ok || !check.fix) continue;
+
+          const proceed = await confirm(asker, `\n${check.label}: executar "${check.fix.description}"?`);
+          if (!proceed) {
+            this.log('  pulado.');
+            continue;
+          }
+
+          try {
+            await check.fix.run();
+            const updated = makeChecks()[i];
+            checks[i] = updated;
+            this.log(updated.ok ? `  ✓ ${updated.label} corrigido` : `  ✗ ainda nao encontrado apos a instalacao`);
+          } catch (err) {
+            this.log(`  ✗ falhou: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
+        asker.close();
+      }
+    }
+
     // Verifica plugins do projeto atual
-    const cwd = process.cwd();
     const configPath = path.join(cwd, 'iacmp.json');
     if (fs.existsSync(configPath)) {
       let config: { plugins?: string[] } = {};

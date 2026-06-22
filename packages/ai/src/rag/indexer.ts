@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import { Chunk, chunkStackFile, chunkIacmpDocs, chunkKnowledgeFile } from './chunker';
+import { Chunk, chunkStackFile, chunkIacmpDocs, chunkKnowledgeFile, chunkSourceFile } from './chunker';
 import { Contextualizer } from './contextualizer';
 import { buildBM25Index, BM25Index } from './bm25';
 import { RetrieverIndexes } from './retriever';
@@ -9,7 +9,86 @@ import { createEmbedder } from './embedder';
 import { VectorStore } from './vector-store';
 
 const INDEX_FILE = '.iacmp/rag-index.json';
+const SOURCE_INDEX_FILE = '.iacmp/rag-source-index.json';
 const KNOWLEDGE_DIR = path.join(__dirname, '../knowledge');
+
+// Pastas nunca incluídas no corpus de código-fonte: ruído de build/deps,
+// stacks/ (já tem corpus dedicado) e test/ — nunca enviamos código de teste
+// nem segredos (.env*, já cobertos pelo filtro de dotfiles) pro modelo.
+const SOURCE_EXCLUDED_DIRS = new Set([
+  'node_modules', '.git', 'dist', 'build', '.next', '.turbo', '.cache',
+  'coverage', 'synth-out', '.iacmp', 'stacks', 'test', 'tests', '__tests__',
+]);
+
+function isProjectSourceFile(name: string): boolean {
+  if (name === 'package.json') return true;
+  if (/^tsconfig(\..+)?\.json$/.test(name)) return true;
+  if (!/\.(ts|tsx|js|jsx)$/.test(name)) return false;
+  return !/\.(test|spec)\.(ts|tsx|js|jsx)$/.test(name);
+}
+
+function findProjectSourceFiles(projectDir: string): string[] {
+  const result: string[] = [];
+
+  const walk = (dir: string): void => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const e of entries) {
+      if (e.name.startsWith('.')) continue;
+      if (e.isDirectory()) {
+        if (SOURCE_EXCLUDED_DIRS.has(e.name)) continue;
+        walk(path.join(dir, e.name));
+      } else if (isProjectSourceFile(e.name)) {
+        result.push(path.join(dir, e.name));
+      }
+    }
+  };
+
+  walk(projectDir);
+  return result.sort();
+}
+
+function hashProjectSource(projectDir: string): string {
+  const files = findProjectSourceFiles(projectDir);
+  if (files.length === 0) return 'empty';
+  const content = files.map(f => `${f}:${fs.statSync(f).mtimeMs}`).join('\n');
+  return crypto.createHash('sha256').update(content).digest('hex').slice(0, 12);
+}
+
+interface PersistedSourceIndex {
+  sourceHash: string;
+  chunks: Chunk[];
+  builtAt: string;
+}
+
+function loadPersistedSourceChunks(projectDir: string, currentHash: string): Chunk[] | null {
+  const indexPath = path.join(projectDir, SOURCE_INDEX_FILE);
+  if (!fs.existsSync(indexPath)) return null;
+
+  try {
+    const data = JSON.parse(fs.readFileSync(indexPath, 'utf-8')) as PersistedSourceIndex;
+    if (data.sourceHash !== currentHash) return null;
+    return data.chunks;
+  } catch {
+    return null;
+  }
+}
+
+function saveSourceChunks(projectDir: string, hash: string, chunks: Chunk[]): void {
+  const indexPath = path.join(projectDir, SOURCE_INDEX_FILE);
+  fs.mkdirSync(path.dirname(indexPath), { recursive: true });
+  const data: PersistedSourceIndex = {
+    sourceHash: hash,
+    chunks,
+    builtAt: new Date().toISOString(),
+  };
+  fs.writeFileSync(indexPath, JSON.stringify(data, null, 2), 'utf-8');
+}
 
 interface PersistedIndex {
   projectHash: string;
@@ -176,14 +255,32 @@ export async function buildIndexes(options: IndexerOptions): Promise<RetrieverIn
   const knowledgeChunks = loadKnowledgeChunks();
   log(`${knowledgeChunks.length} chunks de conhecimento indexados.`);
 
+  // ── Corpus 4: Código-fonte do projeto (fora de stacks/ e test/) ──────
+  log('Indexando código-fonte do projeto...');
+  const sourceHash = hashProjectSource(projectDir);
+  let sourceChunks = loadPersistedSourceChunks(projectDir, sourceHash);
+
+  if (!sourceChunks) {
+    log('Código-fonte mudou — reindexando...');
+    sourceChunks = [];
+    for (const file of findProjectSourceFiles(projectDir)) {
+      sourceChunks.push(...chunkSourceFile(file, projectDir));
+    }
+    saveSourceChunks(projectDir, sourceHash, sourceChunks);
+    log(`${sourceChunks.length} chunks de código-fonte indexados.`);
+  } else {
+    log(`${sourceChunks.length} chunks de código-fonte carregados do cache.`);
+  }
+
   // ── Constrói índices BM25 ─────────────────────────────────────────────
   const projectIndex = buildBM25Index(projectChunks);
   const docsIndex = buildBM25Index(docsChunks);
   const knowledgeIndex = buildBM25Index(knowledgeChunks);
+  const sourceIndex = buildBM25Index(sourceChunks);
 
   // Mapa id → chunk para lookup
   const chunkMap = new Map<string, Chunk>();
-  for (const c of [...projectChunks, ...docsChunks, ...knowledgeChunks]) {
+  for (const c of [...projectChunks, ...docsChunks, ...knowledgeChunks, ...sourceChunks]) {
     chunkMap.set(c.id, c);
   }
 
@@ -220,8 +317,8 @@ export async function buildIndexes(options: IndexerOptions): Promise<RetrieverIn
     }
   }
 
-  const total = projectChunks.length + docsChunks.length + knowledgeChunks.length;
+  const total = projectChunks.length + docsChunks.length + knowledgeChunks.length + sourceChunks.length;
   log(`RAG pronto — ${total} chunks indexados no total${voyageApiKey ? ` + ${vectorStore.size()} vetores` : ''}.`);
 
-  return { projectIndex, docsIndex, knowledgeIndex, chunkMap, vectorStore };
+  return { projectIndex, docsIndex, knowledgeIndex, sourceIndex, chunkMap, vectorStore };
 }

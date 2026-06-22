@@ -12,6 +12,7 @@ export interface RetrieverIndexes {
   projectIndex: BM25Index;
   docsIndex: BM25Index;
   knowledgeIndex: BM25Index;
+  sourceIndex: BM25Index;
   // Mapa de id → chunk para lookup rápido
   chunkMap: Map<string, Chunk>;
   // Vector store opcional (quando VOYAGE_API_KEY disponível)
@@ -23,6 +24,7 @@ const DEFAULT_K = {
   project: 5,
   docs: 3,
   knowledge: 5,
+  source: 5,
 };
 
 export function retrieve(
@@ -32,6 +34,7 @@ export function retrieve(
     projectK?: number;
     docsK?: number;
     knowledgeK?: number;
+    sourceK?: number;
     minScore?: number;
   } = {},
 ): RetrievalResult[] {
@@ -39,17 +42,19 @@ export function retrieve(
     projectK = DEFAULT_K.project,
     docsK = DEFAULT_K.docs,
     knowledgeK = DEFAULT_K.knowledge,
+    sourceK = DEFAULT_K.source,
     minScore = 0.1,
   } = options;
 
   const results: RetrievalResult[] = [];
 
-  // Busca nos três corpora
+  // Busca nos quatro corpora
   const projectHits = bm25Search(indexes.projectIndex, query, projectK);
   const docsHits = bm25Search(indexes.docsIndex, query, docsK);
   const knowledgeHits = bm25Search(indexes.knowledgeIndex, query, knowledgeK);
+  const sourceHits = bm25Search(indexes.sourceIndex, query, sourceK);
 
-  for (const hit of [...projectHits, ...docsHits, ...knowledgeHits]) {
+  for (const hit of [...projectHits, ...docsHits, ...knowledgeHits, ...sourceHits]) {
     if (hit.score < minScore) continue;
     const chunk = indexes.chunkMap.get(hit.id);
     if (!chunk) continue;
@@ -75,11 +80,20 @@ export function formatRetrievedContext(results: RetrievalResult[]): string {
     'project-stack': results.filter(r => r.chunk.metadata.source === 'project-stack'),
     'iacmp-docs': results.filter(r => r.chunk.metadata.source === 'iacmp-docs'),
     'platform-knowledge': results.filter(r => r.chunk.metadata.source === 'platform-knowledge'),
+    'project-source': results.filter(r => r.chunk.metadata.source === 'project-source'),
   };
 
   if (bySource['project-stack'].length > 0) {
     sections.push('### Stacks do projeto relevantes');
     for (const r of bySource['project-stack']) {
+      sections.push(r.chunk.content);
+      sections.push('');
+    }
+  }
+
+  if (bySource['project-source'].length > 0) {
+    sections.push('### Código-fonte do projeto relevante (fora de stacks/)');
+    for (const r of bySource['project-source']) {
       sections.push(r.chunk.content);
       sections.push('');
     }

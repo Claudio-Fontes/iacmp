@@ -97,6 +97,16 @@ describe('doctor — checagens de ambiente', () => {
     expect(r.stdout).toContain('ANTHROPIC_API_KEY');
   });
 
+  test('lista checagens de voz (sox, whisper.cpp, modelo)', () => {
+    const dir = mk({ noConfig: true, noStacks: true });
+    const r = runCli(['doctor'], { cwd: dir });
+
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('sox');
+    expect(r.stdout).toContain('whisper.cpp');
+    expect(r.stdout).toContain('modelo whisper');
+  });
+
   test('imprime veredicto final (OK ou itens precisam de atenção)', () => {
     const dir = mk({ noConfig: true, noStacks: true });
     const r = runCli(['doctor'], { cwd: dir });
@@ -252,25 +262,41 @@ describe('doctor — exit code', () => {
     expect(r.status).toBe(0);
   });
 
-  test('--strict sai com 1 quando há checagem opcional falhando (sem AWS CLI)', () => {
+  test('--strict sai com 1 quando alguma checagem opcional falha, e 0 quando todas passam', () => {
     const dir = makeProject({ noConfig: true, noStacks: true });
     dirs.push(dir);
-    const hasAws = (() => {
-      try {
-        require('child_process').execSync('aws --version', { stdio: 'pipe' });
-        return true;
-      } catch {
-        return false;
-      }
-    })();
 
     const r = runCli(['doctor', '--strict'], { cwd: dir });
-    if (hasAws) {
-      // ambiente tem AWS CLI: todas opcionais OK também → exit 0
-      expect(r.status).toBe(0);
-    } else {
+    // noConfig:true → sem seção de plugins, então qualquer ✗ no stdout vem das checagens.
+    const anyCheckFailed = /✗/.test(r.stdout);
+
+    if (anyCheckFailed) {
       expect(r.status).toBe(1);
-      expect(r.all).toContain('AWS CLI');
+    } else {
+      expect(r.status).toBe(0);
+    }
+  });
+});
+
+describe('doctor --fix — não instala nada sem confirmação do usuário', () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    while (dirs.length) rmrf(dirs.pop()!);
+  });
+
+  test('pede confirmação para cada item corrigível e pula quando a resposta é "n"', () => {
+    const dir = makeProject({ noConfig: true, noStacks: true });
+    dirs.push(dir);
+
+    // Responde "n" para qualquer prompt de confirmação — nenhum comando de
+    // instalação real deve ser executado nesta suíte de testes.
+    const r = runCli(['doctor', '--fix'], { cwd: dir, input: 'n\nn\nn\nn\n' });
+
+    expect(r.status === 0 || r.status === 1).toBe(true);
+    if (r.stdout.includes('executar')) {
+      expect(r.stdout).toMatch(/pulado\./);
+    } else {
+      expect(r.stdout).toContain('Nada para corrigir automaticamente nesta plataforma.');
     }
   });
 });
