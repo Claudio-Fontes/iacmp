@@ -4,6 +4,8 @@ export interface ComputeInstanceProps {
   instanceType: 'small' | 'medium' | 'large';
   image: string;
   region?: string;
+  subnetId?: string;
+  securityGroupIds?: string[];
 }
 
 export interface ComputeAutoScalingProps {
@@ -27,6 +29,8 @@ export interface ComputeContainerProps {
   environment?: Record<string, string>;
   desiredCount?: number;
   publicIp?: boolean;
+  subnetIds?: string[];
+  securityGroupIds?: string[];
 }
 
 export interface ComputeKubernetesProps {
@@ -36,6 +40,8 @@ export interface ComputeKubernetesProps {
   maxNodes?: number;
   desiredNodes?: number;
   privateCluster?: boolean;
+  subnetIds?: string[];
+  securityGroupIds?: string[];
 }
 
 export namespace Compute {

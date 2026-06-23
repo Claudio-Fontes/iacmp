@@ -107,6 +107,16 @@ describe('doctor — checagens de ambiente', () => {
     expect(r.stdout).toContain('modelo whisper');
   });
 
+  test('lista checagens das CLIs nativas usadas por iacmp deploy/destroy (az, gcloud, terraform)', () => {
+    const dir = mk({ noConfig: true, noStacks: true });
+    const r = runCli(['doctor'], { cwd: dir });
+
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('Azure CLI');
+    expect(r.stdout).toContain('gcloud CLI');
+    expect(r.stdout).toContain('Terraform CLI');
+  });
+
   test('imprime veredicto final (OK ou itens precisam de atenção)', () => {
     const dir = mk({ noConfig: true, noStacks: true });
     const r = runCli(['doctor'], { cwd: dir });

@@ -30,7 +30,7 @@ function tryExec(cmd: string): string | null {
 }
 
 /** Existência de um binário no PATH, cross-platform (where no Windows, which no resto). */
-function commandExists(bin: string): string | null {
+export function commandExists(bin: string): string | null {
   const finder = process.platform === 'win32' ? 'where' : 'which';
   try {
     const out = execFileSync(finder, [bin], { stdio: 'pipe' }).toString().trim();
@@ -77,6 +77,96 @@ function checkAwsCli(): Check {
   return { label: 'AWS CLI', ok: true, required: false, value: version };
 }
 
+// --- iacmp deploy/destroy: CLIs nativas dos demais providers ---
+
+function fixViaPackageManager(opts: {
+  brew?: string;
+  brewCask?: string;
+  aptGet?: string;
+  winget?: string;
+  choco?: string;
+}): Fix | undefined {
+  if (process.platform === 'darwin' && commandExists('brew')) {
+    if (opts.brewCask) {
+      return {
+        description: `brew install --cask ${opts.brewCask}`,
+        run: async () => { execSync(`brew install --cask ${opts.brewCask}`, { stdio: 'inherit' }); },
+      };
+    }
+    if (opts.brew) {
+      return { description: `brew install ${opts.brew}`, run: async () => { execSync(`brew install ${opts.brew}`, { stdio: 'inherit' }); } };
+    }
+  }
+  if (process.platform === 'linux' && opts.aptGet && commandExists('apt-get')) {
+    return {
+      description: `sudo apt-get install -y ${opts.aptGet}`,
+      run: async () => { execSync(`sudo apt-get install -y ${opts.aptGet}`, { stdio: 'inherit' }); },
+    };
+  }
+  if (process.platform === 'win32') {
+    if (opts.winget && commandExists('winget')) {
+      return {
+        description: `winget install -e --id ${opts.winget}`,
+        run: async () => {
+          execSync(
+            `winget install -e --id ${opts.winget} --silent --accept-source-agreements --accept-package-agreements`,
+            { stdio: 'inherit' }
+          );
+        },
+      };
+    }
+    if (opts.choco && commandExists('choco')) {
+      return { description: `choco install ${opts.choco} -y`, run: async () => { execSync(`choco install ${opts.choco} -y`, { stdio: 'inherit' }); } };
+    }
+  }
+  return undefined;
+}
+
+function checkAzureCli(): Check {
+  const out = tryExec('az --version');
+  if (out) {
+    const version = out.split('\n')[0]?.split(/\s+/).pop() ?? out.split('\n')[0];
+    return { label: 'Azure CLI', ok: true, required: false, value: version };
+  }
+  return {
+    label: 'Azure CLI',
+    ok: false,
+    required: false,
+    hint: 'Necessário para iacmp deploy/destroy --provider azure — rode: iacmp doctor --fix',
+    fix: fixViaPackageManager({ brew: 'azure-cli', aptGet: 'azure-cli', winget: 'Microsoft.AzureCLI' }),
+  };
+}
+
+function checkGcloudCli(): Check {
+  const out = tryExec('gcloud --version');
+  if (out) {
+    const version = out.split('\n')[0]?.split(/\s+/).pop() ?? out.split('\n')[0];
+    return { label: 'gcloud CLI', ok: true, required: false, value: version };
+  }
+  return {
+    label: 'gcloud CLI',
+    ok: false,
+    required: false,
+    hint: 'Necessário para iacmp deploy/destroy --provider gcp — rode: iacmp doctor --fix (mac) ou instale manualmente em https://cloud.google.com/sdk/docs/install',
+    fix: fixViaPackageManager({ brewCask: 'google-cloud-sdk' }),
+  };
+}
+
+function checkTerraformCli(): Check {
+  const out = tryExec('terraform --version');
+  if (out) {
+    const version = out.split('\n')[0]?.split(/\s+/).pop() ?? out.split('\n')[0];
+    return { label: 'Terraform CLI', ok: true, required: false, value: version };
+  }
+  return {
+    label: 'Terraform CLI',
+    ok: false,
+    required: false,
+    hint: 'Necessário para iacmp deploy/destroy --provider terraform — rode: iacmp doctor --fix',
+    fix: fixViaPackageManager({ brew: 'terraform', aptGet: 'terraform', winget: 'Hashicorp.Terraform' }),
+  };
+}
+
 function checkAnthropicKey(): Check {
   const key = process.env.ANTHROPIC_API_KEY;
   return {
@@ -84,6 +174,28 @@ function checkAnthropicKey(): Check {
     ok: true,
     required: false,
     value: key ? 'configurado' : 'não configurado (necessário para iacmp ai)',
+  };
+}
+
+function checkAwsIamPermissions(): Check {
+  const label = 'AWS IAM permissions (lambda, apigateway)';
+  const identity = tryExec('aws sts get-caller-identity');
+  if (!identity) {
+    return { label, ok: false, required: false, hint: 'Credenciais AWS não encontradas. Configure com: aws configure' };
+  }
+  const lambdaOk = tryExec('aws lambda list-functions --max-items 1') !== null;
+  const apigwOk = tryExec('aws apigateway get-rest-apis --limit 1') !== null;
+  if (lambdaOk && apigwOk) {
+    return { label, ok: true, required: false, value: 'OK' };
+  }
+  const missing: string[] = [];
+  if (!lambdaOk) missing.push('lambda:*');
+  if (!apigwOk) missing.push('apigateway:*');
+  return {
+    label,
+    ok: false,
+    required: false,
+    hint: `Permissões faltando: ${missing.join(', ')}. Adicione à policy IAM do usuário — veja docs/iam-policy.json`,
   };
 }
 
@@ -256,11 +368,26 @@ export default class Doctor extends Command {
     const cwd = process.cwd();
     this.log('Verificando ambiente...\n');
 
+    const configPath = path.join(cwd, 'iacmp.json');
+    let projectProvider: string | undefined;
+    if (fs.existsSync(configPath)) {
+      try {
+        const cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as { provider?: string };
+        projectProvider = cfg.provider;
+      } catch {}
+    }
+
+    const isAws = !projectProvider || projectProvider === 'aws';
+
     const makeChecks = (): Check[] => [
       checkNode(),
       checkNpm(),
       checkIacmp(),
       checkAwsCli(),
+      ...(isAws ? [checkAwsIamPermissions()] : []),
+      checkAzureCli(),
+      checkGcloudCli(),
+      checkTerraformCli(),
       checkAnthropicKey(),
       checkSox(),
       checkWhisperBinary(),
@@ -320,7 +447,6 @@ export default class Doctor extends Command {
     }
 
     // Verifica plugins do projeto atual
-    const configPath = path.join(cwd, 'iacmp.json');
     if (fs.existsSync(configPath)) {
       let config: { plugins?: string[] } = {};
       try {

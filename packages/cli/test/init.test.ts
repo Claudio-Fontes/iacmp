@@ -113,9 +113,18 @@ describe('init — package.json e tsconfig gerados (regressões importantes)', (
         }
       }
     }
-    // rootDir/outDir relativos
-    expect(co.rootDir).toBe('.');
+    // rootDir/outDir relativos — template default tem handler de Lambda em
+    // src/, então só src/ compila pra dist/ (stacks/ e test/ ficam de fora)
+    expect(co.rootDir).toBe('src');
     expect(path.isAbsolute(co.outDir ?? 'dist')).toBe(false);
+  });
+
+  test('template default → handler da Lambda fica em src/, não na raiz nem em stacks/', () => {
+    cwd = makeEmptyDir();
+    runCli(['init', 'srctest'], { cwd });
+
+    expect(exists(cwd, 'srctest/src/index.ts')).toBe(true);
+    expect(exists(cwd, 'srctest/index.ts')).toBe(false);
   });
 });
 

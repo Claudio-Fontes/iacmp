@@ -35,7 +35,7 @@
     "/LICENSE"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && oclif manifest",
     "manifest": "oclif manifest",
     "prepack": "cp ../../LICENSE ./LICENSE && tsup && oclif manifest",
     "dev": "tsup --watch",
@@ -74,6 +74,7 @@
     "bin": "iacmp",
     "dirname": "iacmp",
     "commands": "./dist/commands",
+    "helpClass": "./dist/help.js",
     "plugins": []
   },
   "engines": {

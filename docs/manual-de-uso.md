@@ -48,6 +48,11 @@ iacmp doctor
 
 ## Comandos
 
+Rodar `iacmp` sozinho (ou `iacmp --help`) já lista todos os comandos com um
+exemplo de uso embaixo de cada um — não precisa entrar em `iacmp <comando>
+--help` só para descobrir a sintaxe básica. O `--help` por comando continua
+disponível para ver todas as flags e todos os exemplos.
+
 ### `iacmp init [nome]`
 
 Com nome: cria a pasta do projeto e inicializa dentro dela.  
@@ -97,26 +102,75 @@ os templates em `synth-out/<provider>/<stack>.<ext>`. Exemplos:
 
 ---
 
-### `iacmp deploy [--provider aws] [--stack nome]`
+### `iacmp deploy [--provider aws] [--stack nome] [--dry-run]`
 
-Faz deploy da infraestrutura.
+Faz deploy real da infraestrutura — chama a CLI nativa de cada nuvem por
+trás (`aws`, `az`, `gcloud` ou `terraform`, conforme o provider configurado).
+Você não precisa saber qual ferramenta é usada por baixo: o comando é sempre
+`iacmp deploy`.
 
 ```bash
-iacmp deploy
+iacmp deploy                              # usa o provider do iacmp.json
 iacmp deploy --provider aws
 iacmp deploy --stack minha-stack
+iacmp deploy --dry-run                    # mostra os comandos sem executar nada
 ```
+
+Pré-requisito: a stack precisa estar sintetizada (`iacmp synth --provider <provider>`
+antes) e a CLI nativa do provider escolhido precisa estar instalada e
+autenticada — rode `iacmp doctor` para checar (`--fix` instala o que faltar).
+
+O que cada provider faz de fato:
+
+| Provider | O que roda por trás | Particularidade |
+|---|---|---|
+| `aws` | `aws cloudformation package` + `aws cloudformation deploy` | O `package` zipa e sobe o código de Lambdas automaticamente. O iacmp cria (uma vez) e usa um bucket S3 próprio, `iacmp-deploy-artifacts-<conta>-<região>` — sem precisar configurar nada manualmente. |
+| `azure` | `az stack group create` (Deployment Stacks) | Exige `resourceGroup` no `iacmp.json`. Se o resource group não existir, o comando pergunta antes de criar. |
+| `gcp` | `gcloud deployment-manager deployments create` ou `update` | Decide automaticamente entre criar ou atualizar (Deployment Manager não atualiza por cima de um deployment existente). Usa `projectId` do `iacmp.json`, ou o projeto default do `gcloud` se omitido. |
+| `terraform` | `terraform init` + `terraform apply -auto-approve` | Opera no diretório `synth-out/terraform/` inteiro (todas as stacks compartilham um único state) — `--stack` não é aplicável aqui. O provider AWS é gerado automaticamente em `_provider.tf`. |
+
+Com `--dry-run`, nenhum comando é de fato executado — o iacmp ainda faz as
+verificações de leitura necessárias (ex: se o deployment já existe no GCP)
+para mostrar o plano real, mas nunca pede confirmação nem chama a nuvem.
+
+**Stacks em arquivos diferentes (AWS):** é comum (e é o padrão recomendado)
+ter o `Function.Lambda` em `stacks/compute/` e o `Function.ApiGateway` que
+referencia ela em `stacks/network/`, em arquivos/stacks separados. O `iacmp
+synth`/`deploy`/`destroy` resolvem isso automaticamente: a Lambda exporta seu
+ARN e o API Gateway importa via `Fn::ImportValue`, e o `deploy` sempre sobe a
+stack da Lambda antes da do API Gateway (o `destroy` derruba na ordem
+inversa). Você não precisa fazer nada manual pra isso funcionar.
+
+> **Limitação conhecida:** apenas o provider **AWS** tem o empacotamento de
+> código de função (`Function.Lambda`) corrigido nesta versão — o `package`
+> zipa e sobe o conteúdo de `code` automaticamente. Em **Azure** (Function
+> App) e **GCP** (Cloud Functions) o recurso de infraestrutura é criado, mas
+> sem código funcional anexado; no **Terraform**, o recurso espera um arquivo
+> `function.zip` que ainda não é gerado automaticamente. Os demais recursos
+> (VPC, S3, RDS, DynamoDB, IAM etc.) fazem deploy real e completo nos 4
+> providers. Corrigir esse gap para Azure/GCP/Terraform é a próxima etapa
+> planejada, a ser feita depois da validação manual desta entrega.
 
 ---
 
-### `iacmp destroy [--provider aws] [--stack nome]`
+### `iacmp destroy [--provider aws] [--stack nome] [--dry-run]`
 
-Destrói a infraestrutura provisionada. Pede confirmação antes de executar.
+Destrói a infraestrutura provisionada de verdade. Pede confirmação antes de
+executar (a menos que use `--force`) — a pergunta acontece antes de qualquer
+chamada à CLI nativa, então cancelar nunca depende de ter a ferramenta
+instalada.
 
 ```bash
 iacmp destroy
 iacmp destroy --stack minha-stack
+iacmp destroy --force                     # pula a confirmação
+iacmp destroy --dry-run                   # mostra os comandos sem executar nada
 ```
+
+Mesma lógica de comandos nativos do `iacmp deploy` (CloudFormation
+delete-stack, Azure Deployment Stacks delete, Deployment Manager delete,
+`terraform destroy`). Para terraform, `--stack` não é suportado pelo mesmo
+motivo do deploy (state compartilhado).
 
 ---
 
@@ -317,11 +371,11 @@ iacmp doctor
 Verifica:
 - Node.js 20+
 - iacmp instalado
-- AWS CLI (para provider AWS)
+- AWS CLI, Azure CLI, gcloud CLI e Terraform CLI (necessários para `iacmp deploy`/`destroy` real em cada provider)
 - ANTHROPIC_API_KEY (necessário para `iacmp ai`)
 - sox, whisper.cpp e modelo ggml (necessários para `/voz` no chat — veja "Entrada por voz")
 
-Use `--fix` para tentar corrigir automaticamente os itens de voz que estiverem faltando (pede confirmação antes de cada ação):
+Use `--fix` para tentar corrigir automaticamente os itens que estiverem faltando (pede confirmação antes de cada ação — inclui instalar as CLIs de nuvem via brew/apt/winget, conforme o sistema):
 
 ```bash
 iacmp doctor --fix
@@ -423,6 +477,8 @@ O `iacmp.json` na raiz do projeto controla o comportamento padrão:
 | `provider` | `aws`, `azure`, `gcp`, `terraform` | `aws` |
 | `region` | qualquer região válida do provider | `us-east-1` |
 | `language` | `typescript`, `python` | `typescript` |
+| `resourceGroup` | nome de um resource group Azure | — (obrigatório para `iacmp deploy`/`destroy --provider azure`) |
+| `projectId` | ID de um projeto GCP | — (opcional para `iacmp deploy`/`destroy --provider gcp`; usa o projeto default do `gcloud` se omitido) |
 
 ---
 
@@ -477,6 +533,9 @@ O `iacmp init` gera automaticamente:
 | Fase 4 | Plugin system, watch, dashboard, registry, CI/CD | Disponível |
 | Fase 5 | Testes de integração, documentação, exemplos, publicação npm | Disponível |
 | Fase 6 | Templates no `init`, auditorias, diagramas de arquitetura | Disponível |
+| Fase 7 | `iacmp deploy`/`destroy` real (AWS completo; Azure/GCP/Terraform sem código de função) | Disponível — aguardando validação manual |
+| Fase 8 | Empacotamento de código de função (`Function.Lambda`) em Azure, GCP e Terraform | Planejado — próxima etapa após a validação da Fase 7 |
+| Fase 9 | Estudo: suportar stacks escritas em outra linguagem além de TypeScript, sem alterar a API do `@iacmp/core` (exigiria um SDK paralelo emitindo um JSON equivalente, consumido pelo `synth.ts`) | A estudar — sem decisão de implementação ainda |
 
 ---
 

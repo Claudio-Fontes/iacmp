@@ -3,10 +3,18 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';
 import chalk from 'chalk';
-import { listTemplates, countResources } from '../synth-out';
+import { listTemplates, countResources, orderByDependency } from '../synth-out';
 import { readJsonFile, errMessage } from '../utils';
+import { commandExists } from './doctor';
+import { getExecutor, printPlan, runCommands, DestroyContext } from '../deploy';
 
-const MVP_BANNER = 'MVP: deploy/destroy real ainda não implementado nesta fase. Os arquivos foram impressos como dry-run.';
+interface IacmpConfig {
+  name?: string;
+  provider?: string;
+  region?: string;
+  resourceGroup?: string;
+  projectId?: string;
+}
 
 export default class Destroy extends Command {
   static description = 'Destroi a infraestrutura do provider configurado';
@@ -15,12 +23,14 @@ export default class Destroy extends Command {
     provider: Flags.string({ char: 'p', description: 'Provider alvo', default: 'aws' }),
     stack: Flags.string({ char: 's', description: 'Nome da stack específica' }),
     force: Flags.boolean({ char: 'f', description: 'Pula confirmação' }),
+    'dry-run': Flags.boolean({ description: 'Mostra os comandos que seriam executados, sem rodar nada', default: false }),
   };
 
   static examples = [
     '$ iacmp destroy',
     '$ iacmp destroy --stack minha-stack',
     '$ iacmp destroy --force',
+    '$ iacmp destroy --dry-run',
   ];
 
   private async confirm(message: string): Promise<boolean> {
@@ -37,26 +47,88 @@ export default class Destroy extends Command {
     const { flags } = await this.parse(Destroy);
     const cwd = process.cwd();
     const configPath = path.join(cwd, 'iacmp.json');
+    const dryRun = flags['dry-run'];
 
     if (!fs.existsSync(configPath)) {
       this.error('Projeto não inicializado. Rode: iacmp init');
     }
 
-    let config: { provider?: string };
+    let config: IacmpConfig;
     try {
-      config = readJsonFile<{ provider?: string }>(configPath);
+      config = readJsonFile<IacmpConfig>(configPath);
     } catch (err) {
       this.error(errMessage(err));
     }
     const provider = flags.provider ?? config.provider ?? 'aws';
+    const region = config.region ?? 'us-east-1';
 
-    this.log(chalk.yellow.bold(MVP_BANNER));
-    this.log('');
+    let executor;
+    try {
+      executor = getExecutor(provider);
+    } catch (err) {
+      this.error(errMessage(err));
+    }
 
-    const templates = listTemplates(cwd, provider, flags.stack);
+    if (provider === 'terraform' && flags.stack) {
+      this.error('--stack não é suportado para --provider terraform nesta fase — deploy/destroy operam no diretório terraform inteiro (todas as stacks compartilham um state).');
+    }
 
+    // Confere se há algo sintetizado antes de checar CLI/credenciais — "rode
+    // iacmp synth" é o fix mais provável e não deveria depender do ambiente.
+    // Ordem REVERSA da de deploy: quem IMPORTA (Fn::ImportValue) precisa ser
+    // destruído antes de quem EXPORTA — senão a stack exportadora não pode
+    // ser removida enquanto o Export ainda está em uso por outra stack.
+    const templates = orderByDependency(listTemplates(cwd, provider, flags.stack)).reverse();
     if (templates.length === 0) {
       this.error(`Nenhuma stack encontrada para destruir. Rode: iacmp synth --provider ${provider}`);
+    }
+
+    if (provider === 'azure' && !config.resourceGroup) {
+      this.error('Configure "resourceGroup" no iacmp.json para usar --provider azure.');
+    }
+
+    const baseCtx: Omit<DestroyContext, 'stackName'> = {
+      cwd,
+      region,
+      resourceGroup: config.resourceGroup,
+      projectId: config.projectId,
+    };
+
+    if (provider === 'terraform') {
+      for (const t of templates) {
+        this.log(`Stack: ${t.stackName} — ${countResources(t.filePath, provider)} recurso(s)`);
+      }
+      this.log('');
+      // Confirma ANTES de checar a CLI nativa — "tem certeza?" não deveria
+      // depender de ambiente, e cancelar aqui evita checagens desnecessárias.
+      if (!flags.force && !dryRun) {
+        const confirmed = await this.confirm('Tem certeza que deseja destruir todos os recursos do Terraform?');
+        if (!confirmed) {
+          this.log('Operação cancelada.');
+          return;
+        }
+      }
+      if (!dryRun && !commandExists(executor.requiredBinary)) {
+        this.error(`${executor.requiredBinary} não encontrado no PATH. Rode: iacmp doctor --fix (ou instale manualmente) e tente novamente.`);
+      }
+      const ctx: DestroyContext = { ...baseCtx, stackName: config.name ?? 'iacmp' };
+      let commands;
+      try {
+        commands = await executor.planDestroy(ctx);
+      } catch (err) {
+        this.error(errMessage(err));
+      }
+      if (dryRun) {
+        printPlan(commands);
+      } else {
+        try {
+          runCommands(commands);
+        } catch (err) {
+          this.error(errMessage(err));
+        }
+      }
+      this.log(chalk.green('\nDestroy concluído.'));
+      return;
     }
 
     let totalResources = 0;
@@ -70,7 +142,7 @@ export default class Destroy extends Command {
     this.log(`Total de recursos: ${totalResources} em ${provider.toUpperCase()}`);
     this.log('');
 
-    if (!flags.force) {
+    if (!flags.force && !dryRun) {
       const confirmed = await this.confirm('Tem certeza que deseja destruir esses recursos?');
       if (!confirmed) {
         this.log('Operação cancelada.');
@@ -78,8 +150,33 @@ export default class Destroy extends Command {
       }
     }
 
-    this.log(`Would destroy ${totalResources} resource(s) from ${provider.toUpperCase()}`);
-    this.log('');
-    this.log('(MVP: destroy real não implementado nesta fase)');
+    if (!dryRun && !commandExists(executor.requiredBinary)) {
+      this.error(`${executor.requiredBinary} não encontrado no PATH. Rode: iacmp doctor --fix (ou instale manualmente) e tente novamente.`);
+    }
+
+    for (const t of templates) {
+      this.log(`Stack: ${t.stackName}`);
+      const ctx: DestroyContext = { ...baseCtx, stackName: t.stackName };
+
+      let commands;
+      try {
+        commands = await executor.planDestroy(ctx);
+      } catch (err) {
+        this.error(errMessage(err));
+      }
+
+      if (dryRun) {
+        printPlan(commands);
+      } else {
+        try {
+          runCommands(commands);
+        } catch (err) {
+          this.error(errMessage(err));
+        }
+      }
+      this.log('');
+    }
+
+    this.log(chalk.green('Destroy concluído.'));
   }
 }

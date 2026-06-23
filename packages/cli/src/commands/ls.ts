@@ -1,13 +1,30 @@
-import { Command } from '@oclif/core';
+import { Command, Flags } from '@oclif/core';
 import * as fs from 'fs';
 import * as path from 'path';
+import chalk from 'chalk';
+import { readJsonFile, errMessage } from '../utils';
+import { commandExists } from './doctor';
+import { getExecutor } from '../deploy';
+
+interface IacmpConfig {
+  name?: string;
+  provider?: string;
+  region?: string;
+  resourceGroup?: string;
+  projectId?: string;
+}
 
 export default class Ls extends Command {
   static description = 'Lista as stacks disponíveis no projeto';
 
-  static examples = ['$ iacmp ls'];
+  static flags = {
+    status: Flags.boolean({ description: 'Consulta o provider configurado e mostra quais stacks já estão deployadas de verdade (exige credenciais/CLI nativa configuradas)', default: false }),
+  };
+
+  static examples = ['$ iacmp ls', '$ iacmp ls --status'];
 
   async run(): Promise<void> {
+    const { flags } = await this.parse(Ls);
     const cwd = process.cwd();
     const stacksDir = path.join(cwd, 'stacks');
 
@@ -39,6 +56,36 @@ export default class Ls extends Command {
       return;
     }
 
+    // --status consulta o provider de verdade — monta o necessário uma vez
+    // antes do loop (config, executor, binário disponível) em vez de repetir
+    // por stack, e degrada com um aviso único quando algo falta, sem
+    // interromper a listagem local.
+    let statusCtx: { region: string; resourceGroup?: string; projectId?: string } | undefined;
+    let executor: ReturnType<typeof getExecutor> | undefined;
+    if (flags.status) {
+      const configPath = path.join(cwd, 'iacmp.json');
+      if (!fs.existsSync(configPath)) {
+        this.log(chalk.yellow('--status exige um projeto inicializado (iacmp.json não encontrado) — mostrando só as stacks locais.\n'));
+      } else {
+        try {
+          const config = readJsonFile<IacmpConfig>(configPath);
+          const provider = config.provider ?? 'aws';
+          executor = getExecutor(provider);
+          if (!executor.describeStatus) {
+            this.log(chalk.yellow(`--status ainda não é suportado para o provider "${provider}" — mostrando só as stacks locais.\n`));
+            executor = undefined;
+          } else if (!commandExists(executor.requiredBinary)) {
+            this.log(chalk.yellow(`--status exige "${executor.requiredBinary}" no PATH — mostrando só as stacks locais.\n`));
+            executor = undefined;
+          } else {
+            statusCtx = { region: config.region ?? 'us-east-1', resourceGroup: config.resourceGroup, projectId: config.projectId };
+          }
+        } catch (err) {
+          this.log(chalk.yellow(`${errMessage(err)} — mostrando só as stacks locais.\n`));
+        }
+      }
+    }
+
     this.log('Stacks disponíveis:\n');
     for (const filePath of files) {
       const stat = fs.statSync(filePath);
@@ -46,7 +93,19 @@ export default class Ls extends Command {
       // nome relativo a stacks/ sem extensão (ex.: network/vpc), evitando
       // ambiguidade entre stacks de mesmo basename em subpastas distintas.
       const name = path.relative(stacksDir, filePath).replace(/\.(ts|js)$/, '');
-      this.log(`  ${name.padEnd(30)} modificado: ${modified}`);
+      let line = `  ${name.padEnd(30)} modificado: ${modified}`;
+
+      if (executor?.describeStatus && statusCtx) {
+        // O nome usado na nuvem é o basename do arquivo (ver src/commands/synth.ts),
+        // não o caminho relativo a stacks/ usado só para exibição aqui.
+        const stackName = path.basename(filePath).replace(/\.(ts|js)$/, '');
+        const result = executor.describeStatus(stackName, statusCtx);
+        line += result.deployed
+          ? chalk.green(`  [deployado: ${result.status ?? 'OK'}]`)
+          : chalk.dim('  [não deployado]');
+      }
+
+      this.log(line);
     }
   }
 }

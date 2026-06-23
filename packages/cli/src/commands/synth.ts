@@ -9,6 +9,11 @@ import { Stack } from '@iacmp/core';
 import { loadPlugins } from '@iacmp/plugin-sdk';
 import { synthRoot, providerOutDir } from '../synth-out';
 
+interface LoadedStack {
+  stackName: string;
+  stack: Stack;
+}
+
 export default class Synth extends Command {
   static description = 'Sintetiza as stacks para o formato nativo do provider';
 
@@ -57,18 +62,6 @@ export default class Synth extends Command {
       return files;
     };
 
-    const stackFiles = findStackFiles(stacksDir)
-      .filter(f => !flags.stack || path.basename(f).replace(/\.(ts|js)$/, '') === flags.stack);
-
-    if (stackFiles.length === 0) {
-      this.error('Nenhuma stack encontrada em stacks/');
-    }
-
-    const outDir = synthRoot(cwd);
-    if (!fs.existsSync(outDir)) {
-      fs.mkdirSync(outDir, { recursive: true });
-    }
-
     const nativeProviders = ['aws', 'azure', 'gcp', 'terraform'];
     const pluginProviders = loadPlugins(cwd);
     const pluginProvider = pluginProviders.find(p => p.name === provider);
@@ -77,7 +70,14 @@ export default class Synth extends Command {
       this.error(`Provider '${provider}' não encontrado. Providers disponíveis: ${nativeProviders.join(', ')}`);
     }
 
-    for (const stackPath of stackFiles) {
+    // ── Passada 1: carrega TODAS as stacks de stacks/ (ignora --stack) ──────
+    // A resolução de referências entre stacks (ex: Function.ApiGateway numa
+    // stack referenciando Function.Lambda de outra) precisa de visão do
+    // projeto inteiro, mesmo quando o usuário só quer sintetizar uma stack.
+    const allStackFiles = findStackFiles(stacksDir);
+    const loadedStacks: LoadedStack[] = [];
+
+    for (const stackPath of allStackFiles) {
       const file = path.basename(stackPath);
       const stackName = file.replace(/\.(ts|js)$/, '');
 
@@ -116,60 +116,83 @@ export default class Synth extends Command {
         continue;
       }
 
-      const typedStack = stack as Stack;
+      loadedStacks.push({ stackName, stack: stack as Stack });
+    }
 
+    if (loadedStacks.length === 0) {
+      this.error('Nenhuma stack encontrada em stacks/');
+    }
+
+    // ── Passada 2: sintetiza e grava só as stacks que o --stack pediu ───────
+    const targetStacks = loadedStacks.filter(s => !flags.stack || s.stackName === flags.stack);
+    if (targetStacks.length === 0) {
+      this.error('Nenhuma stack encontrada em stacks/');
+    }
+
+    const outDir = synthRoot(cwd);
+    if (!fs.existsSync(outDir)) {
+      fs.mkdirSync(outDir, { recursive: true });
+    }
+
+    const allStacks = loadedStacks.map(s => s.stack);
+
+    for (const { stackName, stack: typedStack } of targetStacks) {
       // Subdiretório por provider (synth-out/<provider>/) para evitar sobrescrita
       // entre providers. Os comandos consumidores resolvem este mesmo caminho via
       // o módulo synth-out.
       const provOutDir = providerOutDir(cwd, provider);
       fs.mkdirSync(provOutDir, { recursive: true });
 
-      switch (provider) {
-        case 'aws': {
-          const p = new AWSProvider();
-          const template = p.synthesize(typedStack);
-          const outPath = path.join(provOutDir, `${stackName}.json`);
-          fs.writeFileSync(outPath, JSON.stringify(template, null, 2) + '\n');
-          this.log(`Sintetizado: ${outPath}`);
-          break;
-        }
-
-        case 'azure': {
-          const p = new AzureProvider();
-          const template = p.synthesize(typedStack);
-          const outPath = path.join(provOutDir, `${stackName}.json`);
-          fs.writeFileSync(outPath, JSON.stringify(template, null, 2) + '\n');
-          this.log(`Sintetizado: ${outPath}`);
-          break;
-        }
-
-        case 'gcp': {
-          const p = new GCPProvider();
-          const deployment = p.synthesize(typedStack);
-          const outPath = path.join(provOutDir, `${stackName}.json`);
-          fs.writeFileSync(outPath, JSON.stringify(deployment, null, 2) + '\n');
-          this.log(`Sintetizado: ${outPath}`);
-          break;
-        }
-
-        case 'terraform': {
-          const p = new TerraformProvider();
-          const hcl = p.synthesize(typedStack);
-          const outPath = path.join(provOutDir, `${stackName}.tf`);
-          fs.writeFileSync(outPath, hcl);
-          this.log(`Sintetizado: ${outPath}`);
-          break;
-        }
-
-        default: {
-          if (pluginProvider) {
-            const output = pluginProvider.synthesize(typedStack);
+      try {
+        switch (provider) {
+          case 'aws': {
+            const p = new AWSProvider();
+            const template = p.synthesize(typedStack, allStacks);
             const outPath = path.join(provOutDir, `${stackName}.json`);
-            fs.writeFileSync(outPath, JSON.stringify(output, null, 2) + '\n');
-            this.log(`Sintetizado via plugin '${provider}': ${outPath}`);
+            fs.writeFileSync(outPath, JSON.stringify(template, null, 2) + '\n');
+            this.log(`Sintetizado: ${outPath}`);
+            break;
           }
-          break;
+
+          case 'azure': {
+            const p = new AzureProvider();
+            const template = p.synthesize(typedStack, allStacks);
+            const outPath = path.join(provOutDir, `${stackName}.json`);
+            fs.writeFileSync(outPath, JSON.stringify(template, null, 2) + '\n');
+            this.log(`Sintetizado: ${outPath}`);
+            break;
+          }
+
+          case 'gcp': {
+            const p = new GCPProvider();
+            const deployment = p.synthesize(typedStack, allStacks);
+            const outPath = path.join(provOutDir, `${stackName}.json`);
+            fs.writeFileSync(outPath, JSON.stringify(deployment, null, 2) + '\n');
+            this.log(`Sintetizado: ${outPath}`);
+            break;
+          }
+
+          case 'terraform': {
+            const p = new TerraformProvider();
+            const hcl = p.synthesize(typedStack, allStacks);
+            const outPath = path.join(provOutDir, `${stackName}.tf`);
+            fs.writeFileSync(outPath, hcl);
+            this.log(`Sintetizado: ${outPath}`);
+            break;
+          }
+
+          default: {
+            if (pluginProvider) {
+              const output = pluginProvider.synthesize(typedStack);
+              const outPath = path.join(provOutDir, `${stackName}.json`);
+              fs.writeFileSync(outPath, JSON.stringify(output, null, 2) + '\n');
+              this.log(`Sintetizado via plugin '${provider}': ${outPath}`);
+            }
+            break;
+          }
         }
+      } catch (err) {
+        this.error(`Falha ao sintetizar '${stackName}': ${(err as Error).message}`);
       }
     }
   }

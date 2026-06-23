@@ -14,6 +14,16 @@ describe('CLI básico', () => {
     expect(r.stdout).toContain('diagram');
   });
 
+  test('--help (listagem raiz) já mostra um exemplo de uso por comando, sem precisar de --help por comando', () => {
+    const r = runCli(['--help'], { cwd: process.cwd() });
+    expect(r.status).toBe(0);
+    // Cada comando ganha o primeiro `static examples` na própria listagem
+    // (IacmpHelp em src/help.ts), não só ao rodar `iacmp <comando> --help`.
+    expect(r.stdout).toContain('$ iacmp deploy');
+    expect(r.stdout).toContain('$ iacmp synth');
+    expect(r.stdout).toContain('$ iacmp doctor');
+  });
+
   test('--version', () => {
     const r = runCli(['--version'], { cwd: process.cwd() });
     expect(r.status).toBe(0);
@@ -42,10 +52,10 @@ describe('synth → deploy → diff (pipeline E2E)', () => {
     // não deve gravar no synth-out/ plano (regressão CLI-01)
     expect(exists(dir, 'synth-out/main-stack.json')).toBe(false);
 
-    const deploy = runCli(['deploy', '--provider', 'aws'], { cwd: dir });
+    const deploy = runCli(['deploy', '--provider', 'aws', '--dry-run'], { cwd: dir });
     expect(deploy.status).toBe(0);
     expect(deploy.stdout).toContain('main-stack');
-    expect(deploy.stdout).toMatch(/Would deploy \d+ resource/);
+    expect(deploy.stdout).toContain('aws cloudformation deploy');
   });
 
   test('diff não acusa mudança logo após synth (sem diff fantasma)', () => {

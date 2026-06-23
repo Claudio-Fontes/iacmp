@@ -200,6 +200,92 @@ describe('synth — comando (black-box)', () => {
     });
   });
 
+  describe('aws — referência entre stacks (Function.ApiGateway → Function.Lambda em outra stack)', () => {
+    test('sintetiza as 2 stacks juntas: ImportValue na stack do gateway, Outputs/Export na stack da lambda', () => {
+      dir = makeProject({
+        provider: 'aws',
+        stacks: {
+          'compute.js': `const { Stack, Fn } = require('@iacmp/core');
+const stack = new Stack('proj-lambda');
+new Fn.Lambda(stack, 'HelloFn', { runtime: 'nodejs20', handler: 'index.handler', code: 'dist/' });
+module.exports = stack;
+`,
+          'network.js': `const { Stack, Fn } = require('@iacmp/core');
+const stack = new Stack('proj-api');
+new Fn.ApiGateway(stack, 'Api', {
+  name: 'proj-api',
+  type: 'REST',
+  routes: [{ method: 'GET', path: '/hello', lambdaId: 'HelloFn' }],
+});
+module.exports = stack;
+`,
+        },
+      });
+
+      // Sem --stack: sintetiza as duas juntas — exatamente o caso real do
+      // usuário (Lambda em stacks/compute/, ApiGateway em stacks/network/).
+      const r = runCli(['synth', '--provider', 'aws'], { cwd: dir });
+      expect(r.status).toBe(0);
+
+      const networkRaw = read(dir, 'synth-out/aws/network.json');
+      expect(networkRaw).toContain('Fn::ImportValue');
+      expect(networkRaw).toContain('proj-lambda-HelloFn-Arn');
+
+      const computeTpl = JSON.parse(read(dir, 'synth-out/aws/compute.json'));
+      expect(computeTpl.Outputs.HelloFnArn.Export.Name).toBe('proj-lambda-HelloFn-Arn');
+    });
+
+    test('--stack filtrando só a stack do gateway AINDA resolve a referência (passada 1 carrega tudo)', () => {
+      dir = makeProject({
+        provider: 'aws',
+        stacks: {
+          'compute.js': `const { Stack, Fn } = require('@iacmp/core');
+const stack = new Stack('proj-lambda');
+new Fn.Lambda(stack, 'HelloFn', { runtime: 'nodejs20', handler: 'index.handler', code: 'dist/' });
+module.exports = stack;
+`,
+          'network.js': `const { Stack, Fn } = require('@iacmp/core');
+const stack = new Stack('proj-api');
+new Fn.ApiGateway(stack, 'Api', {
+  name: 'proj-api',
+  routes: [{ method: 'GET', path: '/hello', lambdaId: 'HelloFn' }],
+});
+module.exports = stack;
+`,
+        },
+      });
+
+      const r = runCli(['synth', '--provider', 'aws', '--stack', 'network'], { cwd: dir });
+      expect(r.status).toBe(0);
+      // só a stack pedida foi gravada...
+      expect(exists(dir, 'synth-out/aws/compute.json')).toBe(false);
+      // ...mas a referência cross-stack já resolveu certo, porque a passada 1
+      // carregou compute.js só pra montar o registry (sem gravar saída pra ela).
+      const networkTpl = JSON.parse(read(dir, 'synth-out/aws/network.json'));
+      expect(JSON.stringify(networkTpl.Resources)).toContain('proj-lambda-HelloFn-Arn');
+    });
+
+    test('lambdaId inexistente em nenhuma stack → erro claro de synth (não silencioso)', () => {
+      dir = makeProject({
+        provider: 'aws',
+        stacks: {
+          'network.js': `const { Stack, Fn } = require('@iacmp/core');
+const stack = new Stack('proj-api');
+new Fn.ApiGateway(stack, 'Api', {
+  name: 'proj-api',
+  routes: [{ method: 'GET', path: '/hello', lambdaId: 'NaoExiste' }],
+});
+module.exports = stack;
+`,
+        },
+      });
+
+      const r = runCli(['synth', '--provider', 'aws'], { cwd: dir });
+      expect(r.status).not.toBe(0);
+      expect(r.all).toContain('NaoExiste');
+    });
+  });
+
   describe('idempotência / re-synth', () => {
     test('rodar synth duas vezes regrava o mesmo arquivo sem erro', () => {
       dir = makeProject({ provider: 'aws' });

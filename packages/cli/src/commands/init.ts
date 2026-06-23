@@ -64,6 +64,10 @@ new Fn.ApiGateway(stack, 'HelloWorldApi', {
 export default stack;
 `,
       },
+      {
+        path: 'src/index.ts',
+        content: () => helloHandlerContent(),
+      },
     ],
   },
 
@@ -195,6 +199,10 @@ new Fn.ApiGateway(stack, 'Api', {
 export default stack;
 `,
       },
+      {
+        path: 'src/index.ts',
+        content: () => helloHandlerContent(),
+      },
     ],
   },
 
@@ -235,9 +243,19 @@ export default stack;
 // Helpers de arquivo
 // ---------------------------------------------------------------------------
 
-function testContent(projectName: string, stackFile: string): string {
+function helloHandlerContent(): string {
+  return `export async function handler(): Promise<{ statusCode: number; body: string }> {
+  return {
+    statusCode: 200,
+    body: JSON.stringify({ message: 'Hello, World!' }),
+  };
+}
+`;
+}
+
+function testContent(projectName: string, stackImportPath: string): string {
   return `import { Stack } from '@iacmp/core';
-import stack from '../stacks/${stackFile}';
+import stack from '${stackImportPath}';
 
 test('${projectName} stack tem pelo menos um construct', () => {
   expect(stack).toBeInstanceOf(Stack);
@@ -276,14 +294,13 @@ function packageJson(projectName: string, coreVersion: string): string {
   }, null, 2) + '\n';
 }
 
-function tsConfig(): string {
+function tsConfig(hasAppCode: boolean): string {
   return JSON.stringify({
     compilerOptions: {
       target: 'ES2022',
       module: 'CommonJS',
       moduleResolution: 'node',
       lib: ['es2022'],
-      declaration: true,
       strict: true,
       noImplicitAny: true,
       strictNullChecks: true,
@@ -292,15 +309,21 @@ function tsConfig(): string {
       strictPropertyInitialization: false,
       skipLibCheck: true,
       outDir: 'dist',
-      rootDir: '.',
+      // src/ é o código de aplicação (handlers de Fn.Lambda) — é o único
+      // que precisa de JS compilado de verdade (vai pro zip da Lambda).
+      // stacks/ e test/ não entram aqui: stacks/ é carregada via ts-node
+      // por `iacmp synth`/`deploy`, e test/ via ts-jest — nenhum dos dois
+      // passa por `tsc`, então não tem por que poluir dist/ com eles.
+      rootDir: hasAppCode ? 'src' : '.',
       // @iacmp/core é resolvido via node_modules após `npm install`
     },
+    ...(hasAppCode ? { include: ['src/**/*'] } : {}),
     exclude: ['node_modules', 'dist'],
   }, null, 2) + '\n';
 }
 
 function gitignore(): string {
-  return ['node_modules/', 'dist/', 'synth-out/', 'audit/', '*.js.map', '*.d.ts', '.DS_Store', '.env', '.iacmp/'].join('\n') + '\n';
+  return ['node_modules/', 'dist/', 'synth-out/', 'audit/', '*.js.map', '*.d.ts', '.DS_Store', '.env', '.iacmp/', '.iacmp-validate-*/'].join('\n') + '\n';
 }
 
 function dotenv(): string {
@@ -474,7 +497,8 @@ export default class Init extends Command {
       fs.writeFileSync(path.join(projectDir, 'package.json'), packageJson(projectName, coreVersion));
 
       // tsconfig.json
-      fs.writeFileSync(path.join(projectDir, 'tsconfig.json'), tsConfig());
+      const hasAppCode = !!template.extraFiles?.some(f => f.path.startsWith('src/'));
+      fs.writeFileSync(path.join(projectDir, 'tsconfig.json'), tsConfig(hasAppCode));
 
       // stack (usa o template escolhido) — subpasta por tipo de recurso
       const stackSubDir = template.stackSubDir
@@ -495,9 +519,12 @@ export default class Init extends Command {
       // test/
       const testDir = path.join(projectDir, 'test');
       fs.mkdirSync(testDir, { recursive: true });
+      const stackImportPath = template.stackSubDir
+        ? `../${template.stackSubDir}/${projectName}-stack`
+        : `../stacks/${projectName}-stack`;
       fs.writeFileSync(
         path.join(testDir, `${projectName}.test.ts`),
-        testContent(projectName, `${projectName}-stack`),
+        testContent(projectName, stackImportPath),
       );
 
       // CI/CD

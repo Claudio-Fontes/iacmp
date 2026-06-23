@@ -1,0 +1,88 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowIacmpDeploy",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:*",
+        "eks:*",
+        "ecs:*",
+        "rds:*",
+        "docdb:*",
+        "dynamodb:*",
+        "elasticache:*",
+        "s3:*",
+        "elasticfilesystem:*",
+        "elasticloadbalancing:*",
+        "cloudfront:*",
+        "route53:*",
+        "wafv2:*",
+        "secretsmanager:*",
+        "acm:*",
+        "cloudwatch:*",
+        "logs:*",
+        "sqs:*",
+        "sns:*",
+        "events:*",
+        "states:*",
+        "cloudformation:*",
+        "autoscaling:*",
+        "application-autoscaling:*",
+        "lambda:*",
+        "apigateway:*",
+        "ssm:*",
+        "kms:CreateGrant",
+        "kms:DescribeKey",
+        "tag:*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "AllowIamForServiceRoles",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateRole",
+        "iam:DeleteRole",
+        "iam:AttachRolePolicy",
+        "iam:DetachRolePolicy",
+        "iam:PutRolePolicy",
+        "iam:DeleteRolePolicy",
+        "iam:GetRole",
+        "iam:GetRolePolicy",
+        "iam:ListRolePolicies",
+        "iam:ListAttachedRolePolicies",
+        "iam:PassRole",
+        "iam:TagRole",
+        "iam:UntagRole",
+        "iam:UpdateAssumeRolePolicy"
+      ],
+      "Resource": "arn:aws:iam::*:role/iacmp-*"
+    },
+    {
+      "Sid": "ExplicitDenyDangerous",
+      "Effect": "Deny",
+      "Action": [
+        "iam:CreateUser",
+        "iam:DeleteUser",
+        "iam:CreateAccessKey",
+        "iam:DeleteAccessKey",
+        "iam:AttachUserPolicy",
+        "iam:DetachUserPolicy",
+        "iam:PutUserPolicy",
+        "iam:DeleteUserPolicy",
+        "iam:CreateGroup",
+        "iam:DeleteGroup",
+        "iam:AddUserToGroup",
+        "iam:RemoveUserFromGroup",
+        "organizations:*",
+        "account:*",
+        "billing:*",
+        "budgets:*",
+        "cur:*",
+        "ce:*"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

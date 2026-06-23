@@ -48,6 +48,7 @@ export interface NetworkWAFProps {
 export interface NetworkLoadBalancerProps {
   type?: 'application' | 'network';
   scheme?: 'internet-facing' | 'internal';
+  vpcId: string;
   subnetIds?: string[];
   securityGroupIds?: string[];
   deletionProtection?: boolean;
@@ -141,6 +142,7 @@ export namespace Network {
     readonly type = 'Network.LoadBalancer';
     readonly props: Record<string, unknown>;
     constructor(stack: Stack, readonly id: string, props: NetworkLoadBalancerProps) {
+      if (!props.vpcId) throw new Error(`Network.LoadBalancer "${id}": vpcId é obrigatório`);
       this.props = props as unknown as Record<string, unknown>;
       stack.addConstruct(this);
     }

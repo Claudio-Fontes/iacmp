@@ -40,6 +40,21 @@ describe('TerraformProvider', () => {
     expect(hcl).toContain('sqlserver');
   });
 
+  test('Database.DynamoDB sem partitionKeyType → attribute type "S" (compat)', () => {
+    const stack = new Stack('test');
+    new Database.DynamoDB(stack, 'Tab', { partitionKey: 'id' });
+    const hcl = new TerraformProvider().synthesize(stack);
+    expect(hcl).toContain('resource "aws_dynamodb_table" "Tab"');
+    expect(hcl).toMatch(/attribute\s*{\s*name\s*=\s*"id"\s*type\s*=\s*"S"/);
+  });
+
+  test('Database.DynamoDB com partitionKeyType: \'N\' → attribute type "N" (regressao: tipo sempre era hardcoded como String)', () => {
+    const stack = new Stack('test');
+    new Database.DynamoDB(stack, 'Tab', { partitionKey: 'id', partitionKeyType: 'N' });
+    const hcl = new TerraformProvider().synthesize(stack);
+    expect(hcl).toMatch(/attribute\s*{\s*name\s*=\s*"id"\s*type\s*=\s*"N"/);
+  });
+
   test('Compute.Instance windows-2022 → HCL contém windows_2022', () => {
     const stack = new Stack('test');
     new Compute.Instance(stack, 'Win', { instanceType: 'small', image: 'windows-2022' });

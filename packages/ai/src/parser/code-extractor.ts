@@ -24,10 +24,14 @@ export function extractResponse(raw: string): AIGeneratedResponse {
   const direct = tryParse(trimmed);
   if (direct) return validate(direct);
 
-  // Tenta extrair de bloco de código markdown
-  const codeBlock = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (codeBlock) {
-    const parsed = tryParse(codeBlock[1].trim());
+  // Tenta extrair de bloco(s) de código markdown. Se o modelo "pensar alto"
+  // no meio da resposta (ex: "Errei, deixa eu reescrever") e devolver mais de
+  // um bloco — viola a regra de "só JSON", mas acontece na prática — usa o
+  // ÚLTIMO bloco que faz parse válido: é sempre a versão final/corrigida,
+  // nunca o rascunho descartado pelo próprio modelo.
+  const codeBlocks = [...trimmed.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
+  for (let i = codeBlocks.length - 1; i >= 0; i--) {
+    const parsed = tryParse(codeBlocks[i][1].trim());
     if (parsed) return validate(parsed);
   }
 

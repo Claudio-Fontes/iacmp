@@ -1,6 +1,5 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
 import { execSync } from 'child_process';
 import { GeneratedFile } from './code-extractor';
 
@@ -10,7 +9,14 @@ export interface ValidationResult {
 }
 
 export function validateTypeScript(files: GeneratedFile[], projectDir: string): ValidationResult {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'iacmp-validate-'));
+  // O diretório temporário fica DENTRO do projeto (não em os.tmpdir()) — a
+  // resolução de módulos do TypeScript/Node sobe a árvore de diretórios
+  // procurando node_modules, então um tmpDir fora do projeto nunca vê as
+  // dependências reais já instaladas (ex: @aws-sdk/*), e qualquer import de
+  // pacote de terceiros é reportado como "faltando" mesmo quando já está
+  // instalado — falso positivo que confundia a IA a pedir reinstalação de
+  // dependências que já existiam.
+  const tmpDir = fs.mkdtempSync(path.join(projectDir, '.iacmp-validate-'));
 
   try {
     // Escreve os arquivos gerados no diretório temporário

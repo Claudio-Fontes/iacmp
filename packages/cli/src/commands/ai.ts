@@ -50,16 +50,22 @@ function resolveIaCProvider(flags: { provider?: string }, cwd: string): string {
   return 'aws';
 }
 
-// Ask simples via readline — apenas para modo direto (sem --chat)
-function createDirectAsk(): AskFn {
+// Ask simples via readline — apenas para modo direto (sem --chat). Uma única
+// interface reaproveitada pra TODAS as perguntas da execução (ex: confirmar
+// escrita dos arquivos E DEPOIS perguntar se quer rodar `iacmp synth`) — fechar
+// a cada pergunta (regressão anterior) deixava a segunda chamada quebrar com
+// "Error: readline was closed" assim que houvesse mais de uma pergunta na
+// mesma execução. Quem chama `createDirectAsk` é responsável por fechar com
+// `close()` ao final.
+function createDirectAsk(): { ask: AskFn; close: () => void } {
   const readline = require('readline');
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  return (question: string) => new Promise(resolve => {
-    rl.question(question, (answer: string) => {
-      rl.close();
-      resolve(answer.trim());
-    });
-  });
+  return {
+    ask: (question: string) => new Promise(resolve => {
+      rl.question(question, (answer: string) => resolve(answer.trim()));
+    }),
+    close: () => rl.close(),
+  };
 }
 
 function createContextualProvider(base: AIProvider, projectContext: string): AIProvider {
@@ -103,7 +109,13 @@ async function runGeneration(
   }
 
   if (!raw) {
-    const spinner = ora({ text: 'Gerando...', spinner: 'dots' }).start();
+    // discardStdin: false — por padrão a ora cria sua PRÓPRIA readline.Interface
+    // em process.stdin pra capturar Ctrl+C enquanto o spinner gira, e o close()
+    // dela ao terminar quebra a nossa própria interface (criada em
+    // createDirectAsk) pra qualquer pergunta feita DEPOIS do spinner — a leitura
+    // simplesmente trava sem nunca receber a resposta. Só acontece com stdin
+    // TTY (terminal real), por isso não aparecia em testes automatizados.
+    const spinner = ora({ text: 'Gerando...', spinner: 'dots', discardStdin: false }).start();
     const chunks: string[] = [];
     try {
       await provider.stream(session.getMessages(), chunk => chunks.push(chunk));
@@ -134,15 +146,28 @@ async function runGeneration(
   if (tsFiles.length > 0) {
     const result = validateTypeScript(tsFiles, cwd);
     if (!result.valid) {
-      const spinner = ora({ text: 'Validação TypeScript falhou — corrigindo...', spinner: 'dots' }).start();
-      session.addUserMessage(`Erros TypeScript:\n${result.errors.join('\n')}\n\nCorrija e retorne o JSON completo.`);
+      const spinner = ora({ text: 'Validação TypeScript falhou — corrigindo...', spinner: 'dots', discardStdin: false }).start();
+      const originalFileCount = parsed.files.length;
+      session.addUserMessage(
+        `Erros TypeScript:\n${result.errors.join('\n')}\n\n` +
+        `Corrija e retorne o JSON completo de novo, com TODOS os ${originalFileCount} arquivo(s) da resposta anterior ` +
+        `(não só o(s) que tinha(m) erro) — os arquivos que já estavam corretos devem vir de volta sem alteração.`
+      );
       const retryChunks: string[] = [];
       try {
         await provider.stream(session.getMessages(), chunk => retryChunks.push(chunk));
         spinner.succeed('Código corrigido');
         const retryRaw = retryChunks.join('');
         session.addAssistantMessage(retryRaw);
-        try { parsed = extractResponse(retryRaw); } catch { /* usa original */ }
+        try {
+          const retryParsed = extractResponse(retryRaw);
+          if (retryParsed.files.length < originalFileCount) {
+            console.log(chalk.yellow(
+              `  ⚠ a correção devolveu menos arquivos que a resposta original (${retryParsed.files.length} vs ${originalFileCount}) — confira se nada foi perdido.`
+            ));
+          }
+          parsed = retryParsed;
+        } catch { /* usa original */ }
       } catch (err) {
         spinner.fail('Erro no retry: ' + (err as Error).message);
       }
@@ -221,10 +246,14 @@ export default class AI extends Command {
     }
 
     const session = new ChatSession();
-    const ask = createDirectAsk();
+    const { ask, close } = createDirectAsk();
     const projectContext = readProjectContext(cwd);
     const provider = createContextualProvider(aiProvider, projectContext);
     session.addUserMessage(args.prompt);
-    await runGeneration(provider, session, cwd, dryRun, iacProvider, ask, args.prompt);
+    try {
+      await runGeneration(provider, session, cwd, dryRun, iacProvider, ask, args.prompt);
+    } finally {
+      close();
+    }
   }
 }

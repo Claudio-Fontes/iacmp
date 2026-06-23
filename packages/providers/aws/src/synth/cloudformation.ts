@@ -3,6 +3,7 @@ import { Stack, BaseConstruct } from '@iacmp/core';
 export interface CloudFormationResource {
   Type: string;
   DeletionPolicy?: string;
+  DependsOn?: string[];
   Properties: Record<string, unknown>;
 }
 
@@ -10,6 +11,130 @@ export interface CloudFormationTemplate {
   AWSTemplateFormatVersion: string;
   Description: string;
   Resources: Record<string, CloudFormationResource>;
+  Outputs?: Record<string, { Value: unknown; Export: { Name: string } }>;
+}
+
+/**
+ * Contexto opcional com visão de TODAS as stacks do projeto (não só a atual)
+ * — usado por Function.ApiGateway pra resolver referências a Function.Lambda
+ * que vivem em outra stack/template (Fn::ImportValue) em vez de assumir que
+ * estão sempre na mesma stack (Fn::Sub local, que é o que CloudFormation
+ * aceita só quando o recurso está no MESMO template).
+ */
+export interface SynthContext {
+  currentStackName: string;
+  /** constructId (ex: 'SaveMessageFn') → nome da Stack que o declara. */
+  registry: Map<string, string>;
+  /**
+   * lambdaId (id de uma Function.Lambda) → role IAM criada por um Policy.IAM
+   * (attachType: 'lambda', attachTo: lambdaId) que a referencia, se existir.
+   */
+  lambdaRoles: Map<string, { stackName: string; roleLogicalId: string }>;
+}
+
+/**
+ * Resolve a referência ao ARN de uma Function.Lambda como valor standalone
+ * (ex: Lambda Permission's FunctionName) — local usa Fn::GetAtt, cross-stack
+ * usa Fn::ImportValue.
+ */
+function resolveLambdaArnRef(lambdaId: string, ctx: SynthContext): unknown {
+  const ownerStack = ctx.registry.get(lambdaId);
+  if (!ownerStack) {
+    throw new Error(`Lambda "${lambdaId}" referenciada em Function.ApiGateway não foi encontrada em nenhuma stack do projeto.`);
+  }
+  if (ownerStack === ctx.currentStackName) return { 'Fn::GetAtt': [lambdaId, 'Arn'] };
+  return { 'Fn::ImportValue': `${ownerStack}-${lambdaId}-Arn` };
+}
+
+/**
+ * Monta o `Fn::Sub` da URI de invocação do API Gateway pra uma Lambda (mesmo
+ * formato usado por REST v1 e HTTP/v2). Local embute `${lambdaId.Arn}` direto
+ * na string (válido só quando o recurso está no mesmo template); cross-stack
+ * usa a forma de Fn::Sub com mapa de substituição, injetando um
+ * Fn::ImportValue no lugar do atributo local.
+ */
+function buildInvocationUri(lambdaId: string, ctx: SynthContext): unknown {
+  const template = 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations';
+  const ownerStack = ctx.registry.get(lambdaId);
+  if (!ownerStack) {
+    throw new Error(`Lambda "${lambdaId}" referenciada em Function.ApiGateway não foi encontrada em nenhuma stack do projeto.`);
+  }
+  if (ownerStack === ctx.currentStackName) {
+    return { 'Fn::Sub': `arn:aws:apigateway:\${AWS::Region}:lambda:path/2015-03-31/functions/\${${lambdaId}.Arn}/invocations` };
+  }
+  return { 'Fn::Sub': [template, { LambdaArn: { 'Fn::ImportValue': `${ownerStack}-${lambdaId}-Arn` } }] };
+}
+
+/**
+ * Resolve a Role IAM de uma Function.Lambda. Se existir um Policy.IAM
+ * (attachType: 'lambda') apontando pra essa lambda, referencia a role que ele
+ * cria (local → Fn::GetAtt, cross-stack → Fn::ImportValue do RoleArn que o
+ * Policy.IAM exporta). Sem isso, NENHUMA role seria assumível pela função —
+ * antes desta correção o código gerava uma referência fixa a uma role
+ * `LambdaExecutionRole` que o iacmp nunca cria, e o deploy falhava com "The
+ * role defined for the function cannot be assumed by Lambda." Sem Policy.IAM
+ * correspondente, gera uma role mínima padrão (só CloudWatch Logs) inline,
+ * pra a Lambda sempre ser deployável.
+ */
+function resolveLambdaRole(
+  lambdaId: string,
+  lambdaLogicalId: string,
+  ctx: SynthContext
+): { roleRef: unknown; extraResource?: [string, CloudFormationResource] } {
+  const owned = ctx.lambdaRoles.get(lambdaId);
+  if (owned) {
+    if (owned.stackName === ctx.currentStackName) {
+      return { roleRef: { 'Fn::GetAtt': [owned.roleLogicalId, 'Arn'] } };
+    }
+    return { roleRef: { 'Fn::ImportValue': `${owned.stackName}-${owned.roleLogicalId}-RoleArn` } };
+  }
+
+  const defaultRoleLogicalId = `${lambdaLogicalId}DefaultRole`;
+  return {
+    roleRef: { 'Fn::GetAtt': [defaultRoleLogicalId, 'Arn'] },
+    extraResource: [defaultRoleLogicalId, {
+      Type: 'AWS::IAM::Role',
+      Properties: {
+        AssumeRolePolicyDocument: {
+          Version: '2012-10-17',
+          Statement: [{ Effect: 'Allow', Principal: { Service: 'lambda.amazonaws.com' }, Action: 'sts:AssumeRole' }],
+        },
+        ManagedPolicyArns: ['arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'],
+      },
+    }],
+  };
+}
+
+/**
+ * Role default mínima pra um serviço (EKS cluster/node, ECS task execution,
+ * StepFunctions) que precisa assumir um role mas não tem (ainda) um
+ * `Policy.IAM` apontando pra ele — mesmo padrão do fallback de
+ * `resolveLambdaRole` acima. Sem isso, o synth gerava `Fn::Sub` apontando pra
+ * um nome de role (ex: `EKSClusterRole`) que o iacmp nunca cria de verdade, e
+ * o deploy falhava ("role does not exist" / "cannot be assumed").
+ */
+function defaultServiceRole(
+  roleLogicalId: string,
+  servicePrincipal: string,
+  managedPolicyArns: string[],
+  inlinePolicy?: { name: string; statements: Array<{ Effect: string; Action: string[]; Resource: string | string[] }> },
+): [string, CloudFormationResource] {
+  return [roleLogicalId, {
+    Type: 'AWS::IAM::Role',
+    Properties: {
+      AssumeRolePolicyDocument: {
+        Version: '2012-10-17',
+        Statement: [{ Effect: 'Allow', Principal: { Service: servicePrincipal }, Action: 'sts:AssumeRole' }],
+      },
+      ...(managedPolicyArns.length > 0 ? { ManagedPolicyArns: managedPolicyArns } : {}),
+      ...(inlinePolicy ? {
+        Policies: [{
+          PolicyName: inlinePolicy.name,
+          PolicyDocument: { Version: '2012-10-17', Statement: inlinePolicy.statements },
+        }],
+      } : {}),
+    },
+  }];
 }
 
 const INSTANCE_TYPE_MAP: Record<string, string> = {
@@ -41,7 +166,7 @@ const K8S_NODE_TYPE_MAP: Record<string, string> = {
   large: 'm5.2xlarge',
 };
 
-function synthesizeConstruct(construct: BaseConstruct): Array<[string, CloudFormationResource]> {
+function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array<[string, CloudFormationResource]> {
   const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
   const props = construct.props as Record<string, unknown>;
 
@@ -54,36 +179,46 @@ function synthesizeConstruct(construct: BaseConstruct): Array<[string, CloudForm
         Properties: {
           InstanceType: INSTANCE_TYPE_MAP[props.instanceType as string] ?? 't3.small',
           ImageId: AMI_MAP[props.image as string] ?? (props.image as string),
+          ...(props.subnetId ? { SubnetId: props.subnetId as string } : {}),
+          ...(props.securityGroupIds ? { SecurityGroupIds: props.securityGroupIds as string[] } : {}),
         },
       }]];
 
     case 'Compute.AutoScaling': {
-      const lcId = `${logicalId}LC`;
+      const ltId = `${logicalId}LT`;
       const asgId = `${logicalId}ASG`;
       const spId = `${logicalId}ScalingPolicy`;
 
-      const lc: CloudFormationResource = {
-        Type: 'AWS::AutoScaling::LaunchConfiguration',
+      const lt: CloudFormationResource = {
+        Type: 'AWS::EC2::LaunchTemplate',
         Properties: {
-          ImageId: AMI_MAP[props.image as string] ?? (props.image as string),
-          InstanceType: INSTANCE_TYPE_MAP[props.instanceType as string] ?? 't3.small',
-          ...(props.securityGroupIds ? { SecurityGroups: props.securityGroupIds } : {}),
+          LaunchTemplateName: `${logicalId}-lt`,
+          LaunchTemplateData: {
+            ImageId: AMI_MAP[props.image as string] ?? (props.image as string),
+            InstanceType: INSTANCE_TYPE_MAP[props.instanceType as string] ?? 't3.small',
+            ...(props.securityGroupIds ? { SecurityGroupIds: props.securityGroupIds } : {}),
+          },
         },
       };
 
       const asg: CloudFormationResource = {
         Type: 'AWS::AutoScaling::AutoScalingGroup',
         Properties: {
-          LaunchConfigurationName: { Ref: lcId },
+          LaunchTemplate: {
+            LaunchTemplateId: { Ref: ltId },
+            Version: { 'Fn::GetAtt': [ltId, 'LatestVersionNumber'] },
+          },
           MinSize: String(props.minCapacity ?? 1),
           MaxSize: String(props.maxCapacity ?? 3),
           DesiredCapacity: String(props.desiredCapacity ?? props.minCapacity ?? 1),
-          ...(props.subnetIds ? { VPCZoneIdentifier: props.subnetIds } : {}),
+          ...(props.subnetIds
+            ? { VPCZoneIdentifier: props.subnetIds }
+            : { AvailabilityZones: { 'Fn::GetAZs': '' } }),
           Tags: [{ Key: 'Name', Value: logicalId, PropagateAtLaunch: true }],
         },
       };
 
-      const entries: Array<[string, CloudFormationResource]> = [[lcId, lc], [asgId, asg]];
+      const entries: Array<[string, CloudFormationResource]> = [[ltId, lt], [asgId, asg]];
 
       if (props.targetCpuUtilization) {
         entries.push([spId, {
@@ -106,13 +241,20 @@ function synthesizeConstruct(construct: BaseConstruct): Array<[string, CloudForm
       const clusterLogicalId = `${logicalId}Cluster`;
       const tdLogicalId = `${logicalId}TaskDef`;
       const svcLogicalId = `${logicalId}Service`;
+      const executionRoleLogicalId = `${logicalId}ExecutionRole`;
       const environment = props.environment as Record<string, string> | undefined;
+      const subnetIds = (props.subnetIds as string[]) ?? [];
 
-      return [
+      const entries: Array<[string, CloudFormationResource]> = [
         [clusterLogicalId, {
           Type: 'AWS::ECS::Cluster',
           Properties: { ClusterName: construct.id },
         }],
+        defaultServiceRole(
+          executionRoleLogicalId,
+          'ecs-tasks.amazonaws.com',
+          ['arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy'],
+        ),
         [tdLogicalId, {
           Type: 'AWS::ECS::TaskDefinition',
           Properties: {
@@ -121,7 +263,7 @@ function synthesizeConstruct(construct: BaseConstruct): Array<[string, CloudForm
             RequiresCompatibilities: ['FARGATE'],
             Cpu: String(props.cpu ?? 256),
             Memory: String(props.memory ?? 512),
-            ExecutionRoleArn: { 'Fn::Sub': 'arn:aws:iam::${AWS::AccountId}:role/ecsTaskExecutionRole' },
+            ExecutionRoleArn: { 'Fn::GetAtt': [executionRoleLogicalId, 'Arn'] },
             ContainerDefinitions: [{
               Name: construct.id,
               Image: props.image as string,
@@ -140,7 +282,12 @@ function synthesizeConstruct(construct: BaseConstruct): Array<[string, CloudForm
             }],
           },
         }],
-        [svcLogicalId, {
+      ];
+
+      // Só cria o Service se subnets foram fornecidas — sem subnets o Fargate
+      // falha com "subnets can not be empty" no CloudFormation.
+      if (subnetIds.length > 0) {
+        entries.push([svcLogicalId, {
           Type: 'AWS::ECS::Service',
           Properties: {
             Cluster: { Ref: clusterLogicalId },
@@ -150,31 +297,57 @@ function synthesizeConstruct(construct: BaseConstruct): Array<[string, CloudForm
             NetworkConfiguration: {
               AwsvpcConfiguration: {
                 AssignPublicIp: (props.publicIp as boolean) ? 'ENABLED' : 'DISABLED',
-                Subnets: [],
+                Subnets: subnetIds,
+                ...(props.securityGroupIds ? { SecurityGroups: props.securityGroupIds as string[] } : {}),
               },
             },
           },
-        }],
-      ];
+        }]);
+      }
+
+      return entries;
     }
 
     case 'Compute.Kubernetes': {
+      const clusterRoleLogicalId = `${logicalId}ClusterRole`;
+      const nodeRoleLogicalId = `${logicalId}NodeRole`;
+      const subnetIds = (props.subnetIds as string[]) ?? [];
+      if (subnetIds.length === 0) {
+        console.warn(`[aws] Compute.Kubernetes "${construct.id}" sem subnetIds — o EKS rejeita cluster sem pelo menos 2 subnets reais em AZs diferentes.`);
+      }
+
       return [
+        defaultServiceRole(
+          clusterRoleLogicalId,
+          'eks.amazonaws.com',
+          ['arn:aws:iam::aws:policy/AmazonEKSClusterPolicy'],
+        ),
+        defaultServiceRole(
+          nodeRoleLogicalId,
+          'ec2.amazonaws.com',
+          [
+            'arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy',
+            'arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy',
+            'arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly',
+          ],
+        ),
         [logicalId, {
           Type: 'AWS::EKS::Cluster',
           Properties: {
             Name: construct.id,
             Version: (props.version as string) ?? '1.29',
             ResourcesVpcConfig: {
-              SubnetIds: [],
+              SubnetIds: subnetIds,
+              ...(props.securityGroupIds ? { SecurityGroupIds: props.securityGroupIds as string[] } : {}),
               EndpointPrivateAccess: (props.privateCluster as boolean) ?? false,
               EndpointPublicAccess: !(props.privateCluster as boolean),
             },
-            RoleArn: { 'Fn::Sub': 'arn:aws:iam::${AWS::AccountId}:role/EKSClusterRole' },
+            RoleArn: { 'Fn::GetAtt': [clusterRoleLogicalId, 'Arn'] },
           },
         }],
         [`${logicalId}NodeGroup`, {
           Type: 'AWS::EKS::Nodegroup',
+          DependsOn: [logicalId],
           Properties: {
             ClusterName: { Ref: logicalId },
             NodegroupName: `${construct.id}-ng`,
@@ -184,8 +357,8 @@ function synthesizeConstruct(construct: BaseConstruct): Array<[string, CloudForm
               DesiredSize: props.desiredNodes ?? 2,
             },
             InstanceTypes: [K8S_NODE_TYPE_MAP[(props.nodeInstanceType as string) ?? 'medium'] ?? 'm5.large'],
-            NodeRole: { 'Fn::Sub': 'arn:aws:iam::${AWS::AccountId}:role/EKSNodeRole' },
-            Subnets: [],
+            NodeRole: { 'Fn::GetAtt': [nodeRoleLogicalId, 'Arn'] },
+            Subnets: subnetIds,
           },
         }],
       ];
@@ -398,7 +571,7 @@ function synthesizeConstruct(construct: BaseConstruct): Array<[string, CloudForm
             Name: tg.name as string,
             Port: tg.port as number,
             Protocol: tg.protocol as string,
-            VpcId: '',
+            VpcId: props.vpcId as string,
             HealthCheckPath: (tg.healthCheckPath as string) ?? '/',
             HealthCheckPort: String(tg.healthCheckPort ?? tg.port),
             TargetType: 'ip',
@@ -510,9 +683,9 @@ function synthesizeConstruct(construct: BaseConstruct): Array<[string, CloudForm
 
       // Mapeia engine → Engine + EngineVersion do RDS
       const engineMap: Record<string, { Engine: string; EngineVersion: string }> = {
-        mysql:     { Engine: 'mysql',                                    EngineVersion: '8.0.36' },
-        postgres:  { Engine: 'postgres',                                 EngineVersion: '15.4' },
-        mariadb:   { Engine: 'mariadb',                                  EngineVersion: '10.11.6' },
+        mysql:     { Engine: 'mysql',                                    EngineVersion: '8.0.46' },
+        postgres:  { Engine: 'postgres',                                 EngineVersion: '17.10' },
+        mariadb:   { Engine: 'mariadb',                                  EngineVersion: '11.8.8' },
         oracle:    { Engine: `oracle-${edition || 'se2'}`,               EngineVersion: '19.0.0.0.ru-2024-01.rur-2024-01.r1' },
         sqlserver: { Engine: `sqlserver-${edition || 'ex'}`,             EngineVersion: '15.00.4365.2.v1' },
       };
@@ -529,6 +702,7 @@ function synthesizeConstruct(construct: BaseConstruct): Array<[string, CloudForm
       // Oracle e SQL Server exigem instâncias maiores (mínimo db.t3.small)
       const defaultInstance = (isOracle || isSqlServer) ? 'db.t3.small' : 'db.t3.micro';
 
+      const rdsSecretId = `${logicalId}Secret`;
       const rdsProps: Record<string, unknown> = {
         DBInstanceClass:       (props.instanceType as string) ?? defaultInstance,
         Engine:                mapped.Engine,
@@ -536,35 +710,93 @@ function synthesizeConstruct(construct: BaseConstruct): Array<[string, CloudForm
         AllocatedStorage:      String(props.storageGb ?? 20),
         MultiAZ:               (props.multiAz as boolean) ?? false,
         MasterUsername:        masterUser,
-        MasterUserPassword:    { 'Fn::Sub': '{{resolve:ssm:/iacmp/${AWS::StackName}/db-password}}' },
-        StorageEncrypted:      true,
-        BackupRetentionPeriod: props.backupRetentionDays ?? 7,
+        MasterUserPassword:    { 'Fn::Sub': `{{resolve:secretsmanager:\${${rdsSecretId}}:SecretString:password}}` },
+        StorageEncrypted:      (props.storageEncrypted as boolean) ?? false,
+        BackupRetentionPeriod: props.backupRetentionDays ?? 0,
         DeletionProtection:    (props.deletionProtection as boolean) ?? false,
       };
       if (licenseModel) rdsProps['LicenseModel'] = licenseModel;
 
-      return [[logicalId, {
+      const sqlSubnetIds = props.subnetIds as string[] | undefined;
+      const sqlEntries: Array<[string, CloudFormationResource]> = [];
+      sqlEntries.push([rdsSecretId, {
+        Type: 'AWS::SecretsManager::Secret',
+        Properties: {
+          Name: { 'Fn::Sub': `\${AWS::StackName}-${construct.id}-db-password` },
+          GenerateSecretString: {
+            SecretStringTemplate: JSON.stringify({ username: masterUser }),
+            GenerateStringKey: 'password',
+            PasswordLength: 32,
+            ExcludeCharacters: '"@/\\\'',
+          },
+        },
+      }]);
+      if (sqlSubnetIds && sqlSubnetIds.length > 0) {
+        const subnetGroupId = `${logicalId}SubnetGroup`;
+        sqlEntries.push([subnetGroupId, {
+          Type: 'AWS::RDS::DBSubnetGroup',
+          Properties: {
+            DBSubnetGroupDescription: `Subnet group para ${construct.id}`,
+            SubnetIds: sqlSubnetIds,
+          },
+        }]);
+        rdsProps['DBSubnetGroupName'] = { Ref: subnetGroupId };
+        if (props.securityGroupIds) rdsProps['VPCSecurityGroups'] = props.securityGroupIds;
+      }
+
+      sqlEntries.push([logicalId, {
         Type: 'AWS::RDS::DBInstance',
-        DeletionPolicy: (props.deletionProtection as boolean) ? 'Retain' : 'Snapshot',
+        DeletionPolicy: (props.deletionProtection as boolean) ? 'Retain' : ((props.snapshotOnDelete as boolean) ? 'Snapshot' : 'Delete'),
         Properties: rdsProps,
-      }]];
+      }]);
+      return sqlEntries;
     }
 
     case 'Database.DocumentDB': {
       const instances = (props.instances as number) ?? 1;
       const clusterLogicalId = `${logicalId}Cluster`;
-      const entries: Array<[string, CloudFormationResource]> = [[clusterLogicalId, {
-        Type: 'AWS::DocDB::DBCluster',
-        DeletionPolicy: (props.deletionProtection as boolean) ? 'Retain' : 'Snapshot',
+      const docDbSubnetIds = props.subnetIds as string[] | undefined;
+      const entries: Array<[string, CloudFormationResource]> = [];
+
+      const docDbSecretId = `${logicalId}Secret`;
+      entries.push([docDbSecretId, {
+        Type: 'AWS::SecretsManager::Secret',
         Properties: {
-          DBClusterIdentifier: construct.id.toLowerCase(),
-          MasterUsername: 'docdbadmin',
-          MasterUserPassword: { 'Fn::Sub': '{{resolve:ssm:/iacmp/${AWS::StackName}/docdb-password}}' },
-          StorageEncrypted: true,
-          BackupRetentionPeriod: 7,
-          DeletionProtection: (props.deletionProtection as boolean) ?? false,
+          Name: { 'Fn::Sub': `\${AWS::StackName}-${construct.id}-docdb-password` },
+          GenerateSecretString: {
+            SecretStringTemplate: JSON.stringify({ username: 'docdbadmin' }),
+            GenerateStringKey: 'password',
+            PasswordLength: 32,
+            ExcludeCharacters: '"@/\\\'',
+          },
         },
-      }]];
+      }]);
+      const docDbClusterProps: Record<string, unknown> = {
+        DBClusterIdentifier: construct.id.toLowerCase(),
+        MasterUsername: 'docdbadmin',
+        MasterUserPassword: { 'Fn::Sub': `{{resolve:secretsmanager:\${${docDbSecretId}}:SecretString:password}}` },
+        StorageEncrypted: true,
+        BackupRetentionPeriod: (props.backupRetentionDays as number) ?? 1,
+        DeletionProtection: (props.deletionProtection as boolean) ?? false,
+      };
+      if (docDbSubnetIds && docDbSubnetIds.length > 0) {
+        const subnetGroupId = `${clusterLogicalId}SubnetGroup`;
+        entries.push([subnetGroupId, {
+          Type: 'AWS::DocDB::DBSubnetGroup',
+          Properties: {
+            DBSubnetGroupDescription: `Subnet group para ${construct.id}`,
+            SubnetIds: docDbSubnetIds,
+          },
+        }]);
+        docDbClusterProps['DBSubnetGroupName'] = { Ref: subnetGroupId };
+        if (props.securityGroupIds) docDbClusterProps['VpcSecurityGroupIds'] = props.securityGroupIds;
+      }
+
+      entries.push([clusterLogicalId, {
+        Type: 'AWS::DocDB::DBCluster',
+        DeletionPolicy: (props.deletionProtection as boolean) ? 'Retain' : ((props.snapshotOnDelete as boolean) ? 'Snapshot' : 'Delete'),
+        Properties: docDbClusterProps,
+      }]);
       for (let i = 0; i < instances; i++) {
         entries.push([`${logicalId}Instance${i + 1}`, {
           Type: 'AWS::DocDB::DBInstance',
@@ -582,10 +814,10 @@ function synthesizeConstruct(construct: BaseConstruct): Array<[string, CloudForm
       const billingMode = (props.billingMode as string) ?? 'PAY_PER_REQUEST';
       const gsis = (props.globalSecondaryIndexes as Array<Record<string, unknown>>) ?? [];
       const attrDefs = [
-        { AttributeName: props.partitionKey as string, AttributeType: 'S' },
-        ...(props.sortKey ? [{ AttributeName: props.sortKey as string, AttributeType: 'S' }] : []),
-        ...gsis.map(g => ({ AttributeName: g.partitionKey as string, AttributeType: 'S' })),
-        ...gsis.filter(g => g.sortKey).map(g => ({ AttributeName: g.sortKey as string, AttributeType: 'S' })),
+        { AttributeName: props.partitionKey as string, AttributeType: (props.partitionKeyType as string) ?? 'S' },
+        ...(props.sortKey ? [{ AttributeName: props.sortKey as string, AttributeType: (props.sortKeyType as string) ?? 'S' }] : []),
+        ...gsis.map(g => ({ AttributeName: g.partitionKey as string, AttributeType: (g.partitionKeyType as string) ?? 'S' })),
+        ...gsis.filter(g => g.sortKey).map(g => ({ AttributeName: g.sortKey as string, AttributeType: (g.sortKeyType as string) ?? 'S' })),
       ].filter((v, i, a) => a.findIndex(x => x.AttributeName === v.AttributeName) === i);
 
       return [[logicalId, {
@@ -653,6 +885,7 @@ function synthesizeConstruct(construct: BaseConstruct): Array<[string, CloudForm
           CacheNodeType: CACHE_NODE_TYPE_MAP[(props.nodeType as string) ?? 'small'] ?? 'cache.t3.micro',
           NumCacheNodes: (props.numCacheNodes as number) ?? 2,
           ...(props.subnetGroupName ? { CacheSubnetGroupName: props.subnetGroupName } : {}),
+          ...(props.securityGroupIds ? { VpcSecurityGroupIds: props.securityGroupIds as string[] } : {}),
         },
       }]];
     }
@@ -665,16 +898,21 @@ function synthesizeConstruct(construct: BaseConstruct): Array<[string, CloudForm
         'python3.12': 'python3.12', 'python3.11': 'python3.11',
         'java21': 'java21', 'go1.x': 'go1.x', 'dotnet8': 'dotnet8',
       };
-      return [[logicalId, {
+      const role = resolveLambdaRole(construct.id, logicalId, ctx);
+      const entries: Array<[string, CloudFormationResource]> = [];
+      if (role.extraResource) entries.push(role.extraResource);
+      entries.push([logicalId, {
         Type: 'AWS::Lambda::Function',
         Properties: {
           FunctionName: construct.id,
           Runtime: runtimeMap[(props.runtime as string) ?? 'nodejs20'] ?? 'nodejs20.x',
           Handler: props.handler as string,
-          Code: { ZipFile: props.code as string },
+          // String (não { ZipFile }) — formato local-path que `aws cloudformation
+          // package` reconhece e transforma em S3Bucket/S3Key antes do deploy real.
+          Code: props.code as string,
           MemorySize: (props.memory as number) ?? 128,
           Timeout: (props.timeout as number) ?? 30,
-          Role: { 'Fn::Sub': 'arn:aws:iam::${AWS::AccountId}:role/LambdaExecutionRole' },
+          Role: role.roleRef,
           ...(props.reservedConcurrency !== undefined ? { ReservedConcurrentExecutions: props.reservedConcurrency } : {}),
           ...(environment && Object.keys(environment).length > 0 ? { Environment: { Variables: environment } } : {}),
           ...(props.vpcId ? {
@@ -684,78 +922,239 @@ function synthesizeConstruct(construct: BaseConstruct): Array<[string, CloudForm
             },
           } : {}),
         },
-      }]];
+      }]);
+      return entries;
     }
 
     case 'Function.ApiGateway': {
       const apigwType = (props.type as string) ?? 'HTTP';
       const routes = (props.routes as Array<Record<string, unknown>>) ?? [];
       const stageName = (props.stageName as string) ?? '$default';
+      const authorizerLambdaId = props.authorizerLambdaId as string | undefined;
+      const authorizerId = authorizerLambdaId ? `${logicalId}Authorizer` : undefined;
+      // Toda Lambda referenciada (rotas + authorizer) precisa de uma
+      // AWS::Lambda::Permission liberando o API Gateway a invocá-la —
+      // dedupe por par (api, lambda): uma Permission serve pra todas as rotas
+      // que chamam a mesma função nesta API.
+      const lambdaIdsNeedingPermission = new Set<string>();
+      if (authorizerLambdaId) lambdaIdsNeedingPermission.add(authorizerLambdaId);
+      for (const r of routes) {
+        if (r.lambdaId) lambdaIdsNeedingPermission.add(r.lambdaId as string);
+      }
 
       const entries: Array<[string, CloudFormationResource]> = [[logicalId, {
         Type: apigwType === 'REST' ? 'AWS::ApiGateway::RestApi' : 'AWS::ApiGatewayV2::Api',
         Properties: {
           Name: props.name as string,
-          Description: (props.description as string) ?? '',
+          // ApiGateway (v1) rejeita Description: '' com 400 ("cannot be an
+          // empty string") — omitir a propriedade quando não houver
+          // descrição, em vez de mandar string vazia como default.
+          ...(props.description ? { Description: props.description as string } : {}),
           ...(apigwType !== 'REST' ? { ProtocolType: apigwType } : {}),
-          ...(props.cors ? { CorsConfiguration: { AllowOrigins: ['*'], AllowMethods: ['*'], AllowHeaders: ['*'] } } : {}),
+          ...(apigwType !== 'REST' && props.cors ? { CorsConfiguration: { AllowOrigins: ['*'], AllowMethods: ['*'], AllowHeaders: ['*'] } } : {}),
         },
       }]];
 
-      entries.push([`${logicalId}Stage`, {
-        Type: apigwType === 'REST' ? 'AWS::ApiGateway::Stage' : 'AWS::ApiGatewayV2::Stage',
-        Properties: {
-          ...(apigwType === 'REST' ? { RestApiId: { Ref: logicalId } } : { ApiId: { Ref: logicalId } }),
-          StageName: stageName,
-          AutoDeploy: apigwType !== 'REST',
-          ...(props.throttlingBurstLimit ? {
-            DefaultRouteSettings: {
-              ThrottlingBurstLimit: props.throttlingBurstLimit,
-              ThrottlingRateLimit: props.throttlingRateLimit ?? 1000,
-            },
-          } : {}),
-        },
-      }]);
+      if (apigwType === 'REST') {
+        // ── REST (API Gateway v1) — Resource/Method/Deployment, incompatível
+        // com os recursos ApiGatewayV2 usados no branch HTTP abaixo. ─────────
+        const resourceIdByPath = new Map<string, string>(); // caminho cumulativo → logicalId do Resource
+        const methodLogicalIds: string[] = [];
+        const corsResourceRefs = new Map<string, unknown>(); // logicalId-do-resource-ou-root → ref, deduplicado
 
-      const authorizerLambdaId = props.authorizerLambdaId as string | undefined;
-      const authorizerId = authorizerLambdaId ? `${logicalId}Authorizer` : undefined;
-      if (authorizerLambdaId) {
-        entries.push([authorizerId!, {
-          Type: 'AWS::ApiGatewayV2::Authorizer',
-          Properties: {
-            ApiId: { Ref: logicalId },
-            AuthorizerType: 'REQUEST',
-            Name: `${props.name as string}-authorizer`,
-            AuthorizerUri: { 'Fn::Sub': `arn:aws:apigateway:\${AWS::Region}:lambda:path/2015-03-31/functions/\${${authorizerLambdaId}.Arn}/invocations` },
-            AuthorizerPayloadFormatVersion: '2.0',
-            IdentitySource: ['$request.header.Authorization'],
-          },
-        }]);
-      }
+        const resolveResourceRef = (path: string): unknown => {
+          const segments = path.split('/').filter(Boolean);
+          if (segments.length === 0) return { 'Fn::GetAtt': [logicalId, 'RootResourceId'] };
 
-      for (const r of routes) {
-        const routeId = `${logicalId}${(r.method as string)}${(r.path as string).replace(/[^a-zA-Z0-9]/g, '')}Route`;
-        entries.push([routeId, {
-          Type: 'AWS::ApiGatewayV2::Route',
-          Properties: {
-            ApiId: { Ref: logicalId },
-            RouteKey: `${r.method} ${r.path}`,
-            ...(r.lambdaId ? { Target: { 'Fn::Sub': `integrations/\${${routeId}Integration}` } } : {}),
-            ...(authorizerId ? { AuthorizationType: 'CUSTOM', AuthorizerId: { Ref: authorizerId } } : {}),
-          },
-        }]);
+          let parentRef: unknown = { 'Fn::GetAtt': [logicalId, 'RootResourceId'] };
+          let cumulative = '';
+          for (const seg of segments) {
+            cumulative += `/${seg}`;
+            let segLogicalId = resourceIdByPath.get(cumulative);
+            if (!segLogicalId) {
+              segLogicalId = `${logicalId}Resource${cumulative.replace(/[^a-zA-Z0-9]/g, '')}`;
+              entries.push([segLogicalId, {
+                Type: 'AWS::ApiGateway::Resource',
+                Properties: { RestApiId: { Ref: logicalId }, ParentId: parentRef, PathPart: seg },
+              }]);
+              resourceIdByPath.set(cumulative, segLogicalId);
+            }
+            parentRef = { Ref: segLogicalId };
+          }
+          return { Ref: resourceIdByPath.get(cumulative)! };
+        };
 
-        if (r.lambdaId) {
-          entries.push([`${routeId}Integration`, {
-            Type: 'AWS::ApiGatewayV2::Integration',
+        if (authorizerLambdaId) {
+          entries.push([authorizerId!, {
+            Type: 'AWS::ApiGateway::Authorizer',
             Properties: {
-              ApiId: { Ref: logicalId },
-              IntegrationType: 'AWS_PROXY',
-              IntegrationUri: { 'Fn::Sub': `arn:aws:apigateway:\${AWS::Region}:lambda:path/2015-03-31/functions/\${${r.lambdaId as string}.Arn}/invocations` },
-              PayloadFormatVersion: '2.0',
+              RestApiId: { Ref: logicalId },
+              Type: 'REQUEST',
+              Name: `${props.name as string}-authorizer`,
+              AuthorizerUri: buildInvocationUri(authorizerLambdaId, ctx),
+              IdentitySource: 'method.request.header.Authorization',
+              AuthorizerResultTtlInSeconds: 0,
             },
           }]);
         }
+
+        for (const r of routes) {
+          const path = r.path as string;
+          const method = r.method as string;
+          const resourceRef = resolveResourceRef(path);
+          const methodLogicalId = `${logicalId}${method}${path.replace(/[^a-zA-Z0-9]/g, '')}Method`;
+
+          entries.push([methodLogicalId, {
+            Type: 'AWS::ApiGateway::Method',
+            Properties: {
+              RestApiId: { Ref: logicalId },
+              ResourceId: resourceRef,
+              HttpMethod: method,
+              AuthorizationType: authorizerId ? 'CUSTOM' : 'NONE',
+              ...(authorizerId ? { AuthorizerId: { Ref: authorizerId } } : {}),
+              ...(r.lambdaId ? {
+                Integration: {
+                  Type: 'AWS_PROXY',
+                  IntegrationHttpMethod: 'POST',
+                  Uri: buildInvocationUri(r.lambdaId as string, ctx),
+                },
+              } : {}),
+            },
+          }]);
+          methodLogicalIds.push(methodLogicalId);
+
+          if (props.cors) {
+            const corsKey = path;
+            if (!corsResourceRefs.has(corsKey)) corsResourceRefs.set(corsKey, resourceRef);
+          }
+        }
+
+        // OPTIONS+MOCK por resource único que tenha rota com CORS habilitado.
+        for (const [path, resourceRef] of corsResourceRefs) {
+          const optionsId = `${logicalId}Options${path.replace(/[^a-zA-Z0-9]/g, '')}Method`;
+          entries.push([optionsId, {
+            Type: 'AWS::ApiGateway::Method',
+            Properties: {
+              RestApiId: { Ref: logicalId },
+              ResourceId: resourceRef,
+              HttpMethod: 'OPTIONS',
+              AuthorizationType: 'NONE',
+              Integration: {
+                Type: 'MOCK',
+                RequestTemplates: { 'application/json': '{"statusCode": 200}' },
+                IntegrationResponses: [{
+                  StatusCode: '200',
+                  ResponseParameters: {
+                    'method.response.header.Access-Control-Allow-Headers': "'Content-Type,Authorization'",
+                    'method.response.header.Access-Control-Allow-Methods': "'OPTIONS,GET,POST,PUT,DELETE,PATCH'",
+                    'method.response.header.Access-Control-Allow-Origin': "'*'",
+                  },
+                }],
+              },
+              MethodResponses: [{
+                StatusCode: '200',
+                ResponseParameters: {
+                  'method.response.header.Access-Control-Allow-Headers': true,
+                  'method.response.header.Access-Control-Allow-Methods': true,
+                  'method.response.header.Access-Control-Allow-Origin': true,
+                },
+              }],
+            },
+          }]);
+          methodLogicalIds.push(optionsId);
+        }
+
+        const deploymentId = `${logicalId}Deployment`;
+        entries.push([deploymentId, {
+          Type: 'AWS::ApiGateway::Deployment',
+          DependsOn: methodLogicalIds,
+          Properties: { RestApiId: { Ref: logicalId } },
+        }]);
+
+        entries.push([`${logicalId}Stage`, {
+          Type: 'AWS::ApiGateway::Stage',
+          Properties: {
+            RestApiId: { Ref: logicalId },
+            DeploymentId: { Ref: deploymentId },
+            StageName: stageName,
+            ...(props.throttlingBurstLimit ? {
+              MethodSettings: [{
+                ResourcePath: '/*', HttpMethod: '*',
+                ThrottlingBurstLimit: props.throttlingBurstLimit,
+                ThrottlingRateLimit: props.throttlingRateLimit ?? 1000,
+              }],
+            } : {}),
+          },
+        }]);
+      } else {
+        // ── HTTP/WEBSOCKET (API Gateway v2) — comportamento existente. ──────
+        entries.push([`${logicalId}Stage`, {
+          Type: 'AWS::ApiGatewayV2::Stage',
+          Properties: {
+            ApiId: { Ref: logicalId },
+            StageName: stageName,
+            AutoDeploy: true,
+            ...(props.throttlingBurstLimit ? {
+              DefaultRouteSettings: {
+                ThrottlingBurstLimit: props.throttlingBurstLimit,
+                ThrottlingRateLimit: props.throttlingRateLimit ?? 1000,
+              },
+            } : {}),
+          },
+        }]);
+
+        if (authorizerLambdaId) {
+          entries.push([authorizerId!, {
+            Type: 'AWS::ApiGatewayV2::Authorizer',
+            Properties: {
+              ApiId: { Ref: logicalId },
+              AuthorizerType: 'REQUEST',
+              Name: `${props.name as string}-authorizer`,
+              AuthorizerUri: buildInvocationUri(authorizerLambdaId, ctx),
+              AuthorizerPayloadFormatVersion: '2.0',
+              IdentitySource: ['$request.header.Authorization'],
+            },
+          }]);
+        }
+
+        for (const r of routes) {
+          const routeId = `${logicalId}${(r.method as string)}${(r.path as string).replace(/[^a-zA-Z0-9]/g, '')}Route`;
+          entries.push([routeId, {
+            Type: 'AWS::ApiGatewayV2::Route',
+            Properties: {
+              ApiId: { Ref: logicalId },
+              RouteKey: `${r.method} ${r.path}`,
+              ...(r.lambdaId ? { Target: { 'Fn::Sub': `integrations/\${${routeId}Integration}` } } : {}),
+              ...(authorizerId ? { AuthorizationType: 'CUSTOM', AuthorizerId: { Ref: authorizerId } } : {}),
+            },
+          }]);
+
+          if (r.lambdaId) {
+            entries.push([`${routeId}Integration`, {
+              Type: 'AWS::ApiGatewayV2::Integration',
+              Properties: {
+                ApiId: { Ref: logicalId },
+                IntegrationType: 'AWS_PROXY',
+                IntegrationUri: buildInvocationUri(r.lambdaId as string, ctx),
+                PayloadFormatVersion: '2.0',
+              },
+            }]);
+          }
+        }
+      }
+
+      // Permissões de invocação — comuns aos dois tipos (Ref resolve pro ID
+      // certo de cada tipo de API automaticamente).
+      for (const lambdaId of lambdaIdsNeedingPermission) {
+        entries.push([`${lambdaId}${logicalId}Permission`, {
+          Type: 'AWS::Lambda::Permission',
+          Properties: {
+            Action: 'lambda:InvokeFunction',
+            FunctionName: resolveLambdaArnRef(lambdaId, ctx),
+            Principal: 'apigateway.amazonaws.com',
+            SourceArn: { 'Fn::Sub': `arn:aws:execute-api:\${AWS::Region}:\${AWS::AccountId}:\${${logicalId}}/*/*` },
+          },
+        }]);
       }
 
       return entries;
@@ -828,11 +1227,15 @@ function synthesizeConstruct(construct: BaseConstruct): Array<[string, CloudForm
         if (r.source) pattern['source'] = r.source;
         if (r.detailTypes) pattern['detail-type'] = r.detailTypes;
 
+        // Ref ao bus quando customizado — CloudFormation infere a dependência
+        // e garante que o bus existe antes de criar a rule.
+        const eventBusName = busName !== 'default' ? { Ref: `${logicalId}Bus` } : 'default';
+
         entries.push([`${logicalId}${ruleName}Rule`, {
           Type: 'AWS::Events::Rule',
           Properties: {
             Name: r.name as string,
-            EventBusName: busName,
+            EventBusName: eventBusName,
             EventPattern: pattern,
             State: 'ENABLED',
             ...(r.targetArn ? { Targets: [{ Id: `${ruleName}Target`, Arn: r.targetArn as string }] } : {}),
@@ -849,23 +1252,49 @@ function synthesizeConstruct(construct: BaseConstruct): Array<[string, CloudForm
       const definition = {
         Comment: (props.description as string) ?? `Workflow ${construct.id}`,
         StartAt: (steps[0]?.name as string) ?? 'Start',
-        States: Object.fromEntries(steps.map((s, i) => [s.name as string, {
-          Type: (s.type as string) ?? 'Task',
-          Resource: (s.resource as string) ?? '',
-          ...(s.description ? { Comment: s.description } : {}),
-          ...(i < steps.length - 1 ? { Next: steps[i + 1].name as string } : { End: true }),
-        }])),
+        States: Object.fromEntries(steps.map((s, i) => {
+          const stateType = (s.type as string) ?? 'Task';
+          const isTask = stateType === 'Task';
+          return [s.name as string, {
+            Type: stateType,
+            ...(isTask ? { Resource: (s.resource as string) ?? '' } : {}),
+            ...(s.description ? { Comment: s.description } : {}),
+            ...(i < steps.length - 1 ? { Next: steps[i + 1].name as string } : { End: true }),
+          }];
+        })),
       };
-      return [[logicalId, {
-        Type: 'AWS::StepFunctions::StateMachine',
-        Properties: {
-          StateMachineName: construct.id,
-          StateMachineType: (props.type as string) ?? 'STANDARD',
-          DefinitionString: { 'Fn::Sub': JSON.stringify(definition) },
-          RoleArn: { 'Fn::Sub': 'arn:aws:iam::${AWS::AccountId}:role/StepFunctionsExecutionRole' },
-          LoggingConfiguration: { Level: 'ERROR', IncludeExecutionData: false },
-        },
-      }]];
+      const roleLogicalId = `${logicalId}ExecutionRole`;
+      // Permissões amplas pros tipos de target mais comuns nos steps de uma
+      // state machine — não dá pra saber de antemão quais recursos os `steps`
+      // vão invocar. Pra escopo mínimo de verdade, adicione um Policy.IAM
+      // (attachType: 'role', attachTo: este id) com os recursos exatos.
+      console.warn(`[aws] Workflow.StepFunctions "${construct.id}" usa uma role default com permissões amplas (Lambda/ECS/SNS/SQS/EventBridge) — para produção, escope com Policy.IAM.`);
+      return [
+        defaultServiceRole(roleLogicalId, 'states.amazonaws.com', [], {
+          name: `${logicalId}DefaultPolicy`,
+          statements: [{
+            Effect: 'Allow',
+            Action: [
+              'lambda:InvokeFunction',
+              'ecs:RunTask', 'ecs:StopTask', 'ecs:DescribeTasks',
+              'sns:Publish',
+              'sqs:SendMessage',
+              'events:PutTargets', 'events:PutRule', 'events:DescribeRule',
+              'iam:PassRole',
+            ],
+            Resource: '*',
+          }],
+        }),
+        [logicalId, {
+          Type: 'AWS::StepFunctions::StateMachine',
+          Properties: {
+            StateMachineName: construct.id,
+            StateMachineType: (props.type as string) ?? 'STANDARD',
+            DefinitionString: { 'Fn::Sub': JSON.stringify(definition) },
+            RoleArn: { 'Fn::GetAtt': [roleLogicalId, 'Arn'] },
+          },
+        }],
+      ];
     }
 
     // ── Messaging ─────────────────────────────────────────────────────────
@@ -878,7 +1307,7 @@ function synthesizeConstruct(construct: BaseConstruct): Array<[string, CloudForm
           VisibilityTimeout: (props.visibilityTimeoutSeconds as number) ?? 30,
           MessageRetentionPeriod: (props.messageRetentionSeconds as number) ?? 345600,
           DelaySeconds: (props.delaySeconds as number) ?? 0,
-          FifoQueue: fifo,
+          ...(fifo ? { FifoQueue: true } : {}),
           SqsManagedSseEnabled: (props.encrypted as boolean) ?? true,
           ...(props.dlqArn ? { RedrivePolicy: { deadLetterTargetArn: props.dlqArn as string, maxReceiveCount: (props.maxReceiveCount as number) ?? 3 } } : {}),
         },
@@ -893,7 +1322,7 @@ function synthesizeConstruct(construct: BaseConstruct): Array<[string, CloudForm
         Properties: {
           TopicName: fifo ? `${construct.id}.fifo` : construct.id,
           DisplayName: (props.displayName as string) ?? construct.id,
-          FifoTopic: fifo,
+          ...(fifo ? { FifoTopic: true } : {}),
           ...(props.encrypted ? { KmsMasterKeyId: 'alias/aws/sns' } : {}),
           Subscription: subscriptions.map(s => ({ Protocol: s.protocol, Endpoint: s.endpoint })),
         },
@@ -1017,11 +1446,63 @@ function synthesizeConstruct(construct: BaseConstruct): Array<[string, CloudForm
   }
 }
 
+const CFN_PSEUDO_PARAMETERS = new Set([
+  'AWS::Region', 'AWS::AccountId', 'AWS::StackName', 'AWS::StackId',
+  'AWS::Partition', 'AWS::URLSuffix', 'AWS::NoValue', 'AWS::NotificationARNs',
+]);
+
+function collectReferencedLogicalIds(node: unknown, found: Set<string>): void {
+  if (Array.isArray(node)) {
+    for (const item of node) collectReferencedLogicalIds(item, found);
+    return;
+  }
+  if (node && typeof node === 'object') {
+    const obj = node as Record<string, unknown>;
+    if (typeof obj.Ref === 'string' && !CFN_PSEUDO_PARAMETERS.has(obj.Ref)) {
+      found.add(obj.Ref);
+    }
+    const getAtt = obj['Fn::GetAtt'];
+    if (Array.isArray(getAtt) && typeof getAtt[0] === 'string') {
+      found.add(getAtt[0]);
+    } else if (typeof getAtt === 'string') {
+      found.add(getAtt.split('.')[0]);
+    }
+    for (const value of Object.values(obj)) {
+      collectReferencedLogicalIds(value, found);
+    }
+  }
+}
+
+/**
+ * Detecta Ref/Fn::GetAtt pra um logical id que não existe na própria stack —
+ * ex: um Custom.Resource (escape hatch de texto livre, sem checagem do
+ * compilador) referenciando uma Lambda que nunca foi criada. Sem isso, o
+ * erro só aparece no `aws cloudformation deploy`, depois do template já ter
+ * sido empacotado/enviado.
+ */
+function validateResourceReferences(resources: Record<string, CloudFormationResource>): void {
+  const referenced = new Set<string>();
+  for (const resource of Object.values(resources)) {
+    collectReferencedLogicalIds(resource.Properties, referenced);
+    if (resource.DependsOn) for (const dep of resource.DependsOn) referenced.add(dep);
+  }
+  const missing = [...referenced].filter(id => !resources[id]);
+  if (missing.length > 0) {
+    throw new Error(
+      `Ref/Fn::GetAtt para recurso inexistente: ${missing.map(id => `"${id}"`).join(', ')}. ` +
+      `Verifique se o recurso foi de fato criado na stack — ex: um Custom.Resource cujo ServiceToken aponta para uma Lambda precisa que essa Lambda exista (como Fn.Lambda ou outro Custom.Resource).`
+    );
+  }
+}
+
 function synthesizeVPCChildren(
   logicalId: string,
   cidr: string,
   maxAzs: number,
-  resources: Record<string, CloudFormationResource>
+  resources: Record<string, CloudFormationResource>,
+  outputs: Record<string, { Value: unknown; Export: { Name: string } }>,
+  stackName: string,
+  constructId: string,
 ): void {
   if (!maxAzs || maxAzs <= 0) return;
 
@@ -1068,27 +1549,109 @@ function synthesizeVPCChildren(
         Tags: [{ Key: 'Name', Value: privSubnetId }],
       },
     };
+    // Exporta os IDs reais das subnets auto-geradas (maxAzs) — sem isso nada
+    // fora da própria stack (ex: harness de teste lendo via describe-stacks)
+    // consegue saber o ID real pra usar em outro construct (EKS, RDS, EC2...).
+    outputs[`${pubSubnetId}SubnetId`] = {
+      Value: { Ref: pubSubnetId },
+      Export: { Name: `${stackName}-${constructId}-Public${az.toUpperCase()}-SubnetId` },
+    };
+    outputs[`${privSubnetId}SubnetId`] = {
+      Value: { Ref: privSubnetId },
+      Export: { Name: `${stackName}-${constructId}-Private${az.toUpperCase()}-SubnetId` },
+    };
   });
 }
 
-export function synthesize(stack: Stack): CloudFormationTemplate {
+export function synthesize(stack: Stack, allStacks?: Stack[]): CloudFormationTemplate {
   const resources: Record<string, CloudFormationResource> = {};
+  const outputs: Record<string, { Value: unknown; Export: { Name: string } }> = {};
+
+  // Registry global (constructId → nome da stack que o declara) + roles de
+  // Lambda criadas por Policy.IAM — sempre construído a partir de TODAS as
+  // stacks quando o chamador tem essa visão (iacmp synth real); sem
+  // `allStacks` (testes isolados), usa só a stack atual como universo —
+  // mesmo efeito de antes (toda referência resolve local).
+  const universe = allStacks ?? [stack];
+  const registry = new Map<string, string>();
+  const lambdaRoles = new Map<string, { stackName: string; roleLogicalId: string }>();
+  for (const s of universe) {
+    for (const c of s.constructs) {
+      registry.set(c.id, s.name);
+      if (c.type === 'Policy.IAM') {
+        const p = c.props as Record<string, unknown>;
+        if (p.attachType === 'lambda' && typeof p.attachTo === 'string') {
+          lambdaRoles.set(p.attachTo, {
+            stackName: s.name,
+            roleLogicalId: `${c.id.replace(/[^a-zA-Z0-9]/g, '')}Role`,
+          });
+        }
+      }
+    }
+  }
+  const ctx: SynthContext = { currentStackName: stack.name, registry, lambdaRoles };
 
   for (const construct of stack.constructs) {
-    const entries = synthesizeConstruct(construct);
+    const entries = synthesizeConstruct(construct, ctx);
     for (const [id, resource] of entries) {
       resources[id] = resource;
     }
     if (construct.type === 'Network.VPC') {
       const p = construct.props as Record<string, unknown>;
       const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
-      synthesizeVPCChildren(logicalId, (p.cidr as string) ?? '10.0.0.0/16', (p.maxAzs as number) ?? 0, resources);
+      synthesizeVPCChildren(logicalId, (p.cidr as string) ?? '10.0.0.0/16', (p.maxAzs as number) ?? 0, resources, outputs, stack.name, construct.id);
+      // Exporta sempre — custo zero, e é o que permite outra stack (ou um
+      // harness de teste lendo via describe-stacks) referenciar essa VPC pelo
+      // ID real em vez de depender da VPC default da conta.
+      outputs[`${logicalId}VpcId`] = {
+        Value: { Ref: logicalId },
+        Export: { Name: `${stack.name}-${construct.id}-VpcId` },
+      };
+    }
+    if (construct.type === 'Network.Subnet') {
+      const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
+      outputs[`${logicalId}SubnetId`] = {
+        Value: { Ref: logicalId },
+        Export: { Name: `${stack.name}-${construct.id}-SubnetId` },
+      };
+    }
+    if (construct.type === 'Network.SecurityGroup') {
+      const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
+      outputs[`${logicalId}GroupId`] = {
+        Value: { 'Fn::GetAtt': [logicalId, 'GroupId'] },
+        Export: { Name: `${stack.name}-${construct.id}-GroupId` },
+      };
+    }
+    if (construct.type === 'Function.Lambda') {
+      // Exporta sempre — custo zero, e é o que permite Function.ApiGateway em
+      // OUTRA stack referenciar esta Lambda via Fn::ImportValue.
+      const lambdaLogicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
+      outputs[`${lambdaLogicalId}Arn`] = {
+        Value: { 'Fn::GetAtt': [lambdaLogicalId, 'Arn'] },
+        Export: { Name: `${stack.name}-${construct.id}-Arn` },
+      };
+    }
+    if (construct.type === 'Policy.IAM') {
+      const p = construct.props as Record<string, unknown>;
+      if (p.attachType === 'lambda') {
+        // Exporta o ARN da role pra Function.Lambda em OUTRA stack poder
+        // importá-la (resolveLambdaRole, caso cross-stack).
+        const roleLogicalId = `${construct.id.replace(/[^a-zA-Z0-9]/g, '')}Role`;
+        outputs[`${roleLogicalId}RoleArn`] = {
+          Value: { 'Fn::GetAtt': [roleLogicalId, 'Arn'] },
+          Export: { Name: `${stack.name}-${roleLogicalId}-RoleArn` },
+        };
+      }
     }
   }
 
-  return {
+  validateResourceReferences(resources);
+
+  const template: CloudFormationTemplate = {
     AWSTemplateFormatVersion: '2010-09-09',
     Description: `Stack ${stack.name} — gerada pelo iacmp`,
     Resources: resources,
   };
+  if (Object.keys(outputs).length > 0) template.Outputs = outputs;
+  return template;
 }

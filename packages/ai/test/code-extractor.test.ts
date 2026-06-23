@@ -41,6 +41,15 @@ describe('extractResponse', () => {
     expect(result.files).toHaveLength(1);
   });
 
+  test('regressao: modelo "pensa alto" e devolve DOIS blocos ```json``` (rascunho + correção) → usa o ÚLTIMO, não o primeiro', () => {
+    const draft = { explanation: 'rascunho com erro', files: [{ path: 'a.ts', content: 'quebrado' }], deletions: [], nextSteps: [], warnings: [] };
+    const fixed = { explanation: 'versão corrigida', files: [{ path: 'a.ts', content: 'certo' }, { path: 'b.ts', content: 'tambem certo' }], deletions: [], nextSteps: [], warnings: [] };
+    const raw = `\`\`\`json\n${JSON.stringify(draft)}\n\`\`\`\n\nErrei, deixa eu reescrever:\n\n\`\`\`json\n${JSON.stringify(fixed)}\n\`\`\``;
+    const result = extractResponse(raw);
+    expect(result.explanation).toBe('versão corrigida');
+    expect(result.files).toHaveLength(2);
+  });
+
   test('campos ausentes recebem defaults', () => {
     const minimal = JSON.stringify({ explanation: 'ok', files: [] });
     const result = extractResponse(minimal);

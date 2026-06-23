@@ -26,12 +26,18 @@ export function providerOutDir(cwd: string, provider: string): string {
   return path.join(synthRoot(cwd), provider);
 }
 
+// Arquivos prefixados com "_" são gerados pelo deploy (ex: `_provider.tf` do
+// Terraform) e não representam uma stack — nunca contam como template.
+function isStackFile(name: string, ext: string): boolean {
+  return name.endsWith(ext) && !name.startsWith('_');
+}
+
 function hasTemplates(dir: string, provider: string): boolean {
   const ext = templateExt(provider);
   try {
     return fs
       .readdirSync(dir)
-      .some(f => f.endsWith(ext) && fs.statSync(path.join(dir, f)).isFile());
+      .some(f => isStackFile(f, ext) && fs.statSync(path.join(dir, f)).isFile());
   } catch {
     return false;
   }
@@ -70,7 +76,7 @@ export function listTemplates(cwd: string, provider: string, stack?: string): Te
   const ext = templateExt(provider);
   return fs
     .readdirSync(dir)
-    .filter(f => f.endsWith(ext) && fs.statSync(path.join(dir, f)).isFile())
+    .filter(f => isStackFile(f, ext) && fs.statSync(path.join(dir, f)).isFile())
     .map(f => ({
       stackName: f.slice(0, -ext.length),
       filePath: path.join(dir, f),
@@ -85,6 +91,89 @@ export function savedTemplatePath(cwd: string, provider: string, stackName: stri
   if (!dir) return null;
   const p = path.join(dir, `${stackName}${templateExt(provider)}`);
   return fs.existsSync(p) ? p : null;
+}
+
+function collectImportValues(node: unknown, found: Set<string>): void {
+  if (Array.isArray(node)) {
+    for (const item of node) collectImportValues(item, found);
+  } else if (node && typeof node === 'object') {
+    for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+      if (key === 'Fn::ImportValue' && typeof value === 'string') {
+        found.add(value);
+      } else {
+        collectImportValues(value, found);
+      }
+    }
+  }
+}
+
+/**
+ * Ordena templates AWS pra que a stack que EXPORTA (`Outputs.*.Export.Name`)
+ * sempre seja deployada/destruída antes/depois da que IMPORTA (`Fn::ImportValue`)
+ * — necessário porque `Fn::ApiGateway` em uma stack pode referenciar
+ * `Fn::Lambda` de outra (ver `cloudformation.ts`). Sem isso, `aws cloudformation
+ * deploy` falharia com "export not found" se a stack importadora subir primeiro.
+ * Provider-agnóstico na forma (só AWS usa Outputs/ImportValue hoje — para os
+ * demais, a ordem de entrada é preservada).
+ */
+export function orderByDependency(templates: TemplateRef[]): TemplateRef[] {
+  const exportsByPath = new Map<string, Set<string>>();
+  const importsByPath = new Map<string, Set<string>>();
+
+  for (const t of templates) {
+    const exportNames = new Set<string>();
+    const importNames = new Set<string>();
+    try {
+      const json = JSON.parse(fs.readFileSync(t.filePath, 'utf-8')) as {
+        Outputs?: Record<string, { Export?: { Name?: string } }>;
+        Resources?: unknown;
+      };
+      for (const output of Object.values(json.Outputs ?? {})) {
+        if (output?.Export?.Name) exportNames.add(output.Export.Name);
+      }
+      collectImportValues(json.Resources, importNames);
+    } catch {
+      // não-JSON (ex: terraform .tf) ou template inválido — sem dependências conhecidas
+    }
+    exportsByPath.set(t.filePath, exportNames);
+    importsByPath.set(t.filePath, importNames);
+  }
+
+  // Kahn's algorithm: aresta exportador → importador (exportador deploya primeiro).
+  const indegree = new Map<string, number>(templates.map(t => [t.filePath, 0]));
+  const edges = new Map<string, string[]>(templates.map(t => [t.filePath, []]));
+
+  for (const importer of templates) {
+    const needed = importsByPath.get(importer.filePath)!;
+    if (needed.size === 0) continue;
+    for (const exporter of templates) {
+      if (exporter.filePath === importer.filePath) continue;
+      const provided = exportsByPath.get(exporter.filePath)!;
+      if ([...needed].some(name => provided.has(name))) {
+        edges.get(exporter.filePath)!.push(importer.filePath);
+        indegree.set(importer.filePath, (indegree.get(importer.filePath) ?? 0) + 1);
+      }
+    }
+  }
+
+  const byPath = new Map(templates.map(t => [t.filePath, t]));
+  const queue = templates.filter(t => indegree.get(t.filePath) === 0);
+  const ordered: TemplateRef[] = [];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    ordered.push(current);
+    for (const nextPath of edges.get(current.filePath) ?? []) {
+      indegree.set(nextPath, indegree.get(nextPath)! - 1);
+      if (indegree.get(nextPath) === 0) queue.push(byPath.get(nextPath)!);
+    }
+  }
+  // Ciclo (não deveria acontecer na prática) — inclui o resto na ordem original
+  // em vez de descartar templates silenciosamente.
+  if (ordered.length < templates.length) {
+    const seen = new Set(ordered.map(t => t.filePath));
+    for (const t of templates) if (!seen.has(t.filePath)) ordered.push(t);
+  }
+  return ordered;
 }
 
 /** Conta recursos em um template sintetizado, de forma agnóstica de provider. */

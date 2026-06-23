@@ -1,6 +1,9 @@
 export { Stack } from './stack';
 export type { BaseConstruct } from './stack';
 
+export { Testing } from './testing';
+export type { TestableStack } from './testing';
+
 export { Compute } from './constructs/compute';
 export type {
   ComputeInstanceProps,
@@ -34,6 +37,7 @@ export type {
   DatabaseSQLProps,
   DatabaseDocumentDBProps,
   DatabaseDynamoDBProps,
+  DynamoDBAttributeType,
 } from './constructs/database';
 
 export { Fn } from './constructs/function';

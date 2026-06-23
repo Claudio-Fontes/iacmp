@@ -126,6 +126,44 @@ describe('comando ls', () => {
     });
   });
 
+  describe('--status', () => {
+    test('provider sem describeStatus implementado (terraform) → avisa e cai pra listagem local, sem travar', () => {
+      dir = makeProject({ provider: 'terraform' });
+
+      const r = runCli(['ls', '--status'], { cwd: dir });
+
+      expect(r.status).toBe(0);
+      expect(r.stdout).toContain('--status ainda não é suportado para o provider "terraform"');
+      expect(r.stdout).toContain('Stacks disponíveis:');
+      expect(r.stdout).toContain('main-stack');
+      // sem provider com describeStatus, nenhuma linha ganha a coluna de status remoto
+      expect(r.stdout).not.toContain('[deployado');
+      expect(r.stdout).not.toContain('[não deployado]');
+    });
+
+    test('sem iacmp.json → avisa e cai pra listagem local, sem travar', () => {
+      dir = makeProject({ noConfig: true });
+
+      const r = runCli(['ls', '--status'], { cwd: dir });
+
+      expect(r.status).toBe(0);
+      expect(r.stdout).toContain('--status exige um projeto inicializado');
+      expect(r.stdout).toContain('Stacks disponíveis:');
+      expect(r.stdout).toContain('main-stack');
+    });
+
+    test('sem --status, comportamento e saída são idênticos aos de antes (nenhuma coluna extra)', () => {
+      dir = makeProject({ provider: 'terraform' });
+
+      const r = runCli(['ls'], { cwd: dir });
+
+      expect(r.status).toBe(0);
+      expect(r.stdout).not.toContain('--status');
+      expect(r.stdout).not.toContain('[deployado');
+      expect(r.stdout).not.toContain('[não deployado]');
+    });
+  });
+
   describe('caminhos sem stacks', () => {
     test('sem o diretório stacks/ instrui a rodar init', () => {
       dir = makeProject({ noStacks: true });

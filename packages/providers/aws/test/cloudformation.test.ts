@@ -1,4 +1,4 @@
-import { Stack, Compute, Storage, Network, Database, Fn, Cache, Messaging, Secret, Custom } from '@iacmp/core';
+import { Stack, Compute, Storage, Network, Database, Fn, Cache, Messaging, Secret, Custom, Policy, Workflow } from '@iacmp/core';
 import { AWSProvider } from '../src';
 
 describe('AWSProvider', () => {
@@ -55,6 +55,12 @@ describe('AWSProvider', () => {
     const tpl = provider.synthesize(stack) as any;
     expect(tpl.Resources.Handler.Type).toBe('AWS::Lambda::Function');
     expect(tpl.Resources.Handler.Properties.Runtime).toBe('nodejs20.x');
+  });
+
+  test('Fn.Lambda → Code é o caminho local como string (não { ZipFile }) — formato que `aws cloudformation package` resolve para S3', () => {
+    new Fn.Lambda(stack, 'Handler', { runtime: 'nodejs20', handler: 'index.handler', code: 'dist/' });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.Handler.Properties.Code).toBe('dist/');
   });
 
   test('instanceType mapping: small→t3.small, medium→t3.medium, large→t3.large', () => {
@@ -128,10 +134,10 @@ describe('AWSProvider', () => {
   });
 
   // ── Regressao TEST-02 ────────────────────────────────────────────────
-  test('regressao: Database.SQL → DeletionPolicy presente (Snapshot por default)', () => {
+  test('regressao: Database.SQL → DeletionPolicy Delete por default, Snapshot requer snapshotOnDelete:true', () => {
     new Database.SQL(stack, 'DB', { engine: 'mysql' });
     const tpl = provider.synthesize(stack) as any;
-    expect(tpl.Resources.DB.DeletionPolicy).toBe('Snapshot');
+    expect(tpl.Resources.DB.DeletionPolicy).toBe('Delete');
   });
 
   test('regressao: Database.SQL com deletionProtection → DeletionPolicy Retain', () => {
@@ -140,16 +146,50 @@ describe('AWSProvider', () => {
     expect(tpl.Resources.DB.DeletionPolicy).toBe('Retain');
   });
 
-  test('regressao: Database.DocumentDB → DeletionPolicy presente no cluster', () => {
+  test('regressao: Database.DocumentDB → DeletionPolicy Delete por default, Snapshot requer snapshotOnDelete:true', () => {
     new Database.DocumentDB(stack, 'Docs', { instances: 1 });
     const tpl = provider.synthesize(stack) as any;
-    expect(tpl.Resources.DocsCluster.DeletionPolicy).toBe('Snapshot');
+    expect(tpl.Resources.DocsCluster.DeletionPolicy).toBe('Delete');
   });
 
   test('regressao: Database.DynamoDB → DeletionPolicy Retain', () => {
     new Database.DynamoDB(stack, 'Tab', { partitionKey: 'id' });
     const tpl = provider.synthesize(stack) as any;
     expect(tpl.Resources.Tab.DeletionPolicy).toBe('Retain');
+  });
+
+  test('Database.DynamoDB sem partitionKeyType/sortKeyType → AttributeType default \'S\' (compat)', () => {
+    new Database.DynamoDB(stack, 'Tab', { partitionKey: 'id', sortKey: 'ts' });
+    const tpl = provider.synthesize(stack) as any;
+    const attrs = tpl.Resources.Tab.Properties.AttributeDefinitions;
+    expect(attrs).toEqual(expect.arrayContaining([
+      { AttributeName: 'id', AttributeType: 'S' },
+      { AttributeName: 'ts', AttributeType: 'S' },
+    ]));
+  });
+
+  test('Database.DynamoDB com partitionKeyType: \'N\' → AttributeType N (regressao: tipo sempre era hardcoded como String)', () => {
+    new Database.DynamoDB(stack, 'Tab', { partitionKey: 'id', partitionKeyType: 'N' });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.Tab.Properties.AttributeDefinitions).toEqual([
+      { AttributeName: 'id', AttributeType: 'N' },
+    ]);
+  });
+
+  test('Database.DynamoDB com sortKeyType e GSI com partitionKeyType próprios', () => {
+    new Database.DynamoDB(stack, 'Tab', {
+      partitionKey: 'id',
+      partitionKeyType: 'N',
+      sortKey: 'createdAt',
+      sortKeyType: 'S',
+      globalSecondaryIndexes: [{ name: 'byStatus', partitionKey: 'status', partitionKeyType: 'S' }],
+    });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.Tab.Properties.AttributeDefinitions).toEqual(expect.arrayContaining([
+      { AttributeName: 'id', AttributeType: 'N' },
+      { AttributeName: 'createdAt', AttributeType: 'S' },
+      { AttributeName: 'status', AttributeType: 'S' },
+    ]));
   });
 
   test('regressao: Fn.Lambda Environment.Variables sai como objeto (nao envelope name/value)', () => {
@@ -193,6 +233,19 @@ describe('AWSProvider', () => {
     expect(tpl.Resources.VpcPublicSubnetB).toBeDefined();
     expect(tpl.Resources.VpcPublicSubnetC).toBeDefined();
     expect(tpl.Resources.VpcPublicSubnetD).toBeUndefined();
+  });
+
+  test('regressao: Network.VPC com maxAzs → exporta SubnetId real das subnets publicas/privadas auto-geradas como Outputs', () => {
+    new Network.VPC(stack, 'Vpc', { cidr: '10.0.0.0/16', maxAzs: 2 } as any);
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Outputs.VpcPublicSubnetASubnetId).toEqual({
+      Value: { Ref: 'VpcPublicSubnetA' },
+      Export: { Name: 'test-stack-Vpc-PublicA-SubnetId' },
+    });
+    expect(tpl.Outputs.VpcPrivateSubnetASubnetId).toEqual({
+      Value: { Ref: 'VpcPrivateSubnetA' },
+      Export: { Name: 'test-stack-Vpc-PrivateA-SubnetId' },
+    });
   });
 
   test('regressao: Network.VPC sem maxAzs → nao gera subnets filhas', () => {
@@ -240,13 +293,232 @@ describe('AWSProvider', () => {
     expect(route.Properties.AuthorizerId).toEqual({ Ref: 'ApiAuthorizer' });
   });
 
+  test('regressao: Fn.ApiGateway sem description → propriedade Description omitida (não string vazia — ApiGateway rejeita com 400)', () => {
+    new Fn.ApiGateway(stack, 'Api', { name: 'my-api', type: 'REST', routes: [] });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.Api.Properties.Description).toBeUndefined();
+  });
+
+  test('Fn.ApiGateway com description → propriedade Description presente', () => {
+    new Fn.ApiGateway(stack, 'Api', { name: 'my-api', type: 'REST', description: 'minha api', routes: [] });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.Api.Properties.Description).toBe('minha api');
+  });
+
   test('Fn.ApiGateway sem authorizerLambdaId → não gera Authorizer', () => {
     new Fn.ApiGateway(stack, 'Api', { name: 'my-api', routes: [] });
     const tpl = provider.synthesize(stack) as any;
     expect(tpl.Resources.ApiAuthorizer).toBeUndefined();
   });
 
+  test('Fn.ApiGateway type HTTP → gera AWS::Lambda::Permission pra cada lambda referenciada (rota e authorizer)', () => {
+    new Fn.Lambda(stack, 'AuthFn', { runtime: 'nodejs20', handler: 'index.handler', code: 'dist/' });
+    new Fn.Lambda(stack, 'HelloFn', { runtime: 'nodejs20', handler: 'index.handler', code: 'dist/' });
+    new Fn.ApiGateway(stack, 'Api', {
+      name: 'my-api',
+      authorizerLambdaId: 'AuthFn',
+      routes: [{ method: 'GET', path: '/hello', lambdaId: 'HelloFn' }],
+    });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.HelloFnApiPermission.Type).toBe('AWS::Lambda::Permission');
+    expect(tpl.Resources.HelloFnApiPermission.Properties.Principal).toBe('apigateway.amazonaws.com');
+    expect(tpl.Resources.AuthFnApiPermission.Type).toBe('AWS::Lambda::Permission');
+  });
+
+  test('Fn.ApiGateway type HTTP → Permission é deduplicada quando a mesma lambda atende duas rotas', () => {
+    new Fn.Lambda(stack, 'HelloFn', { runtime: 'nodejs20', handler: 'index.handler', code: 'dist/' });
+    new Fn.ApiGateway(stack, 'Api', {
+      name: 'my-api',
+      routes: [
+        { method: 'GET', path: '/hello', lambdaId: 'HelloFn' },
+        { method: 'POST', path: '/hello', lambdaId: 'HelloFn' },
+      ],
+    });
+    const tpl = provider.synthesize(stack) as any;
+    const permissionKeys = Object.keys(tpl.Resources).filter(k => tpl.Resources[k].Type === 'AWS::Lambda::Permission');
+    expect(permissionKeys).toEqual(['HelloFnApiPermission']);
+  });
+
+  describe('Fn.ApiGateway type REST (API Gateway v1)', () => {
+    test('gera Resource/Method/Deployment/Stage reais (não ApiGatewayV2)', () => {
+      new Fn.Lambda(stack, 'SaveFn', { runtime: 'nodejs20', handler: 'i.h', code: 'dist/' });
+      new Fn.Lambda(stack, 'GetFn', { runtime: 'nodejs20', handler: 'i.h', code: 'dist/' });
+      new Fn.ApiGateway(stack, 'Api', {
+        name: 'my-api',
+        type: 'REST',
+        stageName: 'prod',
+        routes: [
+          { method: 'POST', path: '/messages', lambdaId: 'SaveFn' },
+          { method: 'GET', path: '/messages/{id}', lambdaId: 'GetFn' },
+        ],
+      });
+      const tpl = provider.synthesize(stack) as any;
+
+      expect(tpl.Resources.Api.Type).toBe('AWS::ApiGateway::RestApi');
+
+      // Resource tree: /messages e /messages/{id} compartilham o segmento "messages"
+      const resourceTypes = Object.entries(tpl.Resources).filter(([, r]: any) => r.Type === 'AWS::ApiGateway::Resource');
+      expect(resourceTypes).toHaveLength(2);
+      const messagesResource = resourceTypes.find(([, r]: any) => r.Properties.PathPart === 'messages')![0];
+      const idResource = resourceTypes.find(([, r]: any) => r.Properties.PathPart === '{id}')!;
+      expect((idResource[1] as any).Properties.ParentId).toEqual({ Ref: messagesResource });
+
+      // Method aninha a Integration (não cria um recurso Integration separado, diferente do v2)
+      const postMethod = Object.values(tpl.Resources).find((r: any) => r.Type === 'AWS::ApiGateway::Method' && r.Properties.HttpMethod === 'POST') as any;
+      expect(postMethod.Properties.Integration.Type).toBe('AWS_PROXY');
+      expect(postMethod.Properties.Integration.Uri['Fn::Sub']).toContain('SaveFn.Arn');
+
+      // Deployment depende de todos os Methods; Stage referencia o Deployment
+      const deployment = Object.entries(tpl.Resources).find(([, r]: any) => r.Type === 'AWS::ApiGateway::Deployment')!;
+      const methodIds = Object.entries(tpl.Resources).filter(([, r]: any) => r.Type === 'AWS::ApiGateway::Method').map(([id]) => id);
+      expect((deployment[1] as any).DependsOn).toEqual(expect.arrayContaining(methodIds));
+
+      expect(tpl.Resources.ApiStage.Type).toBe('AWS::ApiGateway::Stage');
+      expect(tpl.Resources.ApiStage.Properties.DeploymentId).toEqual({ Ref: deployment[0] });
+      expect(tpl.Resources.ApiStage.Properties.StageName).toBe('prod');
+    });
+
+    test('cors:true → gera Method OPTIONS com integração MOCK por resource', () => {
+      new Fn.Lambda(stack, 'HelloFn', { runtime: 'nodejs20', handler: 'i.h', code: 'dist/' });
+      new Fn.ApiGateway(stack, 'Api', {
+        name: 'my-api',
+        type: 'REST',
+        cors: true,
+        routes: [{ method: 'GET', path: '/hello', lambdaId: 'HelloFn' }],
+      });
+      const tpl = provider.synthesize(stack) as any;
+      const optionsMethod = Object.values(tpl.Resources).find((r: any) => r.Type === 'AWS::ApiGateway::Method' && r.Properties.HttpMethod === 'OPTIONS') as any;
+      expect(optionsMethod).toBeDefined();
+      expect(optionsMethod.Properties.Integration.Type).toBe('MOCK');
+      expect(optionsMethod.Properties.Integration.IntegrationResponses[0].ResponseParameters['method.response.header.Access-Control-Allow-Origin']).toBe("'*'");
+    });
+
+    test('authorizerLambdaId → gera AWS::ApiGateway::Authorizer (v1, não v2) com IdentitySource string', () => {
+      new Fn.Lambda(stack, 'AuthFn', { runtime: 'nodejs20', handler: 'i.h', code: 'dist/' });
+      new Fn.Lambda(stack, 'HelloFn', { runtime: 'nodejs20', handler: 'i.h', code: 'dist/' });
+      new Fn.ApiGateway(stack, 'Api', {
+        name: 'my-api',
+        type: 'REST',
+        authorizerLambdaId: 'AuthFn',
+        routes: [{ method: 'GET', path: '/hello', lambdaId: 'HelloFn' }],
+      });
+      const tpl = provider.synthesize(stack) as any;
+      expect(tpl.Resources.ApiAuthorizer.Type).toBe('AWS::ApiGateway::Authorizer');
+      expect(typeof tpl.Resources.ApiAuthorizer.Properties.IdentitySource).toBe('string');
+    });
+
+    test('gera AWS::Lambda::Permission pras lambdas das rotas REST, igual ao HTTP', () => {
+      new Fn.Lambda(stack, 'HelloFn', { runtime: 'nodejs20', handler: 'i.h', code: 'dist/' });
+      new Fn.ApiGateway(stack, 'Api', {
+        name: 'my-api',
+        type: 'REST',
+        routes: [{ method: 'GET', path: '/hello', lambdaId: 'HelloFn' }],
+      });
+      const tpl = provider.synthesize(stack) as any;
+      expect(tpl.Resources.HelloFnApiPermission.Type).toBe('AWS::Lambda::Permission');
+      expect(tpl.Resources.HelloFnApiPermission.Properties.SourceArn['Fn::Sub']).toContain('execute-api');
+    });
+  });
+
+  describe('Fn.ApiGateway — referência a Function.Lambda entre stacks (synthesize com allStacks)', () => {
+    test('lambda na MESMA stack → referência local (Fn::Sub/Fn::GetAtt), nunca Fn::ImportValue', () => {
+      new Fn.Lambda(stack, 'HelloFn', { runtime: 'nodejs20', handler: 'i.h', code: 'dist/' });
+      new Fn.ApiGateway(stack, 'Api', { name: 'my-api', routes: [{ method: 'GET', path: '/hello', lambdaId: 'HelloFn' }] });
+
+      const tpl = provider.synthesize(stack, [stack]) as any;
+      const integration = tpl.Resources.ApiGEThelloRouteIntegration;
+      expect(integration.Properties.IntegrationUri['Fn::Sub']).toContain('HelloFn.Arn');
+      expect(JSON.stringify(integration)).not.toContain('Fn::ImportValue');
+    });
+
+    test('lambda em OUTRA stack → Fn::ImportValue na stack do gateway + Outputs/Export na stack da lambda', () => {
+      const lambdaStack = new Stack('lambda-stack');
+      new Fn.Lambda(lambdaStack, 'HelloFn', { runtime: 'nodejs20', handler: 'i.h', code: 'dist/' });
+      new Fn.ApiGateway(stack, 'Api', { name: 'my-api', routes: [{ method: 'GET', path: '/hello', lambdaId: 'HelloFn' }] });
+
+      const allStacks = [stack, lambdaStack];
+      const apiTpl = provider.synthesize(stack, allStacks) as any;
+      const lambdaTpl = provider.synthesize(lambdaStack, allStacks) as any;
+
+      const integration = apiTpl.Resources.ApiGEThelloRouteIntegration;
+      expect(integration.Properties.IntegrationUri['Fn::Sub'][1].LambdaArn).toEqual({ 'Fn::ImportValue': 'lambda-stack-HelloFn-Arn' });
+
+      const permission = apiTpl.Resources.HelloFnApiPermission;
+      expect(permission.Properties.FunctionName).toEqual({ 'Fn::ImportValue': 'lambda-stack-HelloFn-Arn' });
+
+      expect(lambdaTpl.Outputs.HelloFnArn).toEqual({
+        Value: { 'Fn::GetAtt': ['HelloFn', 'Arn'] },
+        Export: { Name: 'lambda-stack-HelloFn-Arn' },
+      });
+    });
+
+    test('lambdaId que não existe em nenhuma stack → lança erro claro', () => {
+      new Fn.ApiGateway(stack, 'Api', { name: 'my-api', routes: [{ method: 'GET', path: '/x', lambdaId: 'NaoExiste' }] });
+      expect(() => provider.synthesize(stack, [stack])).toThrow('NaoExiste');
+    });
+
+    test('authorizerLambdaId em outra stack também resolve via Fn::ImportValue', () => {
+      const lambdaStack = new Stack('lambda-stack');
+      new Fn.Lambda(lambdaStack, 'AuthFn', { runtime: 'nodejs20', handler: 'i.h', code: 'dist/' });
+      new Fn.ApiGateway(stack, 'Api', { name: 'my-api', authorizerLambdaId: 'AuthFn', routes: [] });
+
+      const apiTpl = provider.synthesize(stack, [stack, lambdaStack]) as any;
+      expect(apiTpl.Resources.ApiAuthorizer.Properties.AuthorizerUri['Fn::Sub'][1].LambdaArn).toEqual({ 'Fn::ImportValue': 'lambda-stack-AuthFn-Arn' });
+    });
+  });
+
+  describe('Fn.Lambda — Role IAM assumível (regressão: role hardcoded "LambdaExecutionRole" não existia de verdade)', () => {
+    test('sem Policy.IAM correspondente → gera role mínima padrão inline e referencia ela', () => {
+      new Fn.Lambda(stack, 'HelloFn', { runtime: 'nodejs20', handler: 'i.h', code: 'dist/' });
+      const tpl = provider.synthesize(stack) as any;
+
+      expect(tpl.Resources.HelloFn.Properties.Role).toEqual({ 'Fn::GetAtt': ['HelloFnDefaultRole', 'Arn'] });
+      expect(tpl.Resources.HelloFnDefaultRole.Type).toBe('AWS::IAM::Role');
+      expect(tpl.Resources.HelloFnDefaultRole.Properties.AssumeRolePolicyDocument.Statement[0].Principal.Service).toBe('lambda.amazonaws.com');
+      expect(tpl.Resources.HelloFnDefaultRole.Properties.ManagedPolicyArns).toContain(
+        'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      );
+      expect(JSON.stringify(tpl.Resources.HelloFn.Properties.Role)).not.toContain('LambdaExecutionRole');
+    });
+
+    test('com Policy.IAM (attachType: lambda) na MESMA stack → referencia a role do Policy.IAM, sem role default', () => {
+      new Fn.Lambda(stack, 'HelloFn', { runtime: 'nodejs20', handler: 'i.h', code: 'dist/' });
+      new Policy.IAM(stack, 'HelloFnPolicy', {
+        attachTo: 'HelloFn',
+        attachType: 'lambda',
+        statements: [{ effect: 'Allow', actions: ['dynamodb:GetItem'] }],
+      });
+
+      const tpl = provider.synthesize(stack) as any;
+      expect(tpl.Resources.HelloFn.Properties.Role).toEqual({ 'Fn::GetAtt': ['HelloFnPolicyRole', 'Arn'] });
+      expect(tpl.Resources.HelloFnDefaultRole).toBeUndefined();
+    });
+
+    test('com Policy.IAM (attachType: lambda) em OUTRA stack → Fn::ImportValue do RoleArn + Outputs/Export na stack da policy', () => {
+      const policyStack = new Stack('policy-stack');
+      new Fn.Lambda(stack, 'HelloFn', { runtime: 'nodejs20', handler: 'i.h', code: 'dist/' });
+      new Policy.IAM(policyStack, 'HelloFnPolicy', {
+        attachTo: 'HelloFn',
+        attachType: 'lambda',
+        statements: [{ effect: 'Allow', actions: ['dynamodb:GetItem'] }],
+      });
+
+      const allStacks = [stack, policyStack];
+      const lambdaTpl = provider.synthesize(stack, allStacks) as any;
+      const policyTpl = provider.synthesize(policyStack, allStacks) as any;
+
+      expect(lambdaTpl.Resources.HelloFn.Properties.Role).toEqual({
+        'Fn::ImportValue': 'policy-stack-HelloFnPolicyRole-RoleArn',
+      });
+      expect(policyTpl.Outputs.HelloFnPolicyRoleRoleArn).toEqual({
+        Value: { 'Fn::GetAtt': ['HelloFnPolicyRole', 'Arn'] },
+        Export: { Name: 'policy-stack-HelloFnPolicyRole-RoleArn' },
+      });
+    });
+  });
+
   test('Custom.Resource → gera resource CloudFormation a partir do props.cloudformation', () => {
+    new Secret.Vault(stack, 'MySecret', {});
     new Custom.Resource(stack, 'RotationSchedule', {
       cloudformation: {
         type: 'AWS::SecretsManager::RotationSchedule',
@@ -256,5 +528,120 @@ describe('AWSProvider', () => {
     const tpl = provider.synthesize(stack) as any;
     expect(tpl.Resources.RotationSchedule.Type).toBe('AWS::SecretsManager::RotationSchedule');
     expect(tpl.Resources.RotationSchedule.Properties.RotationRules.AutomaticallyAfterDays).toBe(30);
+  });
+
+  test('regressao: Custom.Resource com Fn::GetAtt pra recurso que não existe na stack → synth falha (em vez de só o aws cloudformation deploy)', () => {
+    new Custom.Resource(stack, 'MessagesSeed', {
+      cloudformation: {
+        type: 'AWS::CloudFormation::CustomResource',
+        properties: { ServiceToken: { 'Fn::GetAtt': ['MessagesSeedFn', 'Arn'] } },
+      },
+    });
+    expect(() => provider.synthesize(stack)).toThrow(/MessagesSeedFn/);
+  });
+
+  describe('regressao: wiring de VPC/subnet/role real (antes: SubnetIds/Subnets hardcoded [], roles apontando pra nomes que nunca existiam)', () => {
+    test('Compute.Instance com subnetId/securityGroupIds → propriedades presentes no EC2', () => {
+      new Compute.Instance(stack, 'Web', {
+        instanceType: 'small', image: 'ubuntu-22.04',
+        subnetId: 'subnet-abc123', securityGroupIds: ['sg-abc123'],
+      });
+      const tpl = provider.synthesize(stack) as any;
+      expect(tpl.Resources.Web.Properties.SubnetId).toBe('subnet-abc123');
+      expect(tpl.Resources.Web.Properties.SecurityGroupIds).toEqual(['sg-abc123']);
+    });
+
+    test('Compute.Container (ECS) → Subnets reais (não []) e ExecutionRoleArn aponta pra role gerada de verdade', () => {
+      new Compute.Container(stack, 'Api', {
+        image: 'nginx:latest', subnetIds: ['subnet-a', 'subnet-b'], securityGroupIds: ['sg-x'],
+      });
+      const tpl = provider.synthesize(stack) as any;
+      expect(tpl.Resources.ApiService.Properties.NetworkConfiguration.AwsvpcConfiguration.Subnets)
+        .toEqual(['subnet-a', 'subnet-b']);
+      expect(tpl.Resources.ApiService.Properties.NetworkConfiguration.AwsvpcConfiguration.SecurityGroups)
+        .toEqual(['sg-x']);
+      expect(tpl.Resources.ApiTaskDef.Properties.ExecutionRoleArn).toEqual({ 'Fn::GetAtt': ['ApiExecutionRole', 'Arn'] });
+      expect(tpl.Resources.ApiExecutionRole.Type).toBe('AWS::IAM::Role');
+      expect(tpl.Resources.ApiExecutionRole.Properties.AssumeRolePolicyDocument.Statement[0].Principal.Service)
+        .toBe('ecs-tasks.amazonaws.com');
+      expect(JSON.stringify(tpl.Resources.ApiTaskDef.Properties.ExecutionRoleArn)).not.toContain('ecsTaskExecutionRole');
+    });
+
+    test('Compute.Kubernetes (EKS) → SubnetIds reais no cluster e nodegroup, roles geradas de verdade (não Fn::Sub pra nome inexistente)', () => {
+      new Compute.Kubernetes(stack, 'MyCluster', { subnetIds: ['subnet-a', 'subnet-b'] });
+      const tpl = provider.synthesize(stack) as any;
+      expect(tpl.Resources.MyCluster.Properties.ResourcesVpcConfig.SubnetIds).toEqual(['subnet-a', 'subnet-b']);
+      expect(tpl.Resources.MyClusterNodeGroup.Properties.Subnets).toEqual(['subnet-a', 'subnet-b']);
+
+      expect(tpl.Resources.MyCluster.Properties.RoleArn).toEqual({ 'Fn::GetAtt': ['MyClusterClusterRole', 'Arn'] });
+      expect(tpl.Resources.MyClusterClusterRole.Properties.AssumeRolePolicyDocument.Statement[0].Principal.Service)
+        .toBe('eks.amazonaws.com');
+
+      expect(tpl.Resources.MyClusterNodeGroup.Properties.NodeRole).toEqual({ 'Fn::GetAtt': ['MyClusterNodeRole', 'Arn'] });
+      expect(tpl.Resources.MyClusterNodeRole.Properties.AssumeRolePolicyDocument.Statement[0].Principal.Service)
+        .toBe('ec2.amazonaws.com');
+
+      expect(JSON.stringify(tpl.Resources)).not.toContain('EKSClusterRole');
+      expect(JSON.stringify(tpl.Resources)).not.toContain('EKSNodeRole');
+    });
+
+    test('Database.SQL (RDS) com subnetIds → gera DBSubnetGroup real e referencia DBSubnetGroupName/VPCSecurityGroups', () => {
+      new Database.SQL(stack, 'Db', {
+        engine: 'postgres', subnetIds: ['subnet-a', 'subnet-b'], securityGroupIds: ['sg-db'],
+      });
+      const tpl = provider.synthesize(stack) as any;
+      expect(tpl.Resources.DbSubnetGroup.Type).toBe('AWS::RDS::DBSubnetGroup');
+      expect(tpl.Resources.DbSubnetGroup.Properties.SubnetIds).toEqual(['subnet-a', 'subnet-b']);
+      expect(tpl.Resources.Db.Properties.DBSubnetGroupName).toEqual({ Ref: 'DbSubnetGroup' });
+      expect(tpl.Resources.Db.Properties.VPCSecurityGroups).toEqual(['sg-db']);
+    });
+
+    test('Database.SQL (RDS) sem subnetIds → não gera DBSubnetGroup (compat, conta com VPC default)', () => {
+      new Database.SQL(stack, 'Db', { engine: 'postgres' });
+      const tpl = provider.synthesize(stack) as any;
+      expect(tpl.Resources.DbSubnetGroup).toBeUndefined();
+      expect(tpl.Resources.Db.Properties.DBSubnetGroupName).toBeUndefined();
+    });
+
+    test('Database.DocumentDB com subnetIds → gera DBSubnetGroup real no cluster', () => {
+      new Database.DocumentDB(stack, 'Docs', { instances: 1, subnetIds: ['subnet-a'], securityGroupIds: ['sg-docs'] });
+      const tpl = provider.synthesize(stack) as any;
+      expect(tpl.Resources.DocsClusterSubnetGroup.Type).toBe('AWS::DocDB::DBSubnetGroup');
+      expect(tpl.Resources.DocsCluster.Properties.DBSubnetGroupName).toEqual({ Ref: 'DocsClusterSubnetGroup' });
+      expect(tpl.Resources.DocsCluster.Properties.VpcSecurityGroupIds).toEqual(['sg-docs']);
+    });
+
+    test('Network.LoadBalancer target group → VpcId real (props.vpcId), não string vazia', () => {
+      new Network.LoadBalancer(stack, 'Alb', {
+        vpcId: 'vpc-real123',
+        targetGroups: [{ name: 'api-tg', port: 80, protocol: 'HTTP' }],
+      });
+      const tpl = provider.synthesize(stack) as any;
+      const tg = tpl.Resources.AlbTGapitg;
+      expect(tg.Properties.VpcId).toBe('vpc-real123');
+    });
+
+    test('Workflow.StepFunctions → RoleArn referencia role gerada de verdade (não Fn::Sub pra StepFunctionsExecutionRole inexistente)', () => {
+      new Workflow.StepFunctions(stack, 'Flow', { steps: [{ name: 'Start' }] });
+      const tpl = provider.synthesize(stack) as any;
+      expect(tpl.Resources.Flow.Properties.RoleArn).toEqual({ 'Fn::GetAtt': ['FlowExecutionRole', 'Arn'] });
+      expect(tpl.Resources.FlowExecutionRole.Type).toBe('AWS::IAM::Role');
+      expect(tpl.Resources.FlowExecutionRole.Properties.AssumeRolePolicyDocument.Statement[0].Principal.Service)
+        .toBe('states.amazonaws.com');
+      expect(JSON.stringify(tpl.Resources.Flow.Properties.RoleArn)).not.toContain('StepFunctionsExecutionRole');
+    });
+
+    test('Network.VPC/Subnet/SecurityGroup → IDs exportados como Outputs (pra harness/outra stack referenciar de verdade)', () => {
+      new Network.VPC(stack, 'Vpc', { cidr: '10.0.0.0/16' });
+      new Network.Subnet(stack, 'Sub', { vpcId: 'vpc-x', cidr: '10.0.0.0/24' });
+      new Network.SecurityGroup(stack, 'Sg', { vpcId: 'vpc-x' });
+      const tpl = provider.synthesize(stack) as any;
+      expect(tpl.Outputs.VpcVpcId).toEqual({ Value: { Ref: 'Vpc' }, Export: { Name: 'test-stack-Vpc-VpcId' } });
+      expect(tpl.Outputs.SubSubnetId).toEqual({ Value: { Ref: 'Sub' }, Export: { Name: 'test-stack-Sub-SubnetId' } });
+      expect(tpl.Outputs.SgGroupId).toEqual({
+        Value: { 'Fn::GetAtt': ['Sg', 'GroupId'] },
+        Export: { Name: 'test-stack-Sg-GroupId' },
+      });
+    });
   });
 });

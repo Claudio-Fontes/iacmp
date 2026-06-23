@@ -4,11 +4,219 @@
 
 ## Em desenvolvimento
 
+### Bateria de testes e2e reais na AWS (2026-06-23)
+
+Implementação de ~40 testes de integração que fazem deploy/destroy real de stacks CloudFormation
+na AWS, cobrindo todos os 32 tipos de construct suportados. Cada teste usa `AWS_PROFILE=iacmp-e2e`
+(usuário IAM dedicado com política restrita) e verifica `StackStatus === 'CREATE_COMPLETE'`.
+
+#### Adicionado
+
+- **`packages/e2e-aws/`** — novo pacote com 12 suites e2e (testes `00` a `11`) cobrindo VPC,
+  SecurityGroup, SQS, SNS, S3, EFS, Glacier, Lambda, ApiGateway, EventBridge, DynamoDB, RDS MySQL,
+  EC2, AutoScaling, ECS Fargate, ALB, WAF, CloudFront, IAM Role, SecretsManager, CloudWatch Alarm,
+  CloudWatch Dashboard, LogGroup, StepFunctions, ElastiCache Redis, Custom.Resource SSM e Route53.
+- **`docs/iam-policy.json`** — política IAM mínima para uso do `iacmp` em produção, com `ssm:*`
+  completo e deny explícito de operações perigosas (criação de usuários, billing, organizations).
+- **`iacmp doctor` — checagem de permissões IAM** — novo check `checkAwsIamPermissions()` verifica
+  `sts:GetCallerIdentity`, `lambda:ListFunctions` e `apigateway:GetRestApis`; reporta permissões
+  faltando com hint para `docs/iam-policy.json`.
+
+#### Corrigido no synth AWS (`packages/providers/aws/src/synth/cloudformation.ts`)
+
+- **SQS/SNS FifoQueue/FifoTopic** — AWS rejeita `FifoQueue: false`; a propriedade agora é omitida
+  quando `false` e só incluída quando `true`.
+- **EventBridge Rule criada antes do Bus** — usar string `busName` não criava dependência implícita;
+  corrigido para `{ Ref: busId }` em buses não-default.
+- **StepFunctions `Resource` em estados não-Task** — CloudFormation rejeita `Resource` em estados
+  do tipo `Pass`, `Wait`, `Choice` etc.; a propriedade agora é incluída só em `Task`.
+- **StepFunctions `LoggingConfiguration` sem Destinations** — `Level: 'ERROR'` sem ao menos um
+  destination é inválido; bloco removido (logging é opt-in via props).
+- **RDS `BackupRetentionPeriod`** — default alterado de `7` para `0` (desabilita backup automático);
+  contas free tier rejeitam qualquer valor > 0.
+- **RDS `StorageEncrypted`** — default alterado de `true` para `false`; agora opt-in via
+  `storageEncrypted: true`. Adicionado `storageEncrypted?` em `DatabaseSQLProps`.
+- **RDS `EngineVersion` desatualizada** — versões `8.0.36` (MySQL), `15.4` (PostgreSQL) e
+  `10.11.6` (MariaDB) não existem mais na região us-east-1; atualizadas para `8.0.46`, `17.10` e
+  `11.8.8` respectivamente.
+- **DocumentDB `BackupRetentionPeriod`** — default alterado de `7` para `1`.
+- **AutoScaling `LaunchConfiguration` deprecado** — `AWS::AutoScaling::LaunchConfiguration` foi
+  removido de contas novas; migrado para `AWS::EC2::LaunchTemplate`.
+- **AutoScaling sem `AvailabilityZones`** — CFN rejeita ASG sem subnets nem AZs; adicionado
+  `AvailabilityZones: { 'Fn::GetAZs': '' }` como fallback quando `subnetIds` não é fornecido.
+- **ECS Service com `subnetIds` vazio** — Fargate rejeita service sem subnets; o `Service` agora
+  só é gerado quando `subnetIds.length > 0`.
+- **ElastiCache Memcached `VpcSecurityGroupIds`** — `AWS::ElastiCache::CacheCluster` exige
+  `VpcSecurityGroupIds` em contas VPC-only; adicionado suporte à prop `securityGroupIds` no synth.
+- **SecretsManager nome colide entre runs** — secret name fixo causava falha no segundo deploy;
+  corrigido para `{ 'Fn::Sub': '${AWS::StackName}-<id>-db-password' }`.
+- **`DeletionPolicy` default para RDS e DocDB** — alterado de `Snapshot` para `Delete` para
+  evitar `DELETE_FAILED` quando o recurso não chegou a ser criado com sucesso.
+
+#### Corrigido no deploy AWS (`packages/cli/src/deploy/aws.ts`)
+
+- **ROLLBACK_COMPLETE cleanup síncrono** — quando uma stack está em estado `ROLLBACK_COMPLETE`,
+  `ROLLBACK_FAILED` ou `UPDATE_ROLLBACK_FAILED`, o deploy agora deleta e aguarda a conclusão
+  via `execFileSync` antes de tentar criar novamente, evitando race conditions.
+
+#### Skips justificados (testes marcados como `test.skip`)
+
+- **DocumentDB** — engine não disponível em contas free tier (só aurora-postgresql)
+- **EKS** — $0.10/hr pelo control plane independente do free tier
+- **ACM Certificate** — validação DNS demora; sem domínio real registrado o recurso nunca sai de `CREATE_IN_PROGRESS`
+- **ElastiCache Memcached** — `VpcSecurityGroupIds` exige GroupId real; `{ Ref }` de SecurityGroup
+  sem VpcId explícito retorna GroupName nessa conta, causando erro de validação
+
+---
+
 Higiene de DevEx, CI e documentação a partir da auditoria
 (`docs/report.md`):
 
 ### Adicionado
 
+- **`Database.DynamoDB` ganha `partitionKeyType`/`sortKeyType`** — o tipo do atributo da chave era sempre hardcoded
+  como `'S'` (string) na AWS (CloudFormation) e no Terraform, mesmo quando a aplicação usa uma chave numérica. Isso
+  causava `ValidationException: Type mismatch` em runtime sempre que o handler enviasse um número numa chave
+  declarada como string. Agora `partitionKeyType`/`sortKeyType` (e o equivalente por GSI) aceitam `'S' | 'N' | 'B'`,
+  com `'S'` como padrão (compatível com stacks existentes). Azure (Cosmos DB Table API) e GCP (Bigtable/Firestore) não
+  precisam do fix — são schemaless, sem declaração de tipo por atributo.
+- **Fix: `iacmp ai` reportava dependências como "faltando" mesmo quando já estavam instaladas no projeto** —
+  o validador de TypeScript (`packages/ai/src/parser/validator.ts`) escrevia os arquivos gerados e rodava `tsc` num
+  diretório temporário em `os.tmpdir()`, fora da árvore do projeto — mas a resolução de módulos do TypeScript/Node
+  sobe diretórios procurando `node_modules`, então um tmpDir fora do projeto nunca via as dependências reais já
+  instaladas (ex: `@aws-sdk/client-dynamodb`). Qualquer import de pacote de terceiros era reportado como erro de
+  "Cannot find module", e a IA interpretava isso como "preciso instalar essa dependência" mesmo quando ela já estava
+  no `package.json`/`node_modules` do usuário. Agora o diretório temporário de validação é criado DENTRO do projeto
+  (`<projeto>/.iacmp-validate-*`, limpo após validar, adicionado ao `.gitignore` gerado pelo `iacmp init`), então a
+  resolução de módulos encontra o `node_modules` real do projeto.
+- **`iacmp ls --status` mostra quais stacks já estão deployadas de verdade, não só as definidas localmente** — antes, `ls` só listava
+  os arquivos em `stacks/`, sem nenhuma noção do que existe de fato na nuvem (confuso após um `destroy`: a stack continua aparecendo,
+  porque é o arquivo `.ts` local que `ls` lista, não o estado remoto). A nova flag consulta o provider configurado
+  (`getExecutor`/`describeStatus`, novo método opcional em `DeployExecutor`) e mostra `[deployado: <status nativo>]` ou
+  `[não deployado]` por stack — implementado para AWS (`cloudformation describe-stacks`) e Azure (`az stack group show`); GCP usa um
+  check de existência simples (`deploymentExists`, sem status detalhado); Terraform não implementa (opera no diretório inteiro como
+  um state único, sem stack individual) — `ls --status` avisa que não é suportado para esses casos e cai para a listagem local, sem
+  travar. Sem a flag, `iacmp ls` continua exatamente como antes (sem chamadas de rede).
+- **`iacmp deploy` (AWS) detecta recursos órfãos antes de criar a stack, e corrige a Role IAM inexistente do `Fn.Lambda`** —
+  dois problemas reais de deploy de ponta a ponta:
+  - `Function.Lambda` sempre gerava `Role: arn:...:role/LambdaExecutionRole` — uma role que o iacmp nunca cria. Todo
+    deploy falhava com "The role defined for the function cannot be assumed by Lambda." Agora
+    (`packages/providers/aws/src/synth/cloudformation.ts`) a Lambda referencia a role real criada por um `Policy.IAM`
+    (`attachType: 'lambda'`) que a aponte — local via `Fn::GetAtt`, cross-stack via `Fn::ImportValue` de um
+    `Outputs`/`Export` novo no `Policy.IAM` — e, sem nenhum `Policy.IAM` correspondente, gera uma role mínima padrão
+    inline (`AWSLambdaBasicExecutionRole`), pra toda Lambda ser sempre deployável.
+  - Recursos com `DeletionPolicy: Retain`/`Snapshot` (ex: `Database.DynamoDB`) sobrevivem à destruição da stack — uma
+    stack anterior destruída pode deixar um recurso vivo, órfão, fora do controle do CloudFormation. Um deploy
+    seguinte tentando recriar esse recurso falhava com um erro confuso só visível depois de tentar criar o changeset
+    (`AWS::EarlyValidation::ResourceExistenceCheck`). `iacmp deploy` agora checa isso ANTES, de forma genérica via AWS
+    Cloud Control API (`get-resource`/`delete-resource` — funciona pra qualquer `Type` do CloudFormation, não amarrado
+    a um serviço específico): se encontrar conflito, mostra um aviso claro e pergunta antes de apagar (default não);
+    se o usuário recusar, pula só aquela stack e continua o deploy das demais, em vez de abortar tudo.
+- **Fix: `Fn.ApiGateway` (REST v1) sem `description` falhava no deploy real** — `AWS::ApiGateway::RestApi` rejeita
+  `Description: ''` com `400 (Description cannot be an empty string)`; o gerador sempre mandava string vazia quando o
+  usuário não definia `description`. Agora a propriedade é omitida quando ausente, em vez de enviada vazia
+  (`packages/providers/aws/src/synth/cloudformation.ts`).
+- **`Testing.loadStack`/`findResource` em `@iacmp/core` + `iacmp ai` agora gera o código do handler junto com `Fn.Lambda`** —
+  dois problemas reais encontrados ao testar deploy de ponta a ponta:
+  - `iacmp ai` gerava a stack de `Fn.Lambda` (`code: 'dist/'`) mas nunca o
+    código de handler em si — o `dist/` nunca existia, e o deploy falhava ao
+    empacotar. O prompt (`packages/ai/src/prompts/system-prompt.ts`) agora
+    instrui a sempre gerar também o arquivo `.ts` do handler na raiz do
+    projeto (caminho derivado de `handler: '<arquivo>.<export>'`,
+    convenção de `rootDir: '.'` do `iacmp init`), priorizando lógica real
+    quando o pedido descreve o que a função faz, com placeholder
+    (`{ statusCode: 200, ... }`) só quando não há lógica de negócio descrita.
+  - A IA tinha alucinado uma API de teste inexistente (`Testing.loadStack`,
+    `Testing.describe/it/expect`, `stack.findResource`) num arquivo de teste
+    gerado — nada disso existia em `@iacmp/core`, e o prompt não tinha
+    nenhuma instrução sobre geração de testes. Implementado de verdade:
+    `Testing.loadStack(caminho)` (novo, `packages/core/src/testing.ts`)
+    carrega a stack exportada por um arquivo (relativo à raiz do projeto) e
+    retorna `.findResource(id)` (`BaseConstruct | undefined`). O prompt
+    passou a documentar essa API real e a instruir o uso de
+    `describe`/`it`/`expect` do Jest direto (globais), e a nunca inventar
+    métodos/namespaces inexistentes em qualquer arquivo gerado.
+- **Fix: `Code` da Lambda resolvia para o diretório errado no deploy AWS** —
+  `aws cloudformation package` resolve caminhos relativos do `Code` em
+  relação ao diretório do TEMPLATE (`synth-out/aws/`), não à raiz do
+  projeto onde o `dist/` realmente vive (ao lado de `stacks/`). O deploy
+  falhava com `Parameter Code of resource ... refers to a file or folder
+  that does not exist .../synth-out/aws/dist` mesmo com `dist/` existindo
+  no projeto. O executor AWS (`packages/cli/src/deploy/aws.ts`) agora
+  reescreve esses caminhos para absoluto (relativo a `cwd`) num template
+  intermediário antes de empacotar — validado com upload real pro S3.
+- **`Fn.ApiGateway` na AWS: REST v1 real, permissão de Lambda e referência
+  entre stacks** — três bugs corrigidos em `packages/providers/aws/src/synth/cloudformation.ts`
+  que impediam o deploy real de qualquer API Gateway, incluindo o template
+  padrão do `iacmp init`:
+  - `type: 'REST'` (o default) gerava recursos `AWS::ApiGatewayV2::*`
+    (API Gateway v2/HTTP), incompatíveis com `AWS::ApiGateway::RestApi`
+    (v1). Agora gera o modelo v1 completo: árvore de `Resource` por
+    segmento de path (deduplicada entre rotas), `Method` com integração
+    `AWS_PROXY` aninhada, `Deployment`+`Stage` corretos, `Authorizer` v1 e
+    CORS via `OPTIONS`+`MOCK`.
+  - Nunca era gerada a `AWS::Lambda::Permission` que libera o API Gateway a
+    invocar a Lambda (REST e HTTP) — toda chamada à API dava Access Denied.
+    Agora gerada uma vez por par (API, Lambda), mesmo quando a mesma função
+    atende várias rotas.
+  - `Function.Lambda` referenciada por `Function.ApiGateway` em **outra**
+    stack/arquivo (o padrão recomendado: Lambda em `stacks/compute/`, API
+    em `stacks/network/`) gerava `Fn::Sub: '${lambdaId.Arn}'`, que só
+    resolve dentro do mesmo template — CloudFormation rejeitava com
+    `references invalid resource attribute`. `iacmp synth` agora carrega
+    todas as stacks do projeto antes de sintetizar (mesmo com `--stack`
+    filtrando o que é gravado) e resolve automaticamente: referência local
+    continua direta, referência cross-stack vira `Fn::ImportValue` de um
+    `Outputs`/`Export` (`<stack>-<lambdaId>-Arn`) que toda `Function.Lambda`
+    passa a exportar. Erro claro de synth se a Lambda referenciada não
+    existir em nenhuma stack do projeto.
+  - `iacmp deploy`/`destroy` ordenam as stacks pela dependência de
+    export/import detectada nos templates (`orderByDependency`, em
+    `synth-out.ts`) — quem exporta sobe antes de quem importa no deploy, e
+    é destruído depois no destroy. Sem isso, mesmo com a referência correta,
+    o deploy real falharia com "export not found" ao subir a API antes da
+    Lambda.
+  - Escopo: só AWS nesta entrega. Azure tem suspeita do mesmo bug de
+    referência cross-stack via `reference(resourceId(...))`, não investigada
+    ainda — GCP e Terraform não têm esse problema (GCP usa URL HTTPS
+    previsível, Terraform opera no diretório inteiro como um state único).
+- **Listagem raiz do `--help` mostra um exemplo por comando** — nova classe
+  `IacmpHelp` (`packages/cli/src/help.ts`, registrada via `oclif.helpClass`
+  no `package.json`) sobrescreve a formatação de comandos do oclif para
+  incluir o primeiro `static examples` de cada comando direto em `iacmp`
+  (sem args) ou `iacmp --help`, em vez de só a descrição de uma linha. O
+  `--help` por comando individual continua mostrando todos os exemplos.
+  Corrigido também um bug relacionado: o `build` do CLI não regenerava
+  `oclif.manifest.json` (só o `prepack` fazia isso), então comandos
+  modificados localmente podiam mostrar `--help` com flags/exemplos
+  desatualizados; agora `npm run build` sempre regenera o manifest.
+- **`iacmp deploy`/`iacmp destroy` fazem deploy real** — deixam de ser
+  simulação (dry-run forçado) e passam a chamar a CLI nativa de cada provider
+  via subprocess: `aws cloudformation package`+`deploy` (AWS, criando e
+  reusando automaticamente um bucket S3 próprio,
+  `iacmp-deploy-artifacts-<conta>-<região>`, para o código de Lambda),
+  `az stack group create`/`delete` (Azure, via Deployment Stacks),
+  `gcloud deployment-manager deployments create`/`update` (GCP, escolhendo
+  automaticamente entre criar e atualizar) e `terraform init`+`apply`/`destroy`
+  (Terraform, operando no diretório `synth-out/terraform/` inteiro). Nova flag
+  `--dry-run` em ambos os comandos mostra os comandos exatos sem executar
+  nada. Novos campos opcionais `resourceGroup` (Azure) e `projectId` (GCP) no
+  `iacmp.json`. `iacmp doctor` ganha checagens (+ `--fix`) para Azure CLI,
+  gcloud CLI e Terraform CLI. Corrigido também um bug de codegen na AWS: o
+  `Code` da Lambda gerava `{ ZipFile: '<caminho-local>' }` (formato inválido
+  para deploy real — `ZipFile` espera código inline, não um caminho); agora
+  gera o caminho como string simples, formato que `aws cloudformation
+  package` reconhece e resolve para S3. **Limitação conhecida:** apenas AWS
+  tem o empacotamento de código de função corrigido nesta entrega — Azure
+  (Function App), GCP (Cloud Functions) e Terraform ainda não anexam código
+  funcional ao recurso criado; correção planejada para a próxima etapa, após
+  validação manual desta entrega.
+- **Fix:** `aws cloudformation package`/`deploy` não têm um equivalente ao
+  `--resolve-s3` do AWS SAM CLI — o `package` exige `--s3-bucket` explícito
+  sempre (confundido inicialmente com o SAM CLI, que tem essa flag). O
+  executor AWS agora resolve a conta via `aws sts get-caller-identity`,
+  deriva um nome determinístico de bucket e cria esse bucket automaticamente
+  (`aws s3 mb`) na primeira vez, se ainda não existir, antes do `package`.
 - **`.github/workflows/ci.yml`** — pipeline de CI no GitHub Actions com matrix
   de Node 20.x, cache `.turbo/` e `npm cache`, rodando `typecheck`, `test` e
   `build` via Turborepo.

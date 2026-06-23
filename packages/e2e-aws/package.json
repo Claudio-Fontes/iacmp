@@ -1,0 +1,18 @@
+{
+  "name": "@iacmp/e2e-aws",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Testes de deploy/destroy REAIS na AWS — nunca roda em CI/npm test da raiz, só manual (AWS_PROFILE=iacmp-e2e).",
+  "scripts": {
+    "test:e2e": "jest --config jest.config.js --runInBand",
+    "sweep": "ts-node support/sweep.ts"
+  },
+  "devDependencies": {
+    "@types/jest": "^29",
+    "@types/node": "^22",
+    "jest": "^29",
+    "ts-jest": "^29",
+    "ts-node": "^10",
+    "typescript": "^5.5.0"
+  }
+}

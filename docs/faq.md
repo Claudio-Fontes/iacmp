@@ -45,9 +45,22 @@ Veja o exemplo completo em `examples/plugin-exemplo/`.
 
 ---
 
-**O iacmp faz deploy real na AWS?**
+**O iacmp faz deploy real?**
 
-No MVP atual, o `iacmp deploy` é simulado — imprime os passos que seriam executados mas não faz chamadas reais à AWS. O `iacmp synth` gera CloudFormation templates válidos que podem ser aplicados manualmente com `aws cloudformation deploy`. Deploy automatizado é planejado para uma versão futura.
+Sim. O `iacmp deploy` chama a CLI nativa do provider configurado por trás —
+`aws cloudformation package`+`deploy` (AWS), `az stack group create` (Azure),
+`gcloud deployment-manager deployments create/update` (GCP) ou
+`terraform apply` (Terraform). Você não precisa saber qual ferramenta é usada;
+o comando é sempre `iacmp deploy`. Pré-requisito: a CLI nativa do provider
+escolhido precisa estar instalada e autenticada (`iacmp doctor` checa e
+`iacmp doctor --fix` instala o que faltar) — e a stack precisa ter sido
+sintetizada antes (`iacmp synth --provider <provider>`). Use `--dry-run` para
+ver os comandos exatos sem executar nada.
+
+Limitação atual: só o provider AWS tem o empacotamento de código de função
+(`Function.Lambda`) corrigido — em Azure, GCP e Terraform o recurso de
+infraestrutura é criado, mas sem código de função anexado ainda. Veja a
+seção `iacmp deploy` no manual de uso para detalhes por provider.
 
 ---
 

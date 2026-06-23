@@ -3,10 +3,11 @@ import { runCli, makeProject, rmrf, exists } from './helpers';
 /**
  * Cobertura do comando `deploy` (src/commands/deploy.ts).
  *
- * O deploy é um dry-run no MVP: ele NÃO sintetiza — apenas LÊ os templates já
- * gravados em `synth-out/<provider>/` por um `synth` anterior, conta os recursos
- * de cada stack e imprime "Would deploy N resource(s)" (ou "Would apply N
- * resource(s)" para terraform). Por isso todo caso feliz roda `synth` antes.
+ * `iacmp deploy` chama a CLI nativa de cada nuvem (aws/az/gcloud/terraform)
+ * via subprocess — não dá pra testar a execução real em CI sem credenciais.
+ * Por isso todo teste usa `--dry-run`, que monta e imprime o plano de
+ * comandos sem executar nada e sem exigir a CLI nativa instalada (os helpers
+ * de leitura usados no plano degradam graciosamente quando o binário falta).
  *
  * As contagens por provider são determinísticas para uma stack VPC+Bucket e foram
  * observadas rodando o binário real:
@@ -32,87 +33,107 @@ module.exports = stack;
 `;
 }
 
-describe('deploy — caso feliz por provider (synth antes)', () => {
+describe('deploy --dry-run — caso feliz por provider (synth antes)', () => {
   let dir: string;
   afterEach(() => dir && rmrf(dir));
 
-  test('aws: conta 12 recursos e imprime "Would deploy ... to AWS"', () => {
+  test('aws: monta o plano package+deploy com --stack-name/--template-file corretos', () => {
     dir = makeProject({ provider: 'aws' });
 
     const synth = runCli(['synth', '--provider', 'aws'], { cwd: dir });
     expect(synth.status).toBe(0);
     expect(exists(dir, 'synth-out/aws/main-stack.json')).toBe(true);
 
-    const r = runCli(['deploy', '--provider', 'aws'], { cwd: dir });
+    const r = runCli(['deploy', '--provider', 'aws', '--dry-run'], { cwd: dir });
     expect(r.status).toBe(0);
-    // ecoa a stack e a contagem por stack
     expect(r.stdout).toContain('Stack: main-stack — 12 recurso(s)');
-    // resumo total + label do provider
-    expect(r.stdout).toContain('Would deploy 12 resource(s) to AWS (CloudFormation)');
-    // dry-run: nada de "apply" no caminho não-terraform
-    expect(r.stdout).not.toContain('Would apply');
-    // banner de MVP (CLI-05): no início e no fim
-    expect(r.stdout).toContain('MVP: deploy/destroy real ainda não implementado nesta fase');
-    expect(r.stdout).toContain('(MVP: deploy real não implementado nesta fase)');
+    expect(r.stdout).toContain('aws cloudformation package');
+    expect(r.stdout).toContain('--s3-bucket');
+    expect(r.stdout).toContain('aws cloudformation deploy');
+    expect(r.stdout).toContain('--stack-name main-stack');
+    expect(r.stdout).toContain('Deploy concluído.');
   });
 
-  test('azure: conta 3 recursos e usa label ARM Template', () => {
+  test('azure: exige resourceGroup configurado, e monta `az stack group create`', () => {
+    dir = makeProject({
+      provider: 'azure',
+      iacmpJson: { name: 'test', provider: 'azure', region: 'eastus', resourceGroup: 'meu-rg' },
+    });
+    expect(runCli(['synth', '--provider', 'azure'], { cwd: dir }).status).toBe(0);
+
+    const r = runCli(['deploy', '--provider', 'azure', '--dry-run'], { cwd: dir });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('Stack: main-stack — 3 recurso(s)');
+    expect(r.stdout).toContain('az stack group create');
+    expect(r.stdout).toContain('--resource-group meu-rg');
+  });
+
+  test('azure: sem resourceGroup no iacmp.json -> erro claro', () => {
     dir = makeProject({ provider: 'azure' });
     expect(runCli(['synth', '--provider', 'azure'], { cwd: dir }).status).toBe(0);
 
-    const r = runCli(['deploy', '--provider', 'azure'], { cwd: dir });
-    expect(r.status).toBe(0);
-    expect(r.stdout).toContain('Stack: main-stack — 3 recurso(s)');
-    expect(r.stdout).toContain('Would deploy 3 resource(s) to Azure (ARM Template)');
+    const r = runCli(['deploy', '--provider', 'azure', '--dry-run'], { cwd: dir });
+    expect(r.status).not.toBe(0);
+    expect(r.all).toContain('Configure "resourceGroup" no iacmp.json');
   });
 
-  test('gcp: conta 2 recursos e usa label Deployment Manager', () => {
-    dir = makeProject({ provider: 'gcp' });
+  test('gcp: usa o projectId do iacmp.json e monta `deployments create`', () => {
+    dir = makeProject({
+      provider: 'gcp',
+      iacmpJson: { name: 'test', provider: 'gcp', region: 'us-central1', projectId: 'meu-projeto' },
+    });
     expect(runCli(['synth', '--provider', 'gcp'], { cwd: dir }).status).toBe(0);
 
-    const r = runCli(['deploy', '--provider', 'gcp'], { cwd: dir });
+    const r = runCli(['deploy', '--provider', 'gcp', '--dry-run'], { cwd: dir });
     expect(r.status).toBe(0);
     expect(r.stdout).toContain('Stack: main-stack — 2 recurso(s)');
-    expect(r.stdout).toContain('Would deploy 2 resource(s) to GCP (Deployment Manager)');
+    expect(r.stdout).toContain('gcloud deployment-manager deployments create');
+    expect(r.stdout).toContain('--project meu-projeto');
   });
 
-  test('terraform: conta 4 recursos e imprime "Would apply" (não "deploy")', () => {
+  test('terraform: opera no diretório inteiro (terraform init + apply), não por stack', () => {
     dir = makeProject({ provider: 'terraform' });
     const synth = runCli(['synth', '--provider', 'terraform'], { cwd: dir });
     expect(synth.status).toBe(0);
-    // terraform grava .tf, não .json
     expect(exists(dir, 'synth-out/terraform/main-stack.tf')).toBe(true);
 
-    const r = runCli(['deploy', '--provider', 'terraform'], { cwd: dir });
+    const r = runCli(['deploy', '--provider', 'terraform', '--dry-run'], { cwd: dir });
     expect(r.status).toBe(0);
     expect(r.stdout).toContain('Stack: main-stack — 4 recurso(s)');
-    expect(r.stdout).toContain('Would apply 4 resource(s) (Terraform)');
-    // o caminho terraform NÃO usa o verbo "Would deploy"
-    expect(r.stdout).not.toContain('Would deploy');
+    expect(r.stdout).toContain('terraform init');
+    expect(r.stdout).toContain('terraform apply -auto-approve');
+  });
+
+  test('terraform: --stack não é suportado', () => {
+    dir = makeProject({ provider: 'terraform' });
+    expect(runCli(['synth', '--provider', 'terraform'], { cwd: dir }).status).toBe(0);
+
+    const r = runCli(['deploy', '--provider', 'terraform', '--stack', 'main-stack', '--dry-run'], { cwd: dir });
+    expect(r.status).not.toBe(0);
+    expect(r.all).toContain('--stack não é suportado para --provider terraform');
   });
 });
 
-describe('deploy — provider default vem do iacmp.json', () => {
+describe('deploy --dry-run — provider default vem do iacmp.json', () => {
   let dir: string;
   afterEach(() => dir && rmrf(dir));
 
   test('sem --provider, usa o provider do config (aws)', () => {
     dir = makeProject({ provider: 'aws' });
-    // synth precisa do mesmo provider para gravar os templates
     expect(runCli(['synth', '--provider', 'aws'], { cwd: dir }).status).toBe(0);
 
-    const r = runCli(['deploy'], { cwd: dir });
+    const r = runCli(['deploy', '--dry-run'], { cwd: dir });
     expect(r.status).toBe(0);
-    expect(r.stdout).toContain('Sintetizando stacks para aws...');
-    expect(r.stdout).toContain('Would deploy 12 resource(s) to AWS (CloudFormation)');
+    expect(r.stdout).toContain('Provider: aws (dry-run)');
+    expect(r.stdout).toContain('aws cloudformation deploy');
   });
 });
 
-describe('deploy — múltiplas stacks e filtro --stack', () => {
+describe('deploy --dry-run — múltiplas stacks e filtro --stack', () => {
   let dir: string;
   afterEach(() => dir && rmrf(dir));
 
-  test('soma recursos de todas as stacks no total (11 + 1 = 12)', () => {
+  test('lista recursos de todas as stacks', () => {
     dir = makeProject({
       provider: 'aws',
       stacks: {
@@ -122,16 +143,15 @@ describe('deploy — múltiplas stacks e filtro --stack', () => {
     });
     expect(runCli(['synth', '--provider', 'aws'], { cwd: dir }).status).toBe(0);
 
-    const r = runCli(['deploy', '--provider', 'aws'], { cwd: dir });
+    const r = runCli(['deploy', '--provider', 'aws', '--dry-run'], { cwd: dir });
     expect(r.status).toBe(0);
-    // ambas as stacks aparecem na listagem
     expect(r.stdout).toContain('Stack: net-stack — 11 recurso(s)');
     expect(r.stdout).toContain('Stack: data-stack — 1 recurso(s)');
-    // total é a soma
-    expect(r.stdout).toContain('Would deploy 12 resource(s) to AWS (CloudFormation)');
+    expect(r.stdout).toContain('--stack-name net-stack');
+    expect(r.stdout).toContain('--stack-name data-stack');
   });
 
-  test('--stack net-stack deploya só ela (11 recursos, ignora data-stack)', () => {
+  test('--stack net-stack deploya só ela (ignora data-stack)', () => {
     dir = makeProject({
       provider: 'aws',
       stacks: {
@@ -141,15 +161,13 @@ describe('deploy — múltiplas stacks e filtro --stack', () => {
     });
     expect(runCli(['synth', '--provider', 'aws'], { cwd: dir }).status).toBe(0);
 
-    const r = runCli(['deploy', '--provider', 'aws', '--stack', 'net-stack'], { cwd: dir });
+    const r = runCli(['deploy', '--provider', 'aws', '--stack', 'net-stack', '--dry-run'], { cwd: dir });
     expect(r.status).toBe(0);
     expect(r.stdout).toContain('Stack: net-stack — 11 recurso(s)');
-    // a outra stack NÃO entra
     expect(r.stdout).not.toContain('data-stack');
-    expect(r.stdout).toContain('Would deploy 11 resource(s) to AWS (CloudFormation)');
   });
 
-  test('--stack data-stack deploya só ela (1 recurso)', () => {
+  test('-s data-stack deploya só ela', () => {
     dir = makeProject({
       provider: 'aws',
       stacks: {
@@ -159,11 +177,10 @@ describe('deploy — múltiplas stacks e filtro --stack', () => {
     });
     expect(runCli(['synth', '--provider', 'aws'], { cwd: dir }).status).toBe(0);
 
-    const r = runCli(['deploy', '--provider', 'aws', '-s', 'data-stack'], { cwd: dir });
+    const r = runCli(['deploy', '--provider', 'aws', '-s', 'data-stack', '--dry-run'], { cwd: dir });
     expect(r.status).toBe(0);
     expect(r.stdout).toContain('Stack: data-stack — 1 recurso(s)');
     expect(r.stdout).not.toContain('net-stack');
-    expect(r.stdout).toContain('Would deploy 1 resource(s) to AWS (CloudFormation)');
   });
 });
 
@@ -174,21 +191,17 @@ describe('deploy — caminhos de erro', () => {
   test('erro quando não há synth-out (synth nunca rodou)', () => {
     dir = makeProject({ provider: 'aws' });
     // NÃO roda synth antes
-    const r = runCli(['deploy', '--provider', 'aws'], { cwd: dir });
+    const r = runCli(['deploy', '--provider', 'aws', '--dry-run'], { cwd: dir });
     expect(r.status).not.toBe(0);
     expect(r.all).toContain("Nenhum template encontrado para 'aws'");
-    // a mensagem orienta a rodar synth do provider certo
     expect(r.all).toContain('iacmp synth --provider');
-    // não deve ter chegado ao resumo de deploy
-    expect(r.all).not.toContain('Would deploy');
   });
 
   test('erro quando o synth foi de OUTRO provider (synth aws, deploy gcp)', () => {
     dir = makeProject({ provider: 'aws' });
     expect(runCli(['synth', '--provider', 'aws'], { cwd: dir }).status).toBe(0);
 
-    // gcp não tem templates sintetizados
-    const r = runCli(['deploy', '--provider', 'gcp'], { cwd: dir });
+    const r = runCli(['deploy', '--provider', 'gcp', '--dry-run'], { cwd: dir });
     expect(r.status).not.toBe(0);
     expect(r.all).toContain("Nenhum template encontrado para 'gcp'");
   });
@@ -197,17 +210,25 @@ describe('deploy — caminhos de erro', () => {
     dir = makeProject({ provider: 'aws' });
     expect(runCli(['synth', '--provider', 'aws'], { cwd: dir }).status).toBe(0);
 
-    const r = runCli(['deploy', '--provider', 'aws', '--stack', 'nao-existe'], { cwd: dir });
+    const r = runCli(['deploy', '--provider', 'aws', '--stack', 'nao-existe', '--dry-run'], { cwd: dir });
     expect(r.status).not.toBe(0);
     expect(r.all).toContain("Nenhum template encontrado para 'aws'");
-    expect(r.all).not.toContain('Would deploy');
   });
 
   test('erro quando projeto não inicializado (sem iacmp.json)', () => {
     dir = makeProject({ noConfig: true, noStacks: true });
-    const r = runCli(['deploy'], { cwd: dir });
+    const r = runCli(['deploy', '--dry-run'], { cwd: dir });
     expect(r.status).not.toBe(0);
     expect(r.all).toContain('Projeto não inicializado');
     expect(r.all.toLowerCase()).toContain('init');
+  });
+
+  test('provider desconhecido -> erro claro', () => {
+    dir = makeProject({ provider: 'aws' });
+    expect(runCli(['synth', '--provider', 'aws'], { cwd: dir }).status).toBe(0);
+
+    const r = runCli(['deploy', '--provider', 'oraculo', '--dry-run'], { cwd: dir });
+    expect(r.status).not.toBe(0);
+    expect(r.all).toContain('Provider desconhecido: oraculo');
   });
 });

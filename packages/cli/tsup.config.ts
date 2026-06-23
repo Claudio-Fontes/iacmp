@@ -30,7 +30,7 @@ const common = {
 export default defineConfig([
   {
     ...common,
-    entry: ['src/index.ts', 'src/commands/**/*.ts'],
+    entry: ['src/index.ts', 'src/help.ts', 'src/commands/**/*.ts'],
     outDir: 'dist',
     clean: true,
     // @iacmp/registry foi inlinado, mas seu client.ts lê registry.json via
