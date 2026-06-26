@@ -261,7 +261,9 @@ function buildStackDiagram(name: string, stack: Stack, provider: string): Diagra
   const relationships: DiagramRelationship[] = [];
   const vpcs = nodes.filter(n => n.constructType === 'Network.VPC');
   const lambdas = nodes.filter(n => n.constructType === 'Function.Lambda');
-  const databases = nodes.filter(n => n.constructType === 'Database.SQL');
+  const databases = nodes.filter(n =>
+    n.constructType === 'Database.SQL' || n.constructType === 'Database.DynamoDB',
+  );
 
   // VPC única → seta tracejada para todos os outros
   if (vpcs.length === 1) {
@@ -272,12 +274,24 @@ function buildStackDiagram(name: string, stack: Stack, provider: string): Diagra
     }
   }
 
-  // Lambda → Database: se há apenas uma de cada, infere leitura
+  // Lambda → Database (SQL ou DynamoDB): infere leitura se há pelo menos uma de cada
   if (lambdas.length > 0 && databases.length > 0) {
     for (const lambda of lambdas) {
       for (const db of databases) {
         relationships.push({ sourceId: lambda.id, targetId: db.id, label: 'reads', inferred: true });
       }
+    }
+  }
+
+  // Policy.IAM → recurso via attachTo (mesma stack)
+  for (const c of stack.constructs) {
+    if (c.type !== 'Policy.IAM') continue;
+    const attachTo = c.props?.attachTo as string | undefined;
+    if (!attachTo) continue;
+    const policyNode = nodes.find(n => n.label === c.id);
+    const targetNode = nodes.find(n => n.label === attachTo);
+    if (policyNode && targetNode) {
+      relationships.push({ sourceId: policyNode.id, targetId: targetNode.id, label: 'attaches to', inferred: false });
     }
   }
 
@@ -324,7 +338,7 @@ function inferCrossStackRelationships(
   // Heurísticas de env keys para inferir dependência
   const ENV_HINTS: Array<{ pattern: RegExp; targetType: string; label: string }> = [
     { pattern: /TABLE_NAME|DYNAMO|DYNAMODB/i,         targetType: 'Database.DynamoDB',      label: 'reads table'       },
-    { pattern: /DB_HOST|DB_URL|DATABASE_URL/i,        targetType: 'Database.SQL',           label: 'connects db'       },
+    { pattern: /DB_HOST|DB_URL|DATABASE_URL|DB_SECRET_ARN|RDS_SECRET|AURORA_SECRET/i, targetType: 'Database.SQL', label: 'connects db' },
     { pattern: /BUCKET_NAME|S3_BUCKET/i,              targetType: 'Storage.Bucket',         label: 'reads bucket'      },
     { pattern: /VPC_ID|VPC_CIDR/i,                   targetType: 'Network.VPC',            label: 'uses vpc'          },
     { pattern: /REDIS_URL|REDIS_HOST|CACHE_URL/i,    targetType: 'Cache.Redis',            label: 'uses cache'        },
@@ -352,11 +366,11 @@ function inferCrossStackRelationships(
         const matched = Object.keys(env).some(k => hint.pattern.test(k));
         if (!matched) continue;
 
-        // Procura nó do tipo alvo em outras stacks
+        // Procura nó do tipo alvo em todas as stacks (mesma stack incluída)
         for (const tgtStack of builtStacks) {
-          if (tgtStack.name === srcStack.name) continue;
           for (const tgtNode of tgtStack.nodes) {
             if (tgtNode.constructType !== hint.targetType) continue;
+            if (tgtNode.id === srcNode.id) continue;
             relationships.push({
               sourceId: srcNode.id,
               targetId: tgtNode.id,
@@ -452,6 +466,17 @@ export function buildModel(
         break;
       }
     }
+  }
+
+  // Deduplica relacionamentos por (sourceId, targetId) — mantém o primeiro (não-inferred tem prioridade)
+  for (const s of nonEmptyStacks) {
+    const seen = new Set<string>();
+    s.relationships = s.relationships.filter(r => {
+      const key = `${r.sourceId}→${r.targetId}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
   }
 
   return {

@@ -6,9 +6,11 @@ import { withRetry } from './retry';
 export class AnthropicProvider implements AIProvider {
   name = 'anthropic';
   private client: Anthropic;
+  private model: string;
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, model = 'claude-sonnet-4-6') {
     this.client = new Anthropic({ apiKey });
+    this.model = model;
   }
 
   async chat(messages: AIMessage[]): Promise<AIResponse> {
@@ -18,7 +20,7 @@ export class AnthropicProvider implements AIProvider {
       .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
 
     const response = await withRetry(() => this.client.messages.create({
-      model: 'claude-sonnet-4-6',
+      model: this.model,
       max_tokens: 8192,
       system,
       messages: filtered,
@@ -47,7 +49,7 @@ export class AnthropicProvider implements AIProvider {
       if (emittedAny) throw Object.assign(new Error('stream interrompido após início — sem retry'), { noRetry: true });
 
       const stream = this.client.messages.stream({
-        model: 'claude-sonnet-4-6',
+        model: this.model,
         max_tokens: 8192,
         system,
         messages: filtered,

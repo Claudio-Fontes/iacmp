@@ -5,11 +5,14 @@ export type SQLEngine =
   | 'postgres'
   | 'mariadb'
   | 'oracle'
-  | 'sqlserver';
+  | 'sqlserver'
+  | 'aurora-mysql'
+  | 'aurora-postgresql';
 
 export interface DatabaseSQLProps {
   engine: SQLEngine;
   instanceType?: string;
+  instances?: number;
   multiAz?: boolean;
   storageGb?: number;
   backupRetentionDays?: number;
@@ -64,7 +67,7 @@ export namespace Database {
     readonly props: Record<string, unknown>;
 
     static readonly SUPPORTED_ENGINES: SQLEngine[] = [
-      'mysql', 'postgres', 'mariadb', 'oracle', 'sqlserver',
+      'mysql', 'postgres', 'mariadb', 'oracle', 'sqlserver', 'aurora-mysql', 'aurora-postgresql',
     ];
 
     constructor(stack: Stack, readonly id: string, props: DatabaseSQLProps) {

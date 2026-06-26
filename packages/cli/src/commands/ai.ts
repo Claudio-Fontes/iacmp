@@ -7,12 +7,14 @@ import ora from 'ora';
 import {
   AIProvider,
   AnthropicProvider,
+  OpenAIProvider,
   CopilotProvider,
   ChatSession,
   extractResponse,
   validateTypeScript,
   writeGeneratedFiles,
   runSynth,
+  runSynthCapture,
   readProjectContext,
   printExplanation,
   printWarnings,
@@ -26,15 +28,29 @@ import {
 type AskFn = (question: string) => Promise<string>;
 
 function resolveAIProvider(): AIProvider {
+  const model = process.env['IACMP_MODEL'];
+  const preferred = process.env['IACMP_PROVIDER_AI']?.toLowerCase();
+
+  if (preferred === 'openai' && process.env['OPENAI_API_KEY']) {
+    return new OpenAIProvider(process.env['OPENAI_API_KEY'], model);
+  }
+  if (preferred === 'anthropic' && process.env['ANTHROPIC_API_KEY']) {
+    return new AnthropicProvider(process.env['ANTHROPIC_API_KEY'], model);
+  }
+  if (preferred === 'copilot' && process.env['GITHUB_TOKEN']) {
+    return new CopilotProvider(process.env['GITHUB_TOKEN']);
+  }
   if (process.env['ANTHROPIC_API_KEY']) {
-    return new AnthropicProvider(process.env['ANTHROPIC_API_KEY']);
+    return new AnthropicProvider(process.env['ANTHROPIC_API_KEY'], model);
+  }
+  if (process.env['OPENAI_API_KEY']) {
+    return new OpenAIProvider(process.env['OPENAI_API_KEY'], model);
   }
   if (process.env['GITHUB_TOKEN']) {
     return new CopilotProvider(process.env['GITHUB_TOKEN']);
   }
   throw new Error(
-    'Configure ANTHROPIC_API_KEY no .env do projeto\n' +
-    '  ANTHROPIC_API_KEY=sk-ant-...'
+    'Configure ANTHROPIC_API_KEY ou OPENAI_API_KEY no .env do projeto'
   );
 }
 
@@ -117,8 +133,21 @@ async function runGeneration(
     // TTY (terminal real), por isso não aparecia em testes automatizados.
     const spinner = ora({ text: 'Gerando...', spinner: 'dots', discardStdin: false }).start();
     const chunks: string[] = [];
+    let accumulated = '';
+    const announced = new Set<string>();
     try {
-      await provider.stream(session.getMessages(), chunk => chunks.push(chunk));
+      await provider.stream(session.getMessages(), chunk => {
+        chunks.push(chunk);
+        accumulated += chunk;
+        const pathRegex = /"path"\s*:\s*"([^"]+)"/g;
+        let m: RegExpExecArray | null;
+        while ((m = pathRegex.exec(accumulated)) !== null) {
+          if (!announced.has(m[1])) {
+            announced.add(m[1]);
+            spinner.text = `Gerando ${m[1]}...`;
+          }
+        }
+      });
     } catch (err) {
       spinner.fail('Erro ao chamar a IA: ' + (err as Error).message);
       return null;
@@ -144,7 +173,30 @@ async function runGeneration(
 
   const tsFiles = parsed.files.filter(f => f.path.endsWith('.ts'));
   if (tsFiles.length > 0) {
-    const result = validateTypeScript(tsFiles, cwd);
+    let result = validateTypeScript(tsFiles, cwd);
+
+    // Detecta "Cannot find module 'X'" e instala os pacotes faltantes antes de
+    // mandar pra IA — evita que a IA troque por outra lib que também não existe.
+    if (!result.valid) {
+      const missingModules = result.errors
+        .map(e => e.match(/Cannot find module '([^']+)'/))
+        .filter(Boolean)
+        .map(m => m![1])
+        .filter(pkg => !pkg.startsWith('.') && !pkg.startsWith('@iacmp/'))
+        .filter((v, i, a) => a.indexOf(v) === i);
+
+      if (missingModules.length > 0) {
+        const installSpinner = ora({ text: `Instalando dependências: ${missingModules.join(', ')}...`, spinner: 'dots', discardStdin: false }).start();
+        try {
+          cp.execSync(`npm install ${missingModules.join(' ')}`, { cwd, stdio: 'pipe' });
+          installSpinner.succeed(`Instalado: ${missingModules.join(', ')}`);
+          result = validateTypeScript(tsFiles, cwd);
+        } catch (installErr) {
+          installSpinner.fail(`Falha ao instalar ${missingModules.join(', ')}`);
+        }
+      }
+    }
+
     if (!result.valid) {
       const spinner = ora({ text: 'Validação TypeScript falhou — corrigindo...', spinner: 'dots', discardStdin: false }).start();
       const originalFileCount = parsed.files.length;
@@ -184,8 +236,43 @@ async function runGeneration(
   printNextSteps(parsed.nextSteps);
 
   if (!dryRun && parsed.files.length > 0) {
-    const answer = await ask('Quer rodar `iacmp synth` agora? (y/n) ');
-    if (answer === 'y') runSynth(cwd, iacProvider);
+    const MAX_SYNTH_RETRIES = 5;
+    let synthOk = false;
+    for (let attempt = 1; attempt <= MAX_SYNTH_RETRIES; attempt++) {
+      const spinner = ora({ text: `Validando com iacmp synth (tentativa ${attempt}/${MAX_SYNTH_RETRIES})...`, spinner: 'dots', discardStdin: false }).start();
+      const { success, output } = runSynthCapture(cwd, iacProvider);
+      if (success) {
+        spinner.succeed('Synth validado');
+        synthOk = true;
+        break;
+      }
+      spinner.fail(`Synth falhou — corrigindo automaticamente...`);
+      if (attempt === MAX_SYNTH_RETRIES) break;
+      const originalFileCount = parsed.files.length;
+      session.addUserMessage(
+        `O comando "iacmp synth" falhou com o seguinte erro:\n\n${output}\n\n` +
+        `Corrija os arquivos e retorne o JSON completo com TODOS os ${originalFileCount} arquivo(s) da resposta anterior.`
+      );
+      const retryChunks: string[] = [];
+      const retrySpinner = ora({ text: 'Aguardando correção da IA...', spinner: 'dots', discardStdin: false }).start();
+      try {
+        await provider.stream(session.getMessages(), chunk => retryChunks.push(chunk));
+        retrySpinner.succeed('Arquivos corrigidos pela IA');
+        const retryRaw = retryChunks.join('');
+        session.addAssistantMessage(retryRaw);
+        try {
+          const retryParsed = extractResponse(retryRaw);
+          parsed = retryParsed;
+          await writeGeneratedFiles(parsed.files, cwd, false, async () => 'y');
+        } catch { /* mantém parsed anterior */ }
+      } catch (err) {
+        retrySpinner.fail('Erro no retry: ' + (err as Error).message);
+        break;
+      }
+    }
+    if (!synthOk) {
+      console.log(chalk.yellow('\n  ⚠ Não foi possível corrigir automaticamente — revise os arquivos gerados.'));
+    }
   }
 
   return parsed;

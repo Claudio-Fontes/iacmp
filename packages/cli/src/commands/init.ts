@@ -327,11 +327,23 @@ function gitignore(): string {
 }
 
 function dotenv(): string {
-  return `# Chave da API Anthropic — necessária para usar iacmp ai
+  return `# Chave da API Anthropic
 ANTHROPIC_API_KEY=
 
-# Token do GitHub Copilot (alternativa ao Anthropic)
+# Chave da API OpenAI (alternativa ao Anthropic)
+OPENAI_API_KEY=
+
+# Token do GitHub Copilot (alternativa ao Anthropic/OpenAI)
 # GITHUB_TOKEN=
+
+# Provider de IA a usar quando mais de uma key estiver configurada (anthropic | openai | copilot)
+# Se vazio, a prioridade é: anthropic → openai → copilot
+IACMP_PROVIDER_AI=
+
+# Modelo de IA (deixe vazio para usar o padrão de cada provider)
+# Anthropic: claude-sonnet-4-6 | claude-opus-4-8 | claude-haiku-4-5-20251001
+# OpenAI:    gpt-4o | gpt-4o-mini | gpt-4-turbo | gpt-3.5-turbo
+IACMP_MODEL=
 `;
 }
 
@@ -402,6 +414,7 @@ export default class Init extends Command {
   static flags = {
     language: Flags.string({ char: 'l', description: 'Linguagem (typescript, python)', default: 'typescript' }),
     provider: Flags.string({ char: 'p', description: 'Provider padrão (aws, azure, gcp, terraform)', default: 'aws' }),
+    accountTier: Flags.string({ description: 'Tier da conta cloud: free ou standard (afeta defaults de RDS, backup, criptografia)', default: 'free', options: ['free', 'standard'] }),
     template: Flags.string({
       char: 't',
       description: `Template de stack a usar (default, rds, webapp, network, serverless, fullstack)`,
@@ -469,7 +482,8 @@ export default class Init extends Command {
     }
 
     // iacmp.json
-    const config = { name: projectName, provider: flags.provider, region: 'us-east-1', language: flags.language };
+    const accountTier = flags.accountTier ?? 'free';
+    const config = { name: projectName, provider: flags.provider, region: 'us-east-1', language: flags.language, accountTier };
     fs.writeFileSync(path.join(projectDir, 'iacmp.json'), JSON.stringify(config, null, 2) + '\n');
 
     // .gitignore

@@ -1,5 +1,6 @@
 export { AIProvider, AIMessage, AIResponse } from './providers/base';
 export { AnthropicProvider } from './providers/anthropic';
+export { OpenAIProvider } from './providers/openai';
 export { CopilotProvider } from './providers/copilot';
 export { SYSTEM_PROMPT, SYSTEM_PROMPT_TEMPLATE, buildSystemPrompt } from './prompts/system-prompt';
 export { extractResponse, GeneratedFile, AIGeneratedResponse } from './parser/code-extractor';
@@ -16,7 +17,7 @@ export {
 export { writeGeneratedFiles } from './tools/file-writer';
 export { deleteFiles } from './tools/file-deleter';
 export { renderAndConfirm, FileDiff, AskFn } from './tools/diff-renderer';
-export { runSynth } from './tools/synth-runner';
+export { runSynth, runSynthCapture } from './tools/synth-runner';
 export {
   safeJoin,
   isWithin,

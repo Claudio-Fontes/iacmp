@@ -59,6 +59,11 @@ export async function renderAndConfirm(
   if (newCount > 0) parts.push(t.newCount(newCount));
   console.log(chalk.dim('\n  ' + parts.join(' · ') + '\n'));
 
-  const answer = await ask(t.applyPrompt);
-  return answer.toLowerCase() === 'y';
+  const isTTY = process.stdin.isTTY;
+  while (true) {
+    const answer = await ask(t.applyPrompt);
+    const normalized = answer.toLowerCase().trim();
+    if (normalized === 'y') return true;
+    if (normalized === 'n' || normalized === '' || !isTTY) return false;
+  }
 }

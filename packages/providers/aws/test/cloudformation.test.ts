@@ -644,4 +644,187 @@ describe('AWSProvider', () => {
       });
     });
   });
+
+  // ── Aurora ────────────────────────────────────────────────────────────────
+
+  test('Database.SQL aurora-mysql → gera DBCluster + DBInstance (não DBInstance single)', () => {
+    new Database.SQL(stack, 'DB', { engine: 'aurora-mysql' });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.DBCluster.Type).toBe('AWS::RDS::DBCluster');
+    expect(tpl.Resources.DBCluster.Properties.Engine).toBe('aurora-mysql');
+    expect(tpl.Resources.DBCluster.Properties.EngineVersion).toBe('8.0.mysql_aurora.3.08.0');
+    expect(tpl.Resources.DB.Type).toBe('AWS::RDS::DBInstance');
+    expect(tpl.Resources.DB.Properties.DBClusterIdentifier).toEqual({ Ref: 'DBCluster' });
+    expect(tpl.Resources.DB.Properties.Engine).toBe('aurora-mysql');
+  });
+
+  test('Database.SQL aurora-postgresql → gera DBCluster com engine aurora-postgresql', () => {
+    new Database.SQL(stack, 'DB', { engine: 'aurora-postgresql' });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.DBCluster.Type).toBe('AWS::RDS::DBCluster');
+    expect(tpl.Resources.DBCluster.Properties.Engine).toBe('aurora-postgresql');
+    expect(tpl.Resources.DBCluster.Properties.EngineVersion).toBe('16.6');
+    expect(tpl.Resources.DB.Type).toBe('AWS::RDS::DBInstance');
+  });
+
+  test('Database.SQL aurora-mysql com instances:2 → gera 2 DBInstance', () => {
+    new Database.SQL(stack, 'DB', { engine: 'aurora-mysql', instances: 2 });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.DB.Type).toBe('AWS::RDS::DBInstance');
+    expect(tpl.Resources.DBInstance2.Type).toBe('AWS::RDS::DBInstance');
+    expect(tpl.Resources.DBInstance2.Properties.DBClusterIdentifier).toEqual({ Ref: 'DBCluster' });
+  });
+
+  test('Database.SQL aurora-mysql com subnetIds → gera DBSubnetGroup e associa ao cluster', () => {
+    new Database.SQL(stack, 'DB', {
+      engine: 'aurora-mysql',
+      subnetIds: ['subnet-1', 'subnet-2'],
+      securityGroupIds: ['sg-1'],
+    });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.DBSubnetGroup.Type).toBe('AWS::RDS::DBSubnetGroup');
+    expect(tpl.Resources.DBSubnetGroup.Properties.SubnetIds).toEqual(['subnet-1', 'subnet-2']);
+    expect(tpl.Resources.DBCluster.Properties.DBSubnetGroupName).toEqual({ Ref: 'DBSubnetGroup' });
+    expect(tpl.Resources.DBCluster.Properties.VpcSecurityGroupIds).toEqual(['sg-1']);
+  });
+
+  test('Database.SQL aurora-mysql → gera Secret para senha e referencia no cluster', () => {
+    new Database.SQL(stack, 'DB', { engine: 'aurora-mysql' });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.DBSecret.Type).toBe('AWS::SecretsManager::Secret');
+    expect(tpl.Resources.DBCluster.Properties.MasterUserPassword).toMatchObject({
+      'Fn::Sub': expect.stringContaining('DBSecret'),
+    });
+  });
+
+  test('Database.SQL aurora-mysql com deletionProtection → DeletionPolicy Retain', () => {
+    new Database.SQL(stack, 'DB', { engine: 'aurora-mysql', deletionProtection: true });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.DBCluster.DeletionPolicy).toBe('Retain');
+    expect(tpl.Resources.DB.DeletionPolicy).toBe('Retain');
+  });
+
+  test('Database.SQL aurora-mysql sem deletionProtection → DeletionPolicy Snapshot', () => {
+    new Database.SQL(stack, 'DB', { engine: 'aurora-mysql' });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.DBCluster.DeletionPolicy).toBe('Snapshot');
+  });
+
+  test('Database.SQL aurora → StorageEncrypted true por default', () => {
+    new Database.SQL(stack, 'DB', { engine: 'aurora-mysql' });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.DBCluster.Properties.StorageEncrypted).toBe(true);
+  });
+
+  test('Database.SQL aurora → BackupRetentionPeriod 7 por default', () => {
+    new Database.SQL(stack, 'DB', { engine: 'aurora-mysql' });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.DBCluster.Properties.BackupRetentionPeriod).toBe(7);
+  });
+
+  test('Database.SQL engine invalido → lança erro', () => {
+    expect(() => new Database.SQL(stack, 'DB', { engine: 'mongodb' as any })).toThrow('engine inválido');
+  });
+
+  // ── Storage.Bucket websiteHosting ─────────────────────────────────────────
+
+  test('Storage.Bucket com websiteHosting:true → WebsiteConfiguration + BucketPolicy pública', () => {
+    new Storage.Bucket(stack, 'Site', { websiteHosting: true });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.Site.Type).toBe('AWS::S3::Bucket');
+    expect(tpl.Resources.Site.Properties.WebsiteConfiguration).toEqual({
+      IndexDocument: 'index.html',
+      ErrorDocument: 'index.html',
+    });
+    expect(tpl.Resources.Site.Properties.PublicAccessBlockConfiguration.BlockPublicAcls).toBe(false);
+    expect(tpl.Resources.SitePolicy.Type).toBe('AWS::S3::BucketPolicy');
+    expect(tpl.Resources.SitePolicy.Properties.PolicyDocument.Statement[0].Action).toBe('s3:GetObject');
+    expect(tpl.Resources.SitePolicy.Properties.PolicyDocument.Statement[0].Principal).toBe('*');
+  });
+
+  test('Storage.Bucket com websiteHosting:true → DeletionPolicy Retain', () => {
+    new Storage.Bucket(stack, 'Site', { websiteHosting: true });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.Site.DeletionPolicy).toBe('Retain');
+  });
+
+  test('Storage.Bucket com bucketName → BucketName presente no template', () => {
+    new Storage.Bucket(stack, 'Site', { websiteHosting: true, bucketName: 'meu-site-react' });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.Site.Properties.BucketName).toBe('meu-site-react');
+  });
+
+  test('Storage.Bucket sem websiteHosting → sem WebsiteConfiguration e sem BucketPolicy', () => {
+    new Storage.Bucket(stack, 'Assets', {});
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.Assets.Properties.WebsiteConfiguration).toBeUndefined();
+    expect(tpl.Resources.AssetsPolicy).toBeUndefined();
+  });
+
+  // ── Network.CDN com bucketRef ─────────────────────────────────────────────
+
+  test('Network.CDN com bucketRef → OAC + BucketPolicy CloudFront + S3OriginConfig', () => {
+    new Storage.Bucket(stack, 'AppBucket', { websiteHosting: true });
+    new Network.CDN(stack, 'AppCDN', {
+      origins: [{ id: 'app', domainName: '', bucketRef: 'AppBucket' }],
+    });
+    const tpl = provider.synthesize(stack) as any;
+    const oacKey = Object.keys(tpl.Resources).find(k => tpl.Resources[k].Type === 'AWS::CloudFront::OriginAccessControl');
+    expect(oacKey).toBeDefined();
+    expect(tpl.Resources[oacKey!].Properties.OriginAccessControlConfig.OriginAccessControlOriginType).toBe('s3');
+    const policyKey = Object.keys(tpl.Resources).find(k =>
+      tpl.Resources[k].Type === 'AWS::S3::BucketPolicy' && k !== 'AppBucketPolicy',
+    );
+    expect(policyKey).toBeDefined();
+    expect(tpl.Resources[policyKey!].Properties.PolicyDocument.Statement[0].Principal).toEqual({ Service: 'cloudfront.amazonaws.com' });
+    expect(tpl.Resources.AppCDN.Properties.DistributionConfig.Origins[0].S3OriginConfig).toBeDefined();
+    expect(tpl.Resources.AppCDN.Properties.DistributionConfig.Origins[0].DomainName).toEqual({
+      'Fn::GetAtt': ['AppBucket', 'RegionalDomainName'],
+    });
+  });
+
+  test('Network.CDN sem bucketRef → CustomOriginConfig com HTTPPort:80', () => {
+    new Network.CDN(stack, 'AppCDN', {
+      origins: [{ id: 'api', domainName: 'api.example.com' }],
+    });
+    const tpl = provider.synthesize(stack) as any;
+    const origin = tpl.Resources.AppCDN.Properties.DistributionConfig.Origins[0];
+    expect(origin.CustomOriginConfig).toBeDefined();
+    expect(origin.CustomOriginConfig.HTTPPort).toBe(80);
+    expect(origin.CustomOriginConfig.HTTPSPort).toBe(443);
+    expect(origin.S3OriginConfig).toBeUndefined();
+  });
+
+  test('Network.CDN com protocol http-only → OriginProtocolPolicy http-only', () => {
+    new Network.CDN(stack, 'AppCDN', {
+      origins: [{ id: 'site', domainName: 'bucket.s3-website-us-east-1.amazonaws.com', protocol: 'http-only' }],
+    });
+    const tpl = provider.synthesize(stack) as any;
+    const origin = tpl.Resources.AppCDN.Properties.DistributionConfig.Origins[0];
+    expect(origin.CustomOriginConfig.OriginProtocolPolicy).toBe('http-only');
+  });
+
+  // ── Fn.Lambda com VPC ─────────────────────────────────────────────────────
+
+  test('Fn.Lambda com vpcId + subnetIds + securityGroupIds → VpcConfig no template', () => {
+    new Fn.Lambda(stack, 'Handler', {
+      runtime: 'nodejs20',
+      handler: 'index.handler',
+      code: 'dist/',
+      vpcId: 'vpc-123',
+      subnetIds: ['subnet-a', 'subnet-b'],
+      securityGroupIds: ['sg-xyz'],
+    });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.Handler.Properties.VpcConfig).toEqual({
+      SubnetIds: ['subnet-a', 'subnet-b'],
+      SecurityGroupIds: ['sg-xyz'],
+    });
+  });
+
+  test('Fn.Lambda sem vpcId → VpcConfig ausente', () => {
+    new Fn.Lambda(stack, 'Handler', { runtime: 'nodejs20', handler: 'index.handler', code: 'dist/' });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.Handler.Properties.VpcConfig).toBeUndefined();
+  });
 });

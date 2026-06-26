@@ -138,8 +138,11 @@ export async function deleteResourceAndWait(typeName: string, identifier: string
  * esse recurso vivo e órfão. Sem isso, `aws cloudformation deploy` só
  * descobre o conflito depois de tentar criar o changeset, com um erro
  * confuso (ResourceExistenceCheck).
+ *
+ * Exclui recursos já pertencentes à própria stack (drift benigno ou redeploy
+ * sem mudanças de template) para evitar deletar e recriar desnecessariamente.
  */
-export function findExistingRetainedResources(templatePath: string, region: string): ExistingResource[] {
+export function findExistingRetainedResources(templatePath: string, region: string, stackName?: string): ExistingResource[] {
   const raw = fs.readFileSync(templatePath, 'utf-8');
   const template = JSON.parse(raw) as { Resources?: Record<string, { Type?: string; Properties?: Record<string, unknown> }> };
 
@@ -152,7 +155,30 @@ export function findExistingRetainedResources(templatePath: string, region: stri
     candidates.push({ logicalId, typeName: resource.Type as string, identifier });
   }
 
-  return candidates.filter((c) => resourceExists(c.typeName, c.identifier, region));
+  const existing = candidates.filter((c) => resourceExists(c.typeName, c.identifier, region));
+  if (!stackName || existing.length === 0) return existing;
+
+  // Filtra recursos já pertencentes à própria stack — não são órfãos
+  const ownedByStack = new Set<string>();
+  try {
+    const out = execFileSync('aws', [
+      'cloudformation', 'list-stack-resources',
+      '--stack-name', stackName, '--region', region,
+      '--query', 'StackResourceSummaries[].[LogicalResourceId,PhysicalResourceId]',
+      '--output', 'json',
+    ], { stdio: 'pipe' }).toString();
+    const rows = JSON.parse(out) as [string, string][];
+    for (const [, physicalId] of rows) ownedByStack.add(physicalId);
+  } catch (err) {
+    // Stack não existe ainda (esperado na primeira criação) ou erro transiente da AWS.
+    // Neste caso, tratamos todos os recursos como candidatos a conflito.
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!msg.includes('does not exist') && !msg.includes('Stack with id')) {
+      process.stderr.write(`[iacmp] aviso: não foi possível listar recursos da stack "${stackName}": ${msg}\n`);
+    }
+  }
+
+  return existing.filter((c) => !ownedByStack.has(c.identifier));
 }
 
 export const awsExecutor: DeployExecutor = {

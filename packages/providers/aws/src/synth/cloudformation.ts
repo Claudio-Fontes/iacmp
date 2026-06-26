@@ -30,6 +30,10 @@ export interface SynthContext {
    * (attachType: 'lambda', attachTo: lambdaId) que a referencia, se existir.
    */
   lambdaRoles: Map<string, { stackName: string; roleLogicalId: string }>;
+  /** constructId de Database → sufixo do nome do secret (ex: 'AppDB' → 'db-password' ou 'aurora-password'). */
+  dbSecretSuffix: Map<string, string>;
+  /** IDs de Function.Lambda que têm vpcId definido — precisam de VPCAccessExecutionRole. */
+  vpcLambdas: Set<string>;
 }
 
 /**
@@ -79,7 +83,8 @@ function buildInvocationUri(lambdaId: string, ctx: SynthContext): unknown {
 function resolveLambdaRole(
   lambdaId: string,
   lambdaLogicalId: string,
-  ctx: SynthContext
+  ctx: SynthContext,
+  isVpc = false,
 ): { roleRef: unknown; extraResource?: [string, CloudFormationResource] } {
   const owned = ctx.lambdaRoles.get(lambdaId);
   if (owned) {
@@ -90,6 +95,9 @@ function resolveLambdaRole(
   }
 
   const defaultRoleLogicalId = `${lambdaLogicalId}DefaultRole`;
+  const managedPolicies = isVpc
+    ? ['arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole']
+    : ['arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'];
   return {
     roleRef: { 'Fn::GetAtt': [defaultRoleLogicalId, 'Arn'] },
     extraResource: [defaultRoleLogicalId, {
@@ -99,7 +107,7 @@ function resolveLambdaRole(
           Version: '2012-10-17',
           Statement: [{ Effect: 'Allow', Principal: { Service: 'lambda.amazonaws.com' }, Action: 'sts:AssumeRole' }],
         },
-        ManagedPolicyArns: ['arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'],
+        ManagedPolicyArns: managedPolicies,
       },
     }],
   };
@@ -135,6 +143,62 @@ function defaultServiceRole(
       } : {}),
     },
   }];
+}
+
+function resolveVpcId(id: string, ctx: SynthContext): unknown {
+  if (/^vpc-[0-9a-z]+$/.test(id)) return id;
+  const ownerStack = ctx.registry.get(id);
+  if (!ownerStack) return id;
+  const logicalId = id.replace(/[^a-zA-Z0-9]/g, '');
+  if (ownerStack === ctx.currentStackName) return { Ref: logicalId };
+  return { 'Fn::ImportValue': `${ownerStack}-${id}-VpcId` };
+}
+
+function resolveSubnetId(id: string, ctx: SynthContext): unknown {
+  if (/^subnet-[0-9a-z]+$/.test(id)) return id;
+  const ownerStack = ctx.registry.get(id);
+  if (!ownerStack) return id;
+  const logicalId = id.replace(/[^a-zA-Z0-9]/g, '');
+  if (ownerStack === ctx.currentStackName) return { Ref: logicalId };
+  return { 'Fn::ImportValue': `${ownerStack}-${id}-SubnetId` };
+}
+
+function resolveSecurityGroupId(id: string, ctx: SynthContext): unknown {
+  if (/^sg-[0-9a-zA-Z]+$/.test(id)) return id;
+  const ownerStack = ctx.registry.get(id);
+  if (!ownerStack) return id;
+  const logicalId = id.replace(/[^a-zA-Z0-9]/g, '');
+  if (ownerStack === ctx.currentStackName) return { 'Fn::GetAtt': [logicalId, 'GroupId'] };
+  return { 'Fn::ImportValue': `${ownerStack}-${id}-GroupId` };
+}
+
+/**
+ * Resolve env var values que referenciam outputs de outros constructs.
+ * Padrão: "<constructId>.<field>" onde field = Endpoint | Port | SecretArn | Username
+ * Mesmo stack → Fn::GetAtt / Ref. Cross-stack → Fn::ImportValue.
+ */
+function resolveEnvVarValue(value: string, ctx: SynthContext): unknown {
+  const match = /^([^.]+)\.(Endpoint|Port|SecretArn|Username|Password)$/.exec(value);
+  if (!match) return value;
+  const [, constructId, field] = match;
+  const ownerStack = ctx.registry.get(constructId);
+  if (!ownerStack) return value;
+  const logicalId = constructId.replace(/[^a-zA-Z0-9]/g, '');
+
+  // Password: CloudFormation dynamic reference — resolvido em deploy time (sem SDK runtime)
+  if (field === 'Password') {
+    const suffix = ctx.dbSecretSuffix.get(constructId) ?? 'db-password';
+    return `{{resolve:secretsmanager:${ownerStack}-${constructId}-${suffix}:SecretString:password}}`;
+  }
+
+  if (ownerStack === ctx.currentStackName) {
+    if (field === 'Endpoint') return { 'Fn::GetAtt': [logicalId, 'Endpoint.Address'] };
+    if (field === 'Port') return { 'Fn::GetAtt': [logicalId, 'Endpoint.Port'] };
+    if (field === 'SecretArn') return { Ref: `${logicalId}Secret` };
+    if (field === 'Username') return value; // username é estático (dbadmin), retorna as-is
+    return value;
+  }
+  return { 'Fn::ImportValue': `${ownerStack}-${constructId}-${field}` };
 }
 
 const INSTANCE_TYPE_MAP: Record<string, string> = {
@@ -179,8 +243,8 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
         Properties: {
           InstanceType: INSTANCE_TYPE_MAP[props.instanceType as string] ?? 't3.small',
           ImageId: AMI_MAP[props.image as string] ?? (props.image as string),
-          ...(props.subnetId ? { SubnetId: props.subnetId as string } : {}),
-          ...(props.securityGroupIds ? { SecurityGroupIds: props.securityGroupIds as string[] } : {}),
+          ...(props.subnetId ? { SubnetId: resolveSubnetId(props.subnetId as string, ctx) } : {}),
+          ...(props.securityGroupIds ? { SecurityGroupIds: (props.securityGroupIds as string[]).map(id => resolveSecurityGroupId(id, ctx)) } : {}),
         },
       }]];
 
@@ -196,7 +260,7 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
           LaunchTemplateData: {
             ImageId: AMI_MAP[props.image as string] ?? (props.image as string),
             InstanceType: INSTANCE_TYPE_MAP[props.instanceType as string] ?? 't3.small',
-            ...(props.securityGroupIds ? { SecurityGroupIds: props.securityGroupIds } : {}),
+            ...(props.securityGroupIds ? { SecurityGroupIds: (props.securityGroupIds as string[]).map(id => resolveSecurityGroupId(id, ctx)) } : {}),
           },
         },
       };
@@ -212,7 +276,7 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
           MaxSize: String(props.maxCapacity ?? 3),
           DesiredCapacity: String(props.desiredCapacity ?? props.minCapacity ?? 1),
           ...(props.subnetIds
-            ? { VPCZoneIdentifier: props.subnetIds }
+            ? { VPCZoneIdentifier: (props.subnetIds as string[]).map(id => resolveSubnetId(id, ctx)) }
             : { AvailabilityZones: { 'Fn::GetAZs': '' } }),
           Tags: [{ Key: 'Name', Value: logicalId, PropagateAtLaunch: true }],
         },
@@ -297,8 +361,8 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
             NetworkConfiguration: {
               AwsvpcConfiguration: {
                 AssignPublicIp: (props.publicIp as boolean) ? 'ENABLED' : 'DISABLED',
-                Subnets: subnetIds,
-                ...(props.securityGroupIds ? { SecurityGroups: props.securityGroupIds as string[] } : {}),
+                Subnets: subnetIds.map(id => resolveSubnetId(id, ctx)),
+                ...(props.securityGroupIds ? { SecurityGroups: (props.securityGroupIds as string[]).map(id => resolveSecurityGroupId(id, ctx)) } : {}),
               },
             },
           },
@@ -337,8 +401,8 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
             Name: construct.id,
             Version: (props.version as string) ?? '1.29',
             ResourcesVpcConfig: {
-              SubnetIds: subnetIds,
-              ...(props.securityGroupIds ? { SecurityGroupIds: props.securityGroupIds as string[] } : {}),
+              SubnetIds: subnetIds.map(id => resolveSubnetId(id, ctx)),
+              ...(props.securityGroupIds ? { SecurityGroupIds: (props.securityGroupIds as string[]).map(id => resolveSecurityGroupId(id, ctx)) } : {}),
               EndpointPrivateAccess: (props.privateCluster as boolean) ?? false,
               EndpointPublicAccess: !(props.privateCluster as boolean),
             },
@@ -358,7 +422,7 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
             },
             InstanceTypes: [K8S_NODE_TYPE_MAP[(props.nodeInstanceType as string) ?? 'medium'] ?? 'm5.large'],
             NodeRole: { 'Fn::GetAtt': [nodeRoleLogicalId, 'Arn'] },
-            Subnets: subnetIds,
+            Subnets: subnetIds.map(id => resolveSubnetId(id, ctx)),
           },
         }],
       ];
@@ -367,16 +431,25 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
     // ── Storage ───────────────────────────────────────────────────────────
     case 'Storage.Bucket': {
       const lifecycleRules = (props.lifecycleRules as Array<Record<string, unknown>>) ?? [];
-      return [[logicalId, {
+      const isWebsite = (props.websiteHosting as boolean) ?? false;
+      // websiteHosting implica acesso público — sobrescreve publicAccess
+      const isPublic = isWebsite || ((props.publicAccess as boolean) ?? false);
+
+      const entries: Array<[string, CloudFormationResource]> = [[logicalId, {
         Type: 'AWS::S3::Bucket',
+        DeletionPolicy: 'Retain',
         Properties: {
+          ...(props.bucketName ? { BucketName: props.bucketName as string } : {}),
           VersioningConfiguration: props.versioning ? { Status: 'Enabled' } : { Status: 'Suspended' },
           PublicAccessBlockConfiguration: {
-            BlockPublicAcls: !props.publicAccess,
-            BlockPublicPolicy: !props.publicAccess,
-            IgnorePublicAcls: !props.publicAccess,
-            RestrictPublicBuckets: !props.publicAccess,
+            BlockPublicAcls: !isPublic,
+            BlockPublicPolicy: !isPublic,
+            IgnorePublicAcls: !isPublic,
+            RestrictPublicBuckets: !isPublic,
           },
+          ...(isWebsite ? {
+            WebsiteConfiguration: { IndexDocument: 'index.html', ErrorDocument: 'index.html' },
+          } : {}),
           ...(lifecycleRules.length > 0 ? {
             LifecycleConfiguration: {
               Rules: lifecycleRules.map((r, i) => ({
@@ -392,6 +465,26 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
           } : {}),
         },
       }]];
+
+      // BucketPolicy de leitura pública para website hosting
+      if (isWebsite) {
+        entries.push([`${logicalId}Policy`, {
+          Type: 'AWS::S3::BucketPolicy',
+          Properties: {
+            Bucket: { Ref: logicalId },
+            PolicyDocument: {
+              Statement: [{
+                Effect: 'Allow',
+                Principal: '*',
+                Action: 's3:GetObject',
+                Resource: { 'Fn::Sub': `arn:aws:s3:::$\{${logicalId}}/*` },
+              }],
+            },
+          },
+        }]);
+      }
+
+      return entries;
     }
 
     case 'Storage.FileSystem': {
@@ -460,7 +553,7 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
       return [[logicalId, {
         Type: 'AWS::EC2::Subnet',
         Properties: {
-          VpcId: props.vpcId as string,
+          VpcId: props.vpcId ? resolveVpcId(props.vpcId as string, ctx) : undefined,
           CidrBlock: props.cidr as string,
           ...(props.availabilityZone ? { AvailabilityZone: props.availabilityZone as string } : {}),
           MapPublicIpOnLaunch: isPublic,
@@ -476,7 +569,7 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
         Type: 'AWS::EC2::SecurityGroup',
         Properties: {
           GroupDescription: (props.description as string) ?? `Security group ${logicalId}`,
-          VpcId: props.vpcId as string,
+          VpcId: props.vpcId ? resolveVpcId(props.vpcId as string, ctx) : undefined,
           SecurityGroupIngress: ingress.map((r, i) => {
             if (r.cidr === undefined) {
               console.warn(`[aws] Security group rule sem CIDR; usando 0.0.0.0/0 — defina props.cidr explicitamente (${construct.id} ingress[${i}])`);
@@ -553,9 +646,9 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
           Name: construct.id,
           Type: lbType,
           Scheme: (props.scheme as string) ?? 'internet-facing',
-          Subnets: (props.subnetIds as string[]) ?? [],
+          Subnets: ((props.subnetIds as string[]) ?? []).map(id => resolveSubnetId(id, ctx)),
           ...(lbType === 'application' && props.securityGroupIds
-            ? { SecurityGroups: props.securityGroupIds }
+            ? { SecurityGroups: (props.securityGroupIds as string[]).map(id => resolveSecurityGroupId(id, ctx)) }
             : {}),
           LoadBalancerAttributes: [
             { Key: 'deletion_protection.enabled', Value: String(props.deletionProtection ?? false) },
@@ -571,7 +664,7 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
             Name: tg.name as string,
             Port: tg.port as number,
             Protocol: tg.protocol as string,
-            VpcId: props.vpcId as string,
+            VpcId: props.vpcId ? resolveVpcId(props.vpcId as string, ctx) : undefined,
             HealthCheckPath: (tg.healthCheckPath as string) ?? '/',
             HealthCheckPort: String(tg.healthCheckPort ?? tg.port),
             TargetType: 'ip',
@@ -602,7 +695,51 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
       const origins = (props.origins as Array<Record<string, unknown>>) ?? [];
       const cachePolicies = (props.cachePolicies as Array<Record<string, unknown>>) ?? [];
 
-      return [[logicalId, {
+      const entries: Array<[string, CloudFormationResource]> = [];
+
+      // Detecta origins S3 (com bucketRef) para usar OAC em vez de CustomOriginConfig
+      const oacRefs: string[] = [];
+      for (const o of origins) {
+        if (!o.bucketRef) continue;
+        const bucketRef = o.bucketRef as string;
+        const oacId = `${logicalId}OAC${bucketRef}`;
+        if (!oacRefs.includes(oacId)) {
+          oacRefs.push(oacId);
+          entries.push([oacId, {
+            Type: 'AWS::CloudFront::OriginAccessControl',
+            Properties: {
+              OriginAccessControlConfig: {
+                Name: { 'Fn::Sub': `${logicalId}-oac-\${AWS::StackName}` },
+                OriginAccessControlOriginType: 's3',
+                SigningBehavior: 'always',
+                SigningProtocol: 'sigv4',
+              },
+            },
+          }]);
+          // BucketPolicy permitindo acesso do CloudFront via OAC
+          entries.push([`${bucketRef}PolicyCDN${logicalId}`, {
+            Type: 'AWS::S3::BucketPolicy',
+            Properties: {
+              Bucket: { Ref: bucketRef },
+              PolicyDocument: {
+                Statement: [{
+                  Effect: 'Allow',
+                  Principal: { Service: 'cloudfront.amazonaws.com' },
+                  Action: 's3:GetObject',
+                  Resource: { 'Fn::Sub': `arn:aws:s3:::$\{${bucketRef}}/*` },
+                  Condition: {
+                    StringEquals: {
+                      'AWS:SourceArn': { 'Fn::Sub': `arn:aws:cloudfront::$\{AWS::AccountId}:distribution/$\{${logicalId}}` },
+                    },
+                  },
+                }],
+              },
+            },
+          }]);
+        }
+      }
+
+      entries.push([logicalId, {
         Type: 'AWS::CloudFront::Distribution',
         Properties: {
           DistributionConfig: {
@@ -615,12 +752,29 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
               ? { ViewerCertificate: { AcmCertificateArn: props.certificateArn, SslSupportMethod: 'sni-only', MinimumProtocolVersion: 'TLSv1.2_2021' } }
               : { ViewerCertificate: { CloudFrontDefaultCertificate: true } }),
             ...(props.wafAclId ? { WebACLId: props.wafAclId } : {}),
-            Origins: origins.map(o => ({
-              Id: o.id as string,
-              DomainName: o.domainName as string,
-              OriginPath: (o.path as string) ?? '',
-              CustomOriginConfig: { HTTPSPort: 443, OriginProtocolPolicy: (o.protocol as string) ?? 'https-only' },
-            })),
+            Origins: origins.map(o => {
+              const protocol = (o.protocol as string) ?? 'https-only';
+              if (o.bucketRef) {
+                const bucketRef = o.bucketRef as string;
+                return {
+                  Id: o.id as string,
+                  DomainName: { 'Fn::GetAtt': [bucketRef, 'RegionalDomainName'] },
+                  OriginPath: (o.path as string) ?? '',
+                  S3OriginConfig: { OriginAccessIdentity: '' },
+                  OriginAccessControlId: { Ref: `${logicalId}OAC${bucketRef}` },
+                };
+              }
+              return {
+                Id: o.id as string,
+                DomainName: o.domainName as string,
+                OriginPath: (o.path as string) ?? '',
+                CustomOriginConfig: {
+                  HTTPPort: 80,
+                  HTTPSPort: 443,
+                  OriginProtocolPolicy: protocol,
+                },
+              };
+            }),
             DefaultCacheBehavior: {
               TargetOriginId: origins[0].id as string,
               ViewerProtocolPolicy: 'redirect-to-https',
@@ -642,7 +796,9 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
             })),
           },
         },
-      }]];
+      }]);
+
+      return entries;
     }
 
     case 'Network.Dns': {
@@ -680,8 +836,101 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
     case 'Database.SQL': {
       const engine = props.engine as string;
       const edition = (props.edition as string) ?? '';
+      const isAurora = engine === 'aurora-mysql' || engine === 'aurora-postgresql';
 
-      // Mapeia engine → Engine + EngineVersion do RDS
+      // Aurora → DBCluster + DBInstance(s); demais → DBInstance single
+      if (isAurora) {
+        const auroraEngineMap: Record<string, { Engine: string; EngineVersion: string }> = {
+          'aurora-mysql':      { Engine: 'aurora-mysql',      EngineVersion: '8.0.mysql_aurora.3.08.0' },
+          'aurora-postgresql': { Engine: 'aurora-postgresql', EngineVersion: '16.6' },
+        };
+        const auroraEngine = auroraEngineMap[engine];
+        const masterUser = 'dbadmin';
+        const auroraSecretId = `${logicalId}Secret`;
+        const clusterLogicalId = `${logicalId}Cluster`;
+        const subnetIds = props.subnetIds as string[] | undefined;
+        const instances = (props.instances as number) ?? 1;
+        const deletionPolicy = (props.deletionProtection as boolean) ? 'Retain' : 'Snapshot';
+
+        const auroraEntries: Array<[string, CloudFormationResource]> = [];
+
+        auroraEntries.push([auroraSecretId, {
+          Type: 'AWS::SecretsManager::Secret',
+          Properties: {
+            Name: `${ctx.currentStackName}-${construct.id}-aurora-password`,
+            GenerateSecretString: {
+              SecretStringTemplate: JSON.stringify({ username: masterUser }),
+              GenerateStringKey: 'password',
+              PasswordLength: 32,
+              ExcludeCharacters: '"@/\\\'',
+            },
+          },
+        }]);
+
+        if (subnetIds && subnetIds.length > 0) {
+          const subnetGroupId = `${logicalId}SubnetGroup`;
+          auroraEntries.push([subnetGroupId, {
+            Type: 'AWS::RDS::DBSubnetGroup',
+            Properties: {
+              DBSubnetGroupDescription: `Subnet group Aurora para ${construct.id}`,
+              SubnetIds: subnetIds.map(id => resolveSubnetId(id, ctx)),
+            },
+          }]);
+
+          const clusterProps: Record<string, unknown> = {
+            DBClusterIdentifier: construct.id.toLowerCase(),
+            Engine: auroraEngine.Engine,
+            EngineVersion: auroraEngine.EngineVersion,
+            MasterUsername: masterUser,
+            MasterUserPassword: { 'Fn::Sub': `{{resolve:secretsmanager:\${${auroraSecretId}}:SecretString:password}}` },
+            DBSubnetGroupName: { Ref: subnetGroupId },
+            StorageEncrypted: (props.storageEncrypted as boolean) ?? true,
+            BackupRetentionPeriod: (props.backupRetentionDays as number) ?? 7,
+            DeletionProtection: (props.deletionProtection as boolean) ?? false,
+            ...(props.securityGroupIds ? { VpcSecurityGroupIds: (props.securityGroupIds as string[]).map(id => resolveSecurityGroupId(id, ctx)) } : {}),
+          };
+
+          auroraEntries.push([clusterLogicalId, {
+            Type: 'AWS::RDS::DBCluster',
+            DeletionPolicy: deletionPolicy,
+            Properties: clusterProps,
+          }]);
+        } else {
+          // Sem subnets — cria cluster sem SubnetGroup (usa VPC default da conta)
+          auroraEntries.push([clusterLogicalId, {
+            Type: 'AWS::RDS::DBCluster',
+            DeletionPolicy: deletionPolicy,
+            Properties: {
+              DBClusterIdentifier: construct.id.toLowerCase(),
+              Engine: auroraEngine.Engine,
+              EngineVersion: auroraEngine.EngineVersion,
+              MasterUsername: masterUser,
+              MasterUserPassword: { 'Fn::Sub': `{{resolve:secretsmanager:\${${auroraSecretId}}:SecretString:password}}` },
+              StorageEncrypted: (props.storageEncrypted as boolean) ?? true,
+              BackupRetentionPeriod: (props.backupRetentionDays as number) ?? 7,
+              DeletionProtection: (props.deletionProtection as boolean) ?? false,
+            },
+          }]);
+        }
+
+        const instanceClass = (props.instanceType as string) ?? 'db.t3.medium';
+        for (let i = 1; i <= instances; i++) {
+          const instanceLogicalId = i === 1 ? logicalId : `${logicalId}Instance${i}`;
+          auroraEntries.push([instanceLogicalId, {
+            Type: 'AWS::RDS::DBInstance',
+            DeletionPolicy: deletionPolicy,
+            Properties: {
+              DBClusterIdentifier: { Ref: clusterLogicalId },
+              DBInstanceClass: instanceClass,
+              Engine: auroraEngine.Engine,
+            },
+          }]);
+        }
+
+        return auroraEntries;
+      }
+
+      // ── RDS single-instance (mysql, postgres, mariadb, oracle, sqlserver) ──
       const engineMap: Record<string, { Engine: string; EngineVersion: string }> = {
         mysql:     { Engine: 'mysql',                                    EngineVersion: '8.0.46' },
         postgres:  { Engine: 'postgres',                                 EngineVersion: '17.10' },
@@ -696,10 +945,7 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
       const licenseModel = (props.licenseModel as string)
         ?? (isOracle || isSqlServer ? 'license-included' : undefined);
 
-      // SQL Server com licença incluída não suporta MasterUsername customizado
       const masterUser = isSqlServer ? 'sqladmin' : 'dbadmin';
-
-      // Oracle e SQL Server exigem instâncias maiores (mínimo db.t3.small)
       const defaultInstance = (isOracle || isSqlServer) ? 'db.t3.small' : 'db.t3.micro';
 
       const rdsSecretId = `${logicalId}Secret`;
@@ -722,7 +968,7 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
       sqlEntries.push([rdsSecretId, {
         Type: 'AWS::SecretsManager::Secret',
         Properties: {
-          Name: { 'Fn::Sub': `\${AWS::StackName}-${construct.id}-db-password` },
+          Name: `${ctx.currentStackName}-${construct.id}-db-password`,
           GenerateSecretString: {
             SecretStringTemplate: JSON.stringify({ username: masterUser }),
             GenerateStringKey: 'password',
@@ -737,11 +983,11 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
           Type: 'AWS::RDS::DBSubnetGroup',
           Properties: {
             DBSubnetGroupDescription: `Subnet group para ${construct.id}`,
-            SubnetIds: sqlSubnetIds,
+            SubnetIds: sqlSubnetIds.map(id => resolveSubnetId(id, ctx)),
           },
         }]);
         rdsProps['DBSubnetGroupName'] = { Ref: subnetGroupId };
-        if (props.securityGroupIds) rdsProps['VPCSecurityGroups'] = props.securityGroupIds;
+        if (props.securityGroupIds) rdsProps['VPCSecurityGroups'] = (props.securityGroupIds as string[]).map(id => resolveSecurityGroupId(id, ctx));
       }
 
       sqlEntries.push([logicalId, {
@@ -762,7 +1008,7 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
       entries.push([docDbSecretId, {
         Type: 'AWS::SecretsManager::Secret',
         Properties: {
-          Name: { 'Fn::Sub': `\${AWS::StackName}-${construct.id}-docdb-password` },
+          Name: `${ctx.currentStackName}-${construct.id}-docdb-password`,
           GenerateSecretString: {
             SecretStringTemplate: JSON.stringify({ username: 'docdbadmin' }),
             GenerateStringKey: 'password',
@@ -785,11 +1031,11 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
           Type: 'AWS::DocDB::DBSubnetGroup',
           Properties: {
             DBSubnetGroupDescription: `Subnet group para ${construct.id}`,
-            SubnetIds: docDbSubnetIds,
+            SubnetIds: docDbSubnetIds.map(id => resolveSubnetId(id, ctx)),
           },
         }]);
         docDbClusterProps['DBSubnetGroupName'] = { Ref: subnetGroupId };
-        if (props.securityGroupIds) docDbClusterProps['VpcSecurityGroupIds'] = props.securityGroupIds;
+        if (props.securityGroupIds) docDbClusterProps['VpcSecurityGroupIds'] = (props.securityGroupIds as string[]).map(id => resolveSecurityGroupId(id, ctx));
       }
 
       entries.push([clusterLogicalId, {
@@ -871,23 +1117,40 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
           AtRestEncryptionEnabled: (props.atRestEncryptionEnabled as boolean) ?? true,
           TransitEncryptionEnabled: (props.transitEncryptionEnabled as boolean) ?? true,
           ...(props.subnetGroupName ? { CacheSubnetGroupName: props.subnetGroupName } : {}),
-          ...(props.securityGroupIds ? { SecurityGroupIds: props.securityGroupIds } : {}),
+          ...(props.securityGroupIds ? { SecurityGroupIds: (props.securityGroupIds as string[]).map(id => resolveSecurityGroupId(id, ctx)) } : {}),
         },
       }]];
     }
 
     case 'Cache.Memcached': {
-      return [[logicalId, {
+      const memSubnetIds = props.subnetIds as string[] | undefined;
+      const memEntries: Array<[string, CloudFormationResource]> = [];
+      const memProps: Record<string, unknown> = {
+        ClusterName: construct.id.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 40),
+        Engine: 'memcached',
+        CacheNodeType: CACHE_NODE_TYPE_MAP[(props.nodeType as string) ?? 'small'] ?? 'cache.t3.micro',
+        NumCacheNodes: (props.numCacheNodes as number) ?? 2,
+      };
+      if (memSubnetIds && memSubnetIds.length > 0) {
+        const subnetGroupId = `${logicalId}SubnetGroup`;
+        memEntries.push([subnetGroupId, {
+          Type: 'AWS::ElastiCache::SubnetGroup',
+          Properties: {
+            Description: `Subnet group para ${construct.id}`,
+            SubnetIds: memSubnetIds.map(id => resolveSubnetId(id, ctx)),
+          },
+        }]);
+        memProps['CacheSubnetGroupName'] = { Ref: subnetGroupId };
+        if (props.securityGroupIds) memProps['VpcSecurityGroupIds'] = (props.securityGroupIds as string[]).map(id => resolveSecurityGroupId(id, ctx));
+      } else {
+        if (props.subnetGroupName) memProps['CacheSubnetGroupName'] = props.subnetGroupName;
+        if (props.securityGroupIds) memProps['VpcSecurityGroupIds'] = (props.securityGroupIds as string[]).map(id => resolveSecurityGroupId(id, ctx));
+      }
+      memEntries.push([logicalId, {
         Type: 'AWS::ElastiCache::CacheCluster',
-        Properties: {
-          ClusterName: construct.id.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 40),
-          Engine: 'memcached',
-          CacheNodeType: CACHE_NODE_TYPE_MAP[(props.nodeType as string) ?? 'small'] ?? 'cache.t3.micro',
-          NumCacheNodes: (props.numCacheNodes as number) ?? 2,
-          ...(props.subnetGroupName ? { CacheSubnetGroupName: props.subnetGroupName } : {}),
-          ...(props.securityGroupIds ? { VpcSecurityGroupIds: props.securityGroupIds as string[] } : {}),
-        },
-      }]];
+        Properties: memProps,
+      }]);
+      return memEntries;
     }
 
     // ── Function ──────────────────────────────────────────────────────────
@@ -898,7 +1161,7 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
         'python3.12': 'python3.12', 'python3.11': 'python3.11',
         'java21': 'java21', 'go1.x': 'go1.x', 'dotnet8': 'dotnet8',
       };
-      const role = resolveLambdaRole(construct.id, logicalId, ctx);
+      const role = resolveLambdaRole(construct.id, logicalId, ctx, !!props.vpcId);
       const entries: Array<[string, CloudFormationResource]> = [];
       if (role.extraResource) entries.push(role.extraResource);
       entries.push([logicalId, {
@@ -914,11 +1177,17 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
           Timeout: (props.timeout as number) ?? 30,
           Role: role.roleRef,
           ...(props.reservedConcurrency !== undefined ? { ReservedConcurrentExecutions: props.reservedConcurrency } : {}),
-          ...(environment && Object.keys(environment).length > 0 ? { Environment: { Variables: environment } } : {}),
+          ...(environment && Object.keys(environment).length > 0 ? {
+            Environment: {
+              Variables: Object.fromEntries(
+                Object.entries(environment).map(([k, v]) => [k, resolveEnvVarValue(v, ctx)])
+              ),
+            },
+          } : {}),
           ...(props.vpcId ? {
             VpcConfig: {
-              SubnetIds: (props.subnetIds as string[]) ?? [],
-              SecurityGroupIds: (props.securityGroupIds as string[]) ?? [],
+              SubnetIds: ((props.subnetIds as string[]) ?? []).map(id => resolveSubnetId(id, ctx)),
+              SecurityGroupIds: ((props.securityGroupIds as string[]) ?? []).map(id => resolveSecurityGroupId(id, ctx)),
             },
           } : {}),
         },
@@ -1064,7 +1333,18 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
           methodLogicalIds.push(optionsId);
         }
 
-        const deploymentId = `${logicalId}Deployment`;
+        // Hash das rotas no LOGICAL ID do Deployment — quando rotas mudam, o
+        // logical ID muda, CloudFormation cria um NOVO Deployment (novo snapshot
+        // da API), atualiza o Stage para apontar para ele e deleta o antigo.
+        // Usar só a Description não funciona: o CF atualiza em-place sem criar
+        // novo snapshot, então o stage continua com as rotas antigas (403).
+        const routesHash = routes
+          .map(r => `${r.method}:${r.path}:${r.lambdaId}`)
+          .sort()
+          .join('|');
+        let hashVal = 0;
+        for (let i = 0; i < routesHash.length; i++) hashVal = (Math.imul(31, hashVal) + routesHash.charCodeAt(i)) >>> 0;
+        const deploymentId = `${logicalId}Deployment${hashVal.toString(16)}`;
         entries.push([deploymentId, {
           Type: 'AWS::ApiGateway::Deployment',
           DependsOn: methodLogicalIds,
@@ -1166,8 +1446,11 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
       const attachType = props.attachType as string;
       const attachTo = (props.attachTo as string).replace(/[^a-zA-Z0-9]/g, '');
       const principalService = attachType === 'lambda' ? 'lambda.amazonaws.com' : 'ec2.amazonaws.com';
+      const lambdaInVpc = attachType === 'lambda' && ctx.vpcLambdas.has(props.attachTo as string);
       const managedPolicies: string[] = attachType === 'lambda'
-        ? ['arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole']
+        ? [lambdaInVpc
+            ? 'arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole'
+            : 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole']
         : attachType === 'compute'
         ? ['arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore']
         : [];
@@ -1575,6 +1858,8 @@ export function synthesize(stack: Stack, allStacks?: Stack[]): CloudFormationTem
   const universe = allStacks ?? [stack];
   const registry = new Map<string, string>();
   const lambdaRoles = new Map<string, { stackName: string; roleLogicalId: string }>();
+  const vpcLambdas = new Set<string>();
+  const dbSecretSuffix = new Map<string, string>();
   for (const s of universe) {
     for (const c of s.constructs) {
       registry.set(c.id, s.name);
@@ -1587,9 +1872,22 @@ export function synthesize(stack: Stack, allStacks?: Stack[]): CloudFormationTem
           });
         }
       }
+      if (c.type === 'Function.Lambda') {
+        const p = c.props as Record<string, unknown>;
+        if (p.vpcId) vpcLambdas.add(c.id);
+      }
+      if (c.type === 'Database.SQL') {
+        const p = c.props as Record<string, unknown>;
+        const engine = p.engine as string;
+        const isAurora = engine === 'aurora-mysql' || engine === 'aurora-postgresql';
+        dbSecretSuffix.set(c.id, isAurora ? 'aurora-password' : 'db-password');
+      }
+      if (c.type === 'Database.DocumentDB') {
+        dbSecretSuffix.set(c.id, 'docdb-password');
+      }
     }
   }
-  const ctx: SynthContext = { currentStackName: stack.name, registry, lambdaRoles };
+  const ctx: SynthContext = { currentStackName: stack.name, registry, lambdaRoles, vpcLambdas, dbSecretSuffix };
 
   for (const construct of stack.constructs) {
     const entries = synthesizeConstruct(construct, ctx);
@@ -1642,6 +1940,40 @@ export function synthesize(stack: Stack, allStacks?: Stack[]): CloudFormationTem
           Export: { Name: `${stack.name}-${roleLogicalId}-RoleArn` },
         };
       }
+    }
+    if (construct.type === 'Database.SQL') {
+      const p = construct.props as Record<string, unknown>;
+      const engine = p.engine as string;
+      const isAurora = engine === 'aurora-mysql' || engine === 'aurora-postgresql';
+      const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
+      const endpointResource = isAurora ? `${logicalId}Cluster` : logicalId;
+      outputs[`${logicalId}Endpoint`] = {
+        Value: { 'Fn::GetAtt': [endpointResource, 'Endpoint.Address'] },
+        Export: { Name: `${stack.name}-${construct.id}-Endpoint` },
+      };
+      outputs[`${logicalId}Port`] = {
+        Value: { 'Fn::GetAtt': [endpointResource, 'Endpoint.Port'] },
+        Export: { Name: `${stack.name}-${construct.id}-Port` },
+      };
+      outputs[`${logicalId}SecretArn`] = {
+        Value: { Ref: `${logicalId}Secret` },
+        Export: { Name: `${stack.name}-${construct.id}-SecretArn` },
+      };
+    }
+    if (construct.type === 'Database.DocumentDB') {
+      const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
+      outputs[`${logicalId}Endpoint`] = {
+        Value: { 'Fn::GetAtt': [`${logicalId}Cluster`, 'Endpoint'] },
+        Export: { Name: `${stack.name}-${construct.id}-Endpoint` },
+      };
+      outputs[`${logicalId}Port`] = {
+        Value: { 'Fn::GetAtt': [`${logicalId}Cluster`, 'Port'] },
+        Export: { Name: `${stack.name}-${construct.id}-Port` },
+      };
+      outputs[`${logicalId}SecretArn`] = {
+        Value: { Ref: `${logicalId}Secret` },
+        Export: { Name: `${stack.name}-${construct.id}-SecretArn` },
+      };
     }
   }
 

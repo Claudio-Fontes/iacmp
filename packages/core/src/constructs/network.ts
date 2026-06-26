@@ -73,6 +73,7 @@ export interface NetworkCDNProps {
     id: string;
     path?: string;
     protocol?: 'http-only' | 'https-only' | 'match-viewer';
+    bucketRef?: string;
   }>;
   defaultRootObject?: string;
   priceClass?: 'PriceClass_100' | 'PriceClass_200' | 'PriceClass_All';

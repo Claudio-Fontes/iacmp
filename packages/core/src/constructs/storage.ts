@@ -3,6 +3,8 @@ import { Stack, BaseConstruct } from '../stack';
 export interface StorageBucketProps {
   versioning?: boolean;
   publicAccess?: boolean;
+  websiteHosting?: boolean;
+  bucketName?: string;
   location?: string;
   lifecycleRules?: Array<{
     prefix?: string;

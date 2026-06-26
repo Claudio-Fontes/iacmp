@@ -3,13 +3,37 @@ import { SYSTEM_PROMPT } from '../prompts/system-prompt';
 import { withRetry } from './retry';
 
 const COPILOT_ENDPOINT = 'https://api.githubcopilot.com/chat/completions';
+const COPILOT_TOKEN_ENDPOINT = 'https://api.github.com/copilot_internal/v2/token';
 
 export class CopilotProvider implements AIProvider {
   name = 'copilot';
-  private token: string;
+  private githubToken: string;
+  private sessionToken: string | null = null;
+  private sessionTokenExpiry: number = 0;
 
   constructor(token: string) {
-    this.token = token;
+    this.githubToken = token;
+  }
+
+  private async getSessionToken(): Promise<string> {
+    const now = Date.now();
+    if (this.sessionToken && now < this.sessionTokenExpiry - 60_000) {
+      return this.sessionToken;
+    }
+    const resp = await fetch(COPILOT_TOKEN_ENDPOINT, {
+      headers: {
+        'Authorization': `token ${this.githubToken}`,
+        'User-Agent': 'iacmp-cli',
+      },
+    });
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error(`Copilot token exchange error ${resp.status}: ${text}`);
+    }
+    const data = await resp.json() as { token: string; expires_at: number };
+    this.sessionToken = data.token;
+    this.sessionTokenExpiry = data.expires_at * 1000;
+    return this.sessionToken;
   }
 
   private buildMessages(messages: AIMessage[]): Array<{ role: string; content: string }> {
@@ -27,12 +51,14 @@ export class CopilotProvider implements AIProvider {
 
   async chat(messages: AIMessage[]): Promise<AIResponse> {
     return withRetry(async () => {
+      const token = await this.getSessionToken();
       const response = await fetch(COPILOT_ENDPOINT, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${this.token}`,
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
           'Copilot-Integration-Id': 'iacmp-cli',
+          'Editor-Version': 'iacmp/1.0',
         },
         body: JSON.stringify({
           model: 'gpt-4o',
@@ -68,12 +94,14 @@ export class CopilotProvider implements AIProvider {
     await withRetry(async () => {
       if (emittedAny) throw Object.assign(new Error('stream interrompido após início — sem retry'), { noRetry: true });
 
+      const token = await this.getSessionToken();
       const response = await fetch(COPILOT_ENDPOINT, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${this.token}`,
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
           'Copilot-Integration-Id': 'iacmp-cli',
+          'Editor-Version': 'iacmp/1.0',
         },
         body: JSON.stringify({
           model: 'gpt-4o',

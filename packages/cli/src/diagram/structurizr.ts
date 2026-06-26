@@ -477,7 +477,7 @@ export function renderStructurizr(model: DiagramModel): string {
     lines.push('');
     lines.push(`${ind(2)}deployment ${sysId} "Production" "${deployMeta.viewTag}" {`);
     lines.push(`${ind(3)}include *`);
-    lines.push(`${ind(3)}autoLayout`);
+    lines.push(`${ind(3)}autoLayout tb 300 100`);
     lines.push(`${ind(2)}}`);
   }
 

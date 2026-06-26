@@ -4,6 +4,7 @@
 const readline = require('readline');
 const path = require('path');
 const fs = require('fs');
+const cp = require('child_process');
 
 // Carrega .env do projeto (sobrescreve env do shell — projeto tem prioridade)
 (function loadEnv() {
@@ -50,9 +51,9 @@ Module._resolveFilename = function(req, parent, isMain, opts) {
 
 const chalk = require('chalk');
 const {
-  AnthropicProvider, CopilotProvider, ChatSession,
+  AnthropicProvider, OpenAIProvider, CopilotProvider, ChatSession,
   extractResponse, validateTypeScript, writeGeneratedFiles, deleteFiles,
-  runSynth, readProjectContextRAG, printExplanation, printWarnings,
+  runSynth, runSynthCapture, readProjectContextRAG, printExplanation, printWarnings,
   printNextSteps, buildSystemPrompt,
   loadSession, saveSession, clearSession, getCached, setCache, clearCache,
   resolveLanguage, SUPPORTED_LANGUAGES, MESSAGES,
@@ -75,22 +76,39 @@ const rl = readline.createInterface({
   crlfDelay: Infinity,
 });
 
-const _lineQueue = [];
+const _lineQueue = [];   // fila de mensagens completas (já agrupadas)
 const _lineWaiters = [];
 let _rlDone = false;
 
-rl.on('line', line => {
-  const trimmed = line.trim();
+// Agrupamento de paste: linhas que chegam dentro de PASTE_WINDOW_MS
+// são combinadas em uma única mensagem. Resolve o problema de prompts
+// multi-linha colados no terminal (readline dispara line por line).
+const PASTE_WINDOW_MS = 40;
+let _pendingLines = [];
+let _pasteTimer = null;
+
+function _flushPending() {
+  _pasteTimer = null;
+  if (_pendingLines.length === 0) return;
+  const combined = _pendingLines.join('\n').trim();
+  _pendingLines = [];
+  if (!combined) return;
   if (_lineWaiters.length > 0) {
-    _lineWaiters.shift()(trimmed);
+    _lineWaiters.shift()(combined);
   } else {
-    _lineQueue.push(trimmed);
+    _lineQueue.push(combined);
   }
+}
+
+rl.on('line', line => {
+  _pendingLines.push(line);
+  if (_pasteTimer) clearTimeout(_pasteTimer);
+  _pasteTimer = setTimeout(_flushPending, PASTE_WINDOW_MS);
 });
 
 rl.on('close', () => {
+  if (_pasteTimer) { clearTimeout(_pasteTimer); _flushPending(); }
   _rlDone = true;
-  // Resolve waiters pendentes com string vazia (EOF)
   while (_lineWaiters.length > 0) _lineWaiters.shift()('');
 });
 
@@ -109,7 +127,14 @@ function ask(question) {
 // --- Fim do sistema de stdin ---
 
 function resolveProvider() {
-  if (process.env.ANTHROPIC_API_KEY) return new AnthropicProvider(process.env.ANTHROPIC_API_KEY);
+  const model = process.env.IACMP_MODEL;
+  const preferred = (process.env.IACMP_PROVIDER_AI || '').toLowerCase();
+
+  if (preferred === 'openai' && process.env.OPENAI_API_KEY) return new OpenAIProvider(process.env.OPENAI_API_KEY, model);
+  if (preferred === 'anthropic' && process.env.ANTHROPIC_API_KEY) return new AnthropicProvider(process.env.ANTHROPIC_API_KEY, model);
+  if (preferred === 'copilot' && process.env.GITHUB_TOKEN) return new CopilotProvider(process.env.GITHUB_TOKEN);
+  if (process.env.ANTHROPIC_API_KEY) return new AnthropicProvider(process.env.ANTHROPIC_API_KEY, model);
+  if (process.env.OPENAI_API_KEY) return new OpenAIProvider(process.env.OPENAI_API_KEY, model);
   if (process.env.GITHUB_TOKEN) return new CopilotProvider(process.env.GITHUB_TOKEN);
   throw new Error(MESSAGES[currentLang].chat.configureKey);
 }
@@ -152,8 +177,21 @@ async function runGeneration(provider, session, lastPrompt, projectContext) {
   if (!raw) {
     process.stderr.write(chalk.dim(t.generating));
     const chunks = [];
+    let accumulated = '';
+    const announced = new Set();
     try {
-      await provider.stream(session.getMessages(), chunk => chunks.push(chunk));
+      await provider.stream(session.getMessages(), chunk => {
+        chunks.push(chunk);
+        accumulated += chunk;
+        const pathRegex = /"path"\s*:\s*"([^"]+)"/g;
+        let m;
+        while ((m = pathRegex.exec(accumulated)) !== null) {
+          if (!announced.has(m[1])) {
+            announced.add(m[1]);
+            process.stderr.write(chalk.dim(`  → ${m[1]}\n`));
+          }
+        }
+      });
     } catch (err) {
       process.stderr.write(chalk.red(t.errorPrefix + err.message + '\n'));
       process.stderr.write(chalk.dim(t.messageNotSaved));
@@ -180,7 +218,29 @@ async function runGeneration(provider, session, lastPrompt, projectContext) {
   // Valida TypeScript
   const tsFiles = parsed.files.filter(f => f.path.endsWith('.ts'));
   if (tsFiles.length > 0) {
-    const result = validateTypeScript(tsFiles, cwd);
+    let result = validateTypeScript(tsFiles, cwd);
+
+    // Auto-instala pacotes faltantes antes de mandar pra IA corrigir
+    if (!result.valid) {
+      const missingModules = result.errors
+        .map(e => e.match(/Cannot find module '([^']+)'/))
+        .filter(Boolean)
+        .map(m => m[1])
+        .filter(pkg => !pkg.startsWith('.') && !pkg.startsWith('@iacmp/'))
+        .filter((v, i, a) => a.indexOf(v) === i);
+
+      if (missingModules.length > 0) {
+        process.stderr.write(chalk.dim(`Instalando: ${missingModules.join(', ')}...\n`));
+        try {
+          cp.execSync(`npm install ${missingModules.join(' ')}`, { cwd, stdio: 'pipe' });
+          process.stderr.write(chalk.green(`✓ Instalado: ${missingModules.join(', ')}\n`));
+          result = validateTypeScript(tsFiles, cwd);
+        } catch {
+          process.stderr.write(chalk.red(`✗ Falha ao instalar: ${missingModules.join(', ')}\n`));
+        }
+      }
+    }
+
     if (!result.valid) {
       process.stderr.write(chalk.dim(t.validationFailedRetrying));
       session.addUserMessage(`Erros TypeScript:\n${result.errors.join('\n')}\n\nCorrija e retorne o JSON completo.`);
@@ -205,11 +265,84 @@ async function runGeneration(provider, session, lastPrompt, projectContext) {
   }
 
   if (parsed.files.length > 0) {
+    // Descarta linhas residuais do paste que ficaram na fila —
+    // sem isso, o confirm "Aplicar mudanças? [y/n]" consome essas
+    // sobras em vez de esperar o y/n real do usuário.
+    while (_lineQueue.length > 0) _lineQueue.shift();
     await writeGeneratedFiles(parsed.files, cwd, dryRun, ask, currentLang);
     acted = true;
+
+    // Após aplicar os arquivos, detecta e instala pacotes referenciados nos
+    // arquivos TS gerados (import ou require) que não estão em node_modules.
+    // Cobre o caso em que a IA usa require() as any — TypeScript não reclama,
+    // mas o pacote precisa estar instalado para build/deploy funcionar.
+    const generatedTs = parsed.files.filter(f => f.path.endsWith('.ts') || f.path.endsWith('.js'));
+    const pkgPattern = /(?:import\s+.*?\s+from\s+['"]([^'"./][^'"]*?)['"]|require\(['"]([^'"./][^'"]*?)['"]\))/g;
+    const builtins = new Set(['fs', 'path', 'https', 'http', 'url', 'crypto', 'os', 'stream', 'util', 'events', 'buffer', 'child_process', 'readline', 'net', 'tls', 'zlib', 'assert', 'querystring', 'string_decoder', 'timers', 'vm']);
+    const toInstall = new Set();
+    for (const file of generatedTs) {
+      let m;
+      pkgPattern.lastIndex = 0;
+      while ((m = pkgPattern.exec(file.content)) !== null) {
+        const pkg = (m[1] || m[2]).split('/').slice(0, m[1]?.startsWith('@') || m[2]?.startsWith('@') ? 2 : 1).join('/');
+        if (!builtins.has(pkg) && !pkg.startsWith('@iacmp/')) {
+          const nodeModulesPath = path.join(cwd, 'node_modules', pkg);
+          if (!fs.existsSync(nodeModulesPath)) toInstall.add(pkg);
+        }
+      }
+    }
+    if (toInstall.size > 0) {
+      const pkgs = [...toInstall];
+      process.stdout.write(`\nInstalando dependências: ${pkgs.join(', ')}...\n`);
+      try {
+        cp.execSync(`npm install ${pkgs.join(' ')}`, { cwd, stdio: 'inherit' });
+        process.stdout.write(`✓ Instalado: ${pkgs.join(', ')}\n\n`);
+      } catch (err) {
+        process.stdout.write(`✗ Falha ao instalar ${pkgs.join(', ')}: ${err.message}\n\n`);
+      }
+    }
   }
 
   printNextSteps(parsed.nextSteps, currentLang);
+
+  if (!dryRun && parsed.files.length > 0) {
+    const MAX_SYNTH_RETRIES = 5;
+    let synthOk = false;
+    for (let attempt = 1; attempt <= MAX_SYNTH_RETRIES; attempt++) {
+      process.stderr.write(chalk.dim(`  → Validando synth (${attempt}/${MAX_SYNTH_RETRIES})...\n`));
+      const { success, output } = runSynthCapture(cwd, iacProvider);
+      if (success) {
+        process.stderr.write(chalk.green('  ✓ Synth validado\n'));
+        synthOk = true;
+        break;
+      }
+      process.stderr.write(chalk.yellow(`  ✗ Synth falhou — corrigindo automaticamente...\n`));
+      if (attempt === MAX_SYNTH_RETRIES) break;
+      const originalFileCount = parsed.files.length;
+      session.addUserMessage(
+        `O comando "iacmp synth" falhou com o seguinte erro:\n\n${output}\n\n` +
+        `Corrija os arquivos e retorne o JSON completo com TODOS os ${originalFileCount} arquivo(s) da resposta anterior.`
+      );
+      const retryChunks = [];
+      try {
+        await provider.stream(session.getMessages(), chunk => retryChunks.push(chunk));
+        const retryRaw = retryChunks.join('');
+        session.addAssistantMessage(retryRaw);
+        try {
+          const retryParsed = extractResponse(retryRaw);
+          parsed = retryParsed;
+          await writeGeneratedFiles(parsed.files, cwd, false, async () => 'y', currentLang);
+        } catch { /* mantém parsed anterior */ }
+      } catch (err) {
+        process.stderr.write(chalk.red(`  ✗ Erro no retry: ${err.message}\n`));
+        break;
+      }
+    }
+    if (!synthOk) {
+      process.stdout.write(chalk.yellow('\n  ⚠ Não foi possível corrigir automaticamente — revise os arquivos gerados.\n'));
+    }
+  }
+
   return true; // assistente respondeu — sempre salva a sessão
 }
 
@@ -248,7 +381,58 @@ async function handleVoiceCommand() {
   }
 }
 
+function autoInitProject() {
+  const iacmpConfig = path.join(cwd, 'iacmp.json');
+  if (fs.existsSync(iacmpConfig)) return;
+
+  const projectName = path.basename(cwd).toLowerCase().replace(/[^a-z0-9-]/g, '-');
+
+  fs.writeFileSync(iacmpConfig, JSON.stringify({
+    name: projectName,
+    provider: 'aws',
+    region: 'us-east-1',
+  }, null, 2) + '\n', 'utf-8');
+
+  const tsconfigPath = path.join(cwd, 'tsconfig.json');
+  if (!fs.existsSync(tsconfigPath)) {
+    fs.writeFileSync(tsconfigPath, JSON.stringify({
+      compilerOptions: {
+        target: 'ES2022',
+        module: 'CommonJS',
+        moduleResolution: 'node',
+        ignoreDeprecations: '5.0',
+        lib: ['es2022'],
+        strict: false,
+        skipLibCheck: true,
+        outDir: 'dist',
+        rootDir: 'src',
+      },
+      include: ['src/**/*'],
+      exclude: ['node_modules', 'dist'],
+    }, null, 2) + '\n', 'utf-8');
+  }
+
+  const pkgPath = path.join(cwd, 'package.json');
+  if (!fs.existsSync(pkgPath)) {
+    fs.writeFileSync(pkgPath, JSON.stringify({
+      name: projectName,
+      version: '1.0.0',
+      private: true,
+      scripts: { build: 'tsc', synth: 'iacmp synth', deploy: 'iacmp deploy' },
+      dependencies: {},
+      devDependencies: {
+        typescript: '^5',
+        'ts-node': '^10',
+        '@iacmp/core': '*',
+      },
+    }, null, 2) + '\n', 'utf-8');
+  }
+
+  console.log(chalk.dim(`  Projeto inicializado: ${iacmpConfig}\n`));
+}
+
 async function main() {
+  autoInitProject();
   const previous = loadSession(cwd);
   const session = new ChatSession();
   if (previous.length > 0) {

@@ -68,11 +68,16 @@ export function readProjectMeta(projectDir: string): string {
   if (fs.existsSync(configPath)) {
     try {
       const config = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
+      const tier = config['accountTier'] as string | undefined;
       lines.push('## Configuração do projeto (iacmp.json)');
       lines.push(`- Provider: ${config['provider'] ?? 'aws'}`);
       lines.push(`- Região: ${config['region'] ?? 'us-east-1'}`);
       lines.push(`- Linguagem: ${config['language'] ?? 'typescript'}`);
       lines.push(`- Nome: ${config['name'] ?? path.basename(projectDir)}`);
+      lines.push(`- Account Tier: ${tier ?? 'free'}`);
+      if (!tier || tier === 'free') {
+        lines.push('  ⚠ Conta free tier — use backupRetentionDays: 0, storageEncrypted: false, instanceType: db.t3.micro para RDS');
+      }
       lines.push('');
     } catch {
       lines.push('iacmp.json encontrado mas inválido.');
@@ -130,11 +135,16 @@ export function readProjectContext(projectDir: string): string {
   if (fs.existsSync(configPath)) {
     try {
       const config = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
+      const tier = config['accountTier'] as string | undefined;
       lines.push('## Configuração do projeto (iacmp.json)');
       lines.push(`- Provider: ${config['provider'] ?? 'aws'}`);
       lines.push(`- Região: ${config['region'] ?? 'us-east-1'}`);
       lines.push(`- Linguagem: ${config['language'] ?? 'typescript'}`);
       lines.push(`- Nome: ${config['name'] ?? path.basename(projectDir)}`);
+      lines.push(`- Account Tier: ${tier ?? 'free'}`);
+      if (!tier || tier === 'free') {
+        lines.push('  ⚠ Conta free tier — use backupRetentionDays: 0, storageEncrypted: false, instanceType: db.t3.micro para RDS');
+      }
       lines.push('');
     } catch {
       lines.push('iacmp.json encontrado mas inválido.');

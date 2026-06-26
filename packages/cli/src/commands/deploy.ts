@@ -157,7 +157,7 @@ export default class Deploy extends Command {
       // conflito depois de tentar criar o changeset, com um erro confuso
       // (ResourceExistenceCheck).
       if (provider === 'aws' && !dryRun) {
-        const conflicts = findExistingRetainedResources(t.filePath, region);
+        const conflicts = findExistingRetainedResources(t.filePath, region, t.stackName);
         if (conflicts.length > 0) {
           const list = conflicts.map((c) => `${c.typeName} "${c.identifier}"`).join(', ');
           this.log(chalk.red(

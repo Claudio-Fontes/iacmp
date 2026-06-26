@@ -68,6 +68,7 @@ export function loadStacks(cwd: string): Array<{ name: string; stack: Stack }> {
         esModuleInterop: true,
         strict: false,
         skipLibCheck: true,
+        ignoreDeprecations: '5.0',
       },
     });
   }

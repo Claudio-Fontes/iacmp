@@ -30,14 +30,22 @@ module.exports = stack;
 });
 
 describe('Cache.Memcached (ElastiCache) — deploy/destroy real na AWS', () => {
-  test.skip('cluster Memcached cache.t3.micro 1 nó — SKIP: AWS::ElastiCache::CacheCluster exige VpcSecurityGroupIds mas { Ref } de SG retorna GroupName não GroupId nessa conta; requer SG ID hardcoded ou VPC+SubnetGroup dedicados', () => {
+  test('cluster Memcached cache.t3.micro 1 nó — confirma CREATE_COMPLETE', () => {
     const stackName = e2eStackName('cache', 2);
     const stackJs = `
-const { Stack, Cache } = require('@iacmp/core');
+const { Stack, Cache, Network } = require('@iacmp/core');
 const stack = new Stack('${e2eStackName('cache', 2)}');
+new Network.VPC(stack, 'Vpc', { cidr: '10.1.0.0/16', maxAzs: 2 });
+new Network.SecurityGroup(stack, 'Sg', {
+  vpcId: { Ref: 'Vpc' },
+  description: 'e2e memcached sg',
+  ingressRules: [{ protocol: 'tcp', fromPort: 11211, toPort: 11211, cidr: '10.1.0.0/16', description: 'Memcached' }],
+});
 new Cache.Memcached(stack, 'e2e-memcached', {
   numCacheNodes: 1,
   nodeType: 'small',
+  subnetIds: [{ Ref: 'VpcPrivateSubnetA' }, { Ref: 'VpcPrivateSubnetB' }],
+  securityGroupIds: [{ Ref: 'Sg' }],
 });
 module.exports = stack;
 `;

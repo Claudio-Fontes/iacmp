@@ -97,6 +97,7 @@ export default class Synth extends Command {
                 esModuleInterop: true,
                 strict: false,
                 skipLibCheck: true,
+                ignoreDeprecations: '5.0',
               },
             });
           } else {

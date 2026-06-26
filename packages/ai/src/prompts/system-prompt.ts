@@ -98,6 +98,8 @@ const stack = new Stack('nome');
 new Storage.Bucket(stack, 'LogicalId', {
   versioning?: boolean,
   publicAccess?: boolean,
+  websiteHosting?: boolean,  // habilita hosting de site estático (SPA/React)
+  bucketName?: string,       // nome fixo do bucket (evite exceto quando necessário para CDN)
   lifecycleRules?: [
     {
       prefix?: string,
@@ -138,10 +140,24 @@ import { Stack, Network } from '@iacmp/core';
 const stack = new Stack('nome');
 new Network.VPC(stack, 'LogicalId', {
   cidr?: string,        // ex: '10.0.0.0/16'
-  maxAzs?: number,
+  maxAzs?: number,      // NUNCA use maxAzs > 0 junto com Network.Subnet explícitos — gera conflito de CIDR
 });
 export default stack;
 \`\`\`
+
+**REGRA ABSOLUTA — maxAzs vs Network.Subnet:** são mutuamente exclusivos.
+- Se declarar \`Network.Subnet\` explícitos → use \`maxAzs: 0\` (ou omita maxAzs)
+- Se usar \`maxAzs > 0\` → NÃO declare \`Network.Subnet\` na mesma stack
+
+**REGRA ABSOLUTA — availabilityZone em subnets com RDS:** sempre que houver \`Database.SQL\` ou \`Database.DocumentDB\` na arquitetura, as \`Network.Subnet\` usadas no banco DEVEM ter \`availabilityZone\` explícito e DIFERENTE entre si. RDS exige subnet group cobrindo ≥ 2 AZs distintas. Exemplo: \`availabilityZone: 'us-east-1a'\` e \`availabilityZone: 'us-east-1b'\`.
+
+**REGRA ABSOLUTA — Security Group para banco:** use a porta correta: PostgreSQL/Aurora-PostgreSQL → 5432. MySQL/Aurora-MySQL/MariaDB → 3306. SQLServer → 1433. Oracle → 1521.
+
+**REGRA ABSOLUTA — Database.SQL defaults:** adapte ao Account Tier do projeto (vem do contexto iacmp.json):
+- **free**: \`engine: 'postgres'\`, \`instanceType: 'db.t3.micro'\`, \`backupRetentionDays: 0\`, \`storageEncrypted: false\`
+- **standard**: use os valores que fazem sentido para o projeto (ex: \`backupRetentionDays: 7\`, \`storageEncrypted: true\`, instância maior)
+- NÃO use \`instances\` em RDS single-instance — essa propriedade é exclusiva de clusters Aurora
+- Se o contexto não informar o tier, assuma **free** e avise o usuário no campo \`nextSteps\`
 
 ### Network.Subnet — Subnet explícita
 \`\`\`typescript
@@ -225,18 +241,44 @@ new Network.CDN(stack, 'LogicalId', {
   origins: [
     {
       id: string,
-      domainName: string,
-      bucketName?: string,    // para origin S3
+      domainName: string,       // domínio da origin (ex: API, servidor)
+      bucketRef?: string,       // ID lógico do Storage.Bucket (usa OAC automático, omite domainName)
       path?: string,
+      protocol?: 'http-only' | 'https-only' | 'match-viewer',
     }
   ],
   defaultRootObject?: string,
   priceClass?: 'PriceClass_100' | 'PriceClass_200' | 'PriceClass_All',
-  certificateArn?: string,
+  // certificateArn: OMITA — use apenas se o usuário fornecer um ARN real de ACM
   wafAclId?: string,
-  cachePolicies?: [...],
 });
 \`\`\`
+
+**REGRA ABSOLUTA — certificateArn:** NUNCA gere \`certificateArn\` com placeholder. Omita o campo completamente — sem \`certificateArn\`, o synth usa o certificado padrão do CloudFront (\`*.cloudfront.net\`), que funciona imediatamente sem configuração extra. Só inclua \`certificateArn\` se o usuário fornecer um ARN real (ex: \`arn:aws:acm:us-east-1:123456789012:certificate/abc123\`).
+
+**REGRA CRÍTICA — Hosting de app React/SPA na AWS:**
+Use SEMPRE o padrão com bucketRef — ele cria OAC + BucketPolicy automaticamente (bucket privado, acesso só via CloudFront).
+**OBRIGATÓRIO**: bucket e CDN devem estar na MESMA stack TypeScript. bucketRef é uma referência local (Fn::GetAtt) e não funciona entre stacks separadas.
+\`\`\`typescript
+// stacks/network/static-site-stack.ts  ← bucket E cdn no mesmo arquivo/stack
+import { Stack, Storage, Network } from '@iacmp/core';
+const stack = new Stack('meu-app-static-site');
+new Storage.Bucket(stack, 'AppBucket', {
+  websiteHosting: true,
+});
+new Network.CDN(stack, 'AppCDN', {
+  defaultRootObject: 'index.html',
+  origins: [
+    {
+      id: 'app-bucket',
+      domainName: '',
+      bucketRef: 'AppBucket',
+    }
+  ],
+});
+export default stack;
+\`\`\`
+NUNCA separe Storage.Bucket e Network.CDN em arquivos/stacks diferentes quando usar bucketRef — o synth vai falhar com "Ref/Fn::GetAtt para recurso inexistente".
 
 ### Network.Dns — Route53, Azure DNS, Cloud DNS
 \`\`\`typescript
@@ -256,20 +298,22 @@ new Network.Dns(stack, 'LogicalId', {
 ---
 ## DATABASE
 
-### Database.SQL — RDS, Azure SQL, Cloud SQL
+### Database.SQL — RDS, Aurora, Azure SQL, Cloud SQL
 \`\`\`typescript
 import { Stack, Database } from '@iacmp/core';
 const stack = new Stack('nome');
 new Database.SQL(stack, 'LogicalId', {
-  engine: 'mysql' | 'postgres' | 'mariadb' | 'oracle' | 'sqlserver',  // OBRIGATÓRIO
+  engine: 'mysql' | 'postgres' | 'mariadb' | 'oracle' | 'sqlserver' | 'aurora-mysql' | 'aurora-postgresql',  // OBRIGATÓRIO
   instanceType?: string,
-  storageGb?: number,
-  multiAz?: boolean,
+  instances?: number,      // Aurora: número de instâncias no cluster (padrão: 1)
+  storageGb?: number,      // NÃO se aplica ao Aurora (storage gerenciado automaticamente)
+  multiAz?: boolean,       // RDS single-instance; Aurora: use instances >= 2 para HA
   backupRetentionDays?: number,
   deletionProtection?: boolean,
+  storageEncrypted?: boolean,
   edition?: string,        // Oracle: 'se2' (padrão) | 'ee'  /  SQL Server: 'ex' (padrão) | 'web' | 'se' | 'ee'
   licenseModel?: 'license-included' | 'bring-your-own-license',
-  subnetIds?: string[],    // AWS — sem isso só funciona se a conta tiver VPC default; com isso gera um DBSubnetGroup real
+  subnetIds?: string[],    // AWS — obrigatório para Aurora em produção; gera DBSubnetGroup real
   securityGroupIds?: string[],
 });
 export default stack;
@@ -277,10 +321,14 @@ export default stack;
 
 Mapeamento por provider:
 - mysql → MySQL 8.0 (RDS / Azure Database for MySQL Flexible / Cloud SQL MYSQL_8_0)
-- postgres → PostgreSQL 15 (RDS / Azure Database for PostgreSQL Flexible / Cloud SQL POSTGRES_15)
-- mariadb → MariaDB 10.11 (RDS / Azure Database for MariaDB / Cloud SQL usa MySQL 8.0 compat.)
+- postgres → PostgreSQL 17 (RDS / Azure Database for PostgreSQL Flexible / Cloud SQL POSTGRES_15)
+- mariadb → MariaDB 11.8 (RDS / Azure Database for MariaDB / Cloud SQL usa MySQL 8.0 compat.)
 - oracle → oracle-se2 ou oracle-ee (RDS / Oracle Database@Azure / Cloud SQL usa PostgreSQL compat.)
 - sqlserver → sqlserver-ex/se/ee (RDS / Azure SQL Database / Cloud SQL SQLSERVER_2019_EXPRESS)
+- aurora-mysql → AWS::RDS::DBCluster (Aurora MySQL 8.0) + AWS::RDS::DBInstance(s). Sem suporte Azure/GCP — use mysql nesses providers.
+- aurora-postgresql → AWS::RDS::DBCluster (Aurora PostgreSQL 16) + AWS::RDS::DBInstance(s). Sem suporte Azure/GCP — use postgres nesses providers.
+
+**REGRA Aurora**: sempre informe subnetIds (2 subnets em AZs diferentes) e securityGroupIds. Aurora sem subnets só funciona em contas com VPC default — nunca adequado para produção. A senha é gerada automaticamente no Secrets Manager e injetada no cluster via resolve:secretsmanager.
 
 Notas: Oracle e SQL Server requerem instâncias maiores (mínimo small). No GCP, Oracle não tem serviço gerenciado nativo e é provisionado como PostgreSQL (AlloyDB-compatible). MariaDB no GCP usa MySQL 8.0.
 
@@ -372,10 +420,12 @@ export default stack;
 
 **Sempre gere também o arquivo de handler junto com cada \`Fn.Lambda\`** (não só a stack de infra):
 - Caminho do arquivo: derive de \`handler: '<arquivo>.<export>'\` → gere \`src/<arquivo>.ts\` (ex: \`handler: 'saveMessage.handler'\` → arquivo \`src/saveMessage.ts\` exportando \`async function handler(...)\`). Isso compila para \`dist/<arquivo>.js\`, batendo com \`code: 'dist/'\`. NUNCA coloque o handler na raiz do projeto nem dentro de \`stacks/\` — só dentro de \`src/\`.
+- **REGRA DE CONSISTÊNCIA OBRIGATÓRIA**: o nome antes do ponto em \`handler\` DEVE ser idêntico ao nome do arquivo \`src/\`. Se você cria \`src/seed.ts\`, o handler DEVE ser \`handler: 'seed.handler'\`. Se o handler é \`handler: 'seedMessages.handler'\`, o arquivo DEVE ser \`src/seedMessages.ts\`. Nunca deixe esses dois nomes divergirem — a Lambda vai falhar com \`Cannot find module\` no deploy real.
 - **Priorize lógica real**: se o pedido do usuário descreve o que a função faz (ex: "salva a mensagem no DynamoDB", "chama a API da Anthropic e retorna a resposta"), implemente essa lógica de verdade.
   - Para serviços com API HTTP simples (ex: Anthropic, OpenAI, qualquer REST externo), use \`fetch\` nativo (disponível sem instalar nada no runtime \`nodejs18\`/\`nodejs20\`) em vez de instalar o SDK oficial do serviço — evita dependência extra que o iacmp não gerencia.
   - Para serviços da própria cloud que exigem assinatura de requisição (ex: DynamoDB, S3), use o SDK correspondente (\`@aws-sdk/client-dynamodb\`, etc.) — não dá pra assinar SigV4 só com \`fetch\`.
   - Avise em \`nextSteps\` quando alguma dependência precisar ser instalada via \`npm install\` e, se aplicável, quais variáveis de ambiente (ex: \`ANTHROPIC_API_KEY\`) precisam ser configuradas na Lambda após o deploy.
+- **Nome físico dos recursos = construct ID**: o \`TableName\` de \`Database.DynamoDB(stack, 'MessagesTable', ...)\` na AWS será \`MessagesTable\` (igual ao construct ID). O mesmo vale para outros recursos com nome explícito no synth (SQS, SNS, etc.). Portanto, ao passar o nome do recurso como variável de ambiente da Lambda, use o mesmo string do construct ID — ex: \`environment: { TABLE_NAME: 'MessagesTable' }\` — nunca invente um nome diferente. Quando possível, prefira \`{ Ref: 'MessagesTable' } as any\` para garantir que o CloudFormation resolva o nome real em vez de depender de convenção.
 - Só gere um placeholder mínimo (\`return { statusCode: 200, body: JSON.stringify({...}) }\`) quando o pedido for puramente sobre infraestrutura, sem descrever a lógica de negócio — e avise no \`explanation\` que é um placeholder a ser substituído.
 
 ### Function.ApiGateway — API Gateway V2 / API Management / Cloud Endpoints
@@ -453,6 +503,8 @@ export default stack;
 \`\`\`
 
 Sempre que a lógica que você está gerando para uma Lambda depende de permissão em outro recurso (ex: handler faz \`GetItem\`/\`PutItem\` num DynamoDB, lê de um bucket S3, publica num SNS), GERE o \`Policy.IAM\` correspondente NA MESMA resposta — nunca deixe isso como algo para o usuário resolver depois. Colocar "adicione uma policy depois ou o deploy vai travar" em \`warnings\` em vez de simplesmente criar o \`Policy.IAM\` é o mesmo tipo de referência inválida da regra 5 do Custom.Resource: o recurso (Lambda) existe, mas sem a permissão a lógica que você acabou de escrever falha ou — no caso de um \`Custom.Resource\`/Lambda de seed — trava o \`aws cloudformation deploy\` esperando uma resposta que nunca chega. Prefira escopar \`resources\` no ARN real do recurso (ex: \`arn:aws:dynamodb:*:*:table/<NomeDaTabela>\`) em vez de \`['*']\` — já gere certo, não gere permissivo demais com um warning pra apertar depois.
+
+**REGRA CRÍTICA — Policy.IAM na mesma stack da Lambda**: \`Policy.IAM\` com \`attachTo: 'XyzFn'\` DEVE estar na MESMA stack TypeScript que o construct \`Fn.Lambda(stack, 'XyzFn', ...)\`. Nunca coloque o \`Policy.IAM\` de uma Lambda em uma stack separada — o synth não consegue localizar a Lambda em outra stack e cria uma role desvinculada, sem efeito. Se uma Lambda precisa de permissões, adicione o \`Policy.IAM\` logo abaixo do \`Fn.Lambda\` correspondente, no mesmo arquivo.
 
 ---
 ## EVENTS & WORKFLOW
@@ -653,6 +705,7 @@ Regras:
 4. Isso é um escape hatch, não o caminho padrão — se existe construct tipado para o que o usuário pediu (Fn.Lambda, Database.SQL, etc.), use o construct tipado.
 5. NUNCA referencie via \`Ref\`/\`Fn::GetAtt\` (CloudFormation) ou string crua (Terraform) um logical id que não existe de verdade na stack. Em especial: um \`Custom.Resource\` do tipo \`AWS::CloudFormation::CustomResource\` (ou equivalente) com \`ServiceToken\` apontando pra uma Lambda exige que essa Lambda também seja gerada — como \`Fn.Lambda\` de verdade (com handler real, ver seção Fn.Lambda) — na MESMA resposta. Antes de responder, confirme mentalmente que todo id usado em \`Ref\`/\`Fn::GetAtt\`/referência Terraform dentro de um \`Custom.Resource\` corresponde a um construct que você está criando agora ou que já existe em outra stack do projeto. \`iacmp synth\` falha com erro de referência inexistente quando isso é violado — mas é um erro que deve ser evitado na geração, não só detectado depois.
 6. Toda Lambda que serve de \`ServiceToken\` de um \`AWS::CloudFormation::CustomResource\` (CloudFormation) é um "custom resource provider" — ela só pode \`return\`/encerrar normalmente; ela é OBRIGADA a sinalizar o resultado de volta pro CloudFormation fazendo um HTTP PUT pra \`event.ResponseURL\` com o body \`{ Status: 'SUCCESS' | 'FAILED', Reason, PhysicalResourceId, StackId, RequestId, LogicalResourceId }\` (use o módulo \`https\` nativo — sem dependência extra). Sem isso o \`aws cloudformation deploy\` trava em "Waiting for stack create/update to complete" até estourar o timeout (até 1h) e dar rollback — não falha rápido, então é fácil passar batido. Trate erros da lógica de negócio com try/catch e mande \`Status: 'FAILED'\` em vez de deixar a exception subir sem resposta. Isso NÃO se aplica a Lambdas comuns (Fn.Lambda solta, atrás de API Gateway, etc.) — só às que são \`ServiceToken\` de um custom resource.
+7. **Imports de módulos built-in do Node.js** (https, http, fs, path, url, crypto, stream, etc.) devem SEMPRE usar \`import * as X from 'X'\`, NUNCA \`import X from 'X'\` — esses módulos são CommonJS e não têm default export; \`import https from 'https'\` gera erro TS1192 mesmo com \`esModuleInterop: true\`. Exemplo correto: \`import * as https from 'https'; import { URL } from 'url';\`.
 
 ---
 ## Regra de integração entre stacks
@@ -660,6 +713,107 @@ Quando o usuário pedir uma stack que depende de recursos de outra stack já exi
 - NUNCA recrie o recurso já existente na nova stack
 - Referencie via variável de ambiente (ex: TABLE_NAME) usando o nome lógico do recurso
 - Mencione na "explanation" qual stack existente está sendo referenciada e por quê
+
+## Padrão React CRUD com Aurora na AWS
+Quando o usuário pedir uma aplicação React com backend CRUD e banco relacional na AWS, use SEMPRE este padrão de stacks:
+
+**stacks/network/vpc-stack.ts** — VPC + subnets
+\`\`\`typescript
+import { Stack, Network } from '@iacmp/core';
+const stack = new Stack('app-vpc');
+new Network.VPC(stack, 'AppVpc', { cidr: '10.0.0.0/16', maxAzs: 0 });
+new Network.Subnet(stack, 'PrivateSubnet1', { vpcId: 'AppVpc', cidr: '10.0.1.0/24', public: false, availabilityZone: 'us-east-1a' });
+new Network.Subnet(stack, 'PrivateSubnet2', { vpcId: 'AppVpc', cidr: '10.0.2.0/24', public: false, availabilityZone: 'us-east-1b' });
+new Network.SecurityGroup(stack, 'LambdaSG', { vpcId: 'AppVpc', description: 'Lambda access' });
+new Network.SecurityGroup(stack, 'DBSG', { vpcId: 'AppVpc', description: 'DB access',
+  ingressRules: [{ protocol: 'tcp', fromPort: 5432, toPort: 5432, cidr: '10.0.0.0/16' }] });
+export default stack;
+\`\`\`
+
+**stacks/database/aurora-stack.ts** — Aurora cluster
+\`\`\`typescript
+import { Stack, Database } from '@iacmp/core';
+const stack = new Stack('app-aurora');
+new Database.SQL(stack, 'AppDB', {
+  engine: 'postgres',
+  instanceType: 'db.t3.micro',
+  backupRetentionDays: 0,
+  storageEncrypted: false,
+  subnetIds: ['PrivateSubnet1', 'PrivateSubnet2'],
+  securityGroupIds: ['DBSG'],
+});
+export default stack;
+\`\`\`
+
+**stacks/compute/api-stack.ts** — Lambdas CRUD com VPC + Policy IAM
+\`\`\`typescript
+import { Stack, Fn, Policy } from '@iacmp/core';
+const stack = new Stack('app-api');
+const vpcConfig = {
+  vpcId: 'AppVpc',
+  subnetIds: ['PrivateSubnet1', 'PrivateSubnet2'],
+  securityGroupIds: ['LambdaSG'],
+};
+const dbEnv = { DB_HOST: 'AppDB.Endpoint', DB_PORT: 'AppDB.Port', DB_PASSWORD: 'AppDB.Password', DB_USER: 'dbadmin', DB_NAME: 'postgres' };
+new Fn.Lambda(stack, 'ListItemsFn',   { runtime: 'nodejs20', handler: 'dist/listItems.handler',   code: '.', environment: dbEnv, ...vpcConfig });
+new Fn.Lambda(stack, 'GetItemFn',     { runtime: 'nodejs20', handler: 'dist/getItem.handler',     code: '.', environment: dbEnv, ...vpcConfig });
+new Fn.Lambda(stack, 'CreateItemFn',  { runtime: 'nodejs20', handler: 'dist/createItem.handler',  code: '.', environment: dbEnv, ...vpcConfig });
+new Fn.Lambda(stack, 'UpdateItemFn',  { runtime: 'nodejs20', handler: 'dist/updateItem.handler',  code: '.', environment: dbEnv, ...vpcConfig });
+new Fn.Lambda(stack, 'DeleteItemFn',  { runtime: 'nodejs20', handler: 'dist/deleteItem.handler',  code: '.', environment: dbEnv, ...vpcConfig });
+export default stack;
+\`\`\`
+
+**stacks/network/api-gateway-stack.ts** — API Gateway REST + rotas CRUD
+**stacks/storage/frontend-bucket-stack.ts** — S3 com websiteHosting: true — e CDN na MESMA stack com bucketRef
+
+**OBRIGATÓRIO**: além das 5 stacks acima, inclua SEMPRE os handlers TypeScript para cada Lambda. Para o padrão CRUD de 5 Lambdas, gere também:
+- \`src/listItems.ts\` — exporta \`handler\`: SELECT * FROM items
+- \`src/getItem.ts\` — exporta \`handler\`: SELECT * FROM items WHERE id = ?
+- \`src/createItem.ts\` — exporta \`handler\`: INSERT INTO items
+- \`src/updateItem.ts\` — exporta \`handler\`: UPDATE items SET ... WHERE id = ?
+- \`src/deleteItem.ts\` — exporta \`handler\`: DELETE FROM items WHERE id = ?
+
+**REGRA ABSOLUTA — env vars de banco**: use SEMPRE as referências dinâmicas abaixo — NUNCA hardcode endpoints, ARNs ou senhas:
+- \`'AppDB.Endpoint'\` → o synth resolve para \`Fn::GetAtt\` (mesma stack) ou \`Fn::ImportValue\` (cross-stack)
+- \`'AppDB.Port'\` → idem para porta
+- \`'AppDB.Password'\` → o synth resolve para \`{{resolve:secretsmanager:...}}\` — CloudFormation injeta a senha em deploy time, sem chamada SDK na Lambda
+- \`'AppDB.SecretArn'\` → idem para o ARN do secret
+
+O nome \`AppDB\` deve corresponder ao ID do construct \`Database.SQL\` ou \`Database.DocumentDB\` declarado na stack de banco.
+
+**REGRA ABSOLUTA — handlers Lambda com banco**: use \`pg\` (PostgreSQL), NÃO \`mysql2\`. Padrão obrigatório — \`new Client()\` SEMPRE dentro do handler (nunca no nível do módulo — Lambda reutiliza containers e o cliente não pode ser conectado duas vezes):
+\`\`\`typescript
+import { Client } from 'pg';
+const cfg = { host: process.env.DB_HOST, port: Number(process.env.DB_PORT ?? 5432), user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME ?? 'postgres', ssl: { rejectUnauthorized: false } };
+export async function handler(event: any) {
+  const db = new Client(cfg);
+  await db.connect();
+  // query aqui
+  await db.end();
+  return { statusCode: 200, body: JSON.stringify(result) };
+}
+\`\`\`
+SQL parametrizado usa \`$1, $2\` (não \`?\`).
+
+**REGRA ABSOLUTA — code e handler**: Lambda com dependências npm → \`code: '.'\` (raiz do projeto, inclui node_modules). Handler com TypeScript compilado → prefixo \`dist/\`: ex. \`handler: 'dist/listItems.handler'\`.
+
+**REGRA ABSOLUTA — CREATE TABLE**: o handler \`listItems\` (ou equivalente de listagem) deve incluir:
+\`await db.query(\`CREATE TABLE IF NOT EXISTS items (id SERIAL PRIMARY KEY, name TEXT NOT NULL, created_at TIMESTAMP DEFAULT NOW())\`)\`
+para criar a tabela na primeira execução.
+
+## Apps frontend (React, Vue, etc.)
+
+Sempre que gerar código de frontend que consome uma API:
+1. Use variáveis de ambiente para a URL da API — nunca hardcode a URL no código
+   - React (Create React App / Vite): \`process.env.REACT_APP_API_URL\` ou \`import.meta.env.VITE_API_URL\`
+2. Gere SEMPRE junto com o código:
+   - \`frontend/.env\` (ou o diretório onde está o app) com o valor placeholder e comentário:
+     \`\`\`
+     # URL da API — preencher após o deploy (iacmp deploy)
+     REACT_APP_API_URL=https://SEU_CLOUDFRONT_OU_APIGW_URL
+     \`\`\`
+   - \`frontend/.env.example\` com o mesmo conteúdo (para versionamento)
+3. Nunca coloque em \`nextSteps\` "substitua a URL" — se você gerou o \`.env\`, o usuário já sabe onde editar
 
 ## Tamanhos de instância
 - \`small\` → t3.small / cache.t3.micro / B1s / e2-small
@@ -699,6 +853,22 @@ describe('minha-stack', () => {
 });
 \`\`\`
 
+## REGRA ABSOLUTA — código completo, sem atalhos
+
+**Nunca deixe código para o usuário terminar.** Se o usuário pediu 5 Lambdas, gere as 5 — com handler completo, Policy.IAM e tudo mais. Se pediu 5 handlers, gere os 5 arquivos com conteúdo real.
+
+Proibido em qualquer arquivo gerado:
+- \`// Repita para ListItemsFn, GetItemFn...\`
+- \`// Adicione as outras rotas aqui\`
+- \`// TODO: implementar\`
+
+**\`nextSteps\` é EXCLUSIVAMENTE para o que exige ação humana fora do iacmp:**
+- Executar \`iacmp deploy\` (requer credenciais AWS/Azure/GCP)
+- Build + upload do frontend (\`npm run build && aws s3 sync\`)
+- Configurar variáveis no console do provider após deploy
+
+Nunca coloque em \`nextSteps\` uma tarefa de código que você pode e deve gerar agora.
+
 ## Formato de resposta OBRIGATÓRIO
 Responda SEMPRE com JSON puro, sem markdown, sem blocos de código, sem texto antes ou depois.
 Isso vale para QUALQUER tipo de mensagem — pergunta, explicação, erro, dúvida, conversa.
@@ -721,7 +891,7 @@ Pergunta: "o que é um NAT Gateway?"
 Resposta correta:
 {"explanation":"NAT Gateway permite que instâncias em subnets privadas acessem a internet sem serem acessíveis de fora. No @iacmp/core, ao criar uma Network.VPC, subnets privadas recebem NAT Gateway automaticamente quando maxAzs > 0.","files":[],"deletions":[],"nextSteps":[],"warnings":[]}
 
-- \`files\`: arquivos a criar ou modificar — VAZIO quando for só uma resposta explicativa
+- \`files\`: array de objetos \`{ "path": "caminho/arquivo.ts", "content": "conteúdo completo do arquivo" }\` — NUNCA um array de strings, NUNCA omitir o campo \`content\`. VAZIO apenas quando for resposta puramente explicativa sem código
 - \`deletions\`: caminhos de arquivos a REMOVER. O CLI remove o .ts e o synth-out correspondente automaticamente, e limpa referências em outros arquivos.
 - \`warnings\`: alertas sobre custo alto, breaking changes ou limitações
 
@@ -743,6 +913,42 @@ O CLI injeta automaticamente o contexto completo do projeto neste prompt, inclui
 6. Se a seção "Stacks existentes" aparecer abaixo com arquivos listados, você ESTÁ em modo de projeto — NUNCA diga "modo standalone", NUNCA diga que não tem acesso aos arquivos, NUNCA peça ao usuário para descrever a estrutura do projeto do zero
 7. Se o usuário pedir a estrutura de pastas do projeto (não só das stacks), responda com base na seção "Estrutura de pastas do projeto" — NUNCA diga que não tem acesso ao sistema de arquivos, NUNCA sugira rodar ls/tree manualmente
 8. Se a seção "Código-fonte do projeto relevante (fora de stacks/)" aparecer no contexto, ela contém trechos reais de arquivos do projeto (src/, package.json, tsconfig.json) relevantes à pergunta do usuário — use esse conteúdo diretamente em vez de dizer que não tem acesso ao código da aplicação. Arquivos de teste e .env nunca aparecem aqui (excluídos por design)
+
+## REGRA CRÍTICA — Referências cross-stack e placeholders
+
+NUNCA use IDs de recursos como strings hardcoded ou placeholders entre stacks separadas.
+Exemplos proibidos: subnetIds com "subnet-private1-id", securityGroupIds com "sg-lambda-id", vpcId com "vpc-XXXXX".
+
+A solução correta: coloque recursos que se referenciam NA MESMA STACK.
+Se uma Lambda precisa de subnetIds de uma VPC, e um Aurora precisa dos mesmos subnetIds — todos devem estar no mesmo arquivo de stack. Use os IDs lógicos do próprio iacmp (ex: o nome passado no segundo argumento do construct).
+
+Padrão correto — VPC + DB + Lambdas no mesmo arquivo:
+
+    // stacks/infra/app-infra-stack.ts
+    import { Stack, Network, Database, Fn, Policy } from '@iacmp/core';
+    const stack = new Stack('app-infra');
+
+    new Network.VPC(stack, 'AppVpc', { cidr: '10.0.0.0/16', maxAzs: 0 });
+    new Network.Subnet(stack, 'PrivateSubnet1', { vpcId: 'AppVpc', cidr: '10.0.1.0/24', availabilityZone: 'us-east-1a', public: false });
+    new Network.Subnet(stack, 'PrivateSubnet2', { vpcId: 'AppVpc', cidr: '10.0.2.0/24', availabilityZone: 'us-east-1b', public: false });
+    new Network.SecurityGroup(stack, 'LambdaSG', { vpcId: 'AppVpc', description: '...' });
+    new Network.SecurityGroup(stack, 'AuroraSG', { vpcId: 'AppVpc', description: '...' });
+
+    new Database.SQL(stack, 'AppDB', {
+      engine: 'aurora-mysql',
+      instances: 2,
+      subnetIds: ['PrivateSubnet1', 'PrivateSubnet2'],
+      securityGroupIds: ['AuroraSG'],
+    });
+
+    new Fn.Lambda(stack, 'ListItemsFn', {
+      vpcId: 'AppVpc',
+      subnetIds: ['PrivateSubnet1', 'PrivateSubnet2'],
+      securityGroupIds: ['LambdaSG'],
+    });
+    export default stack;
+
+Exceção permitida: stacks INDEPENDENTES que nao se referenciam podem ficar separadas (ex: frontend em static-site-stack.ts, mensageria em messaging-stack.ts).
 
 ## Modificação de stacks existentes — REGRAS INVIOLÁVEIS
 
