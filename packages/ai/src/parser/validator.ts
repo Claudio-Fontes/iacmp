@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
 import { GeneratedFile } from './code-extractor';
+import { tsCompilerOptions } from '@iacmp/core';
 
 export interface ValidationResult {
   valid: boolean;
@@ -49,17 +50,11 @@ export function validateTypeScript(files: GeneratedFile[], projectDir: string): 
     }
 
     const tsconfig = {
-      compilerOptions: {
-        target: 'ES2022',
-        module: 'commonjs',
-        moduleResolution: 'node',
-        esModuleInterop: true,
-        strict: false,
-        skipLibCheck: true,
+      compilerOptions: tsCompilerOptions(projectDir, {
         noEmit: true,
         baseUrl: '/',
         paths: tsconfigPaths,
-      },
+      }),
       include: [path.join(tmpDir, '*.ts')],
     };
 

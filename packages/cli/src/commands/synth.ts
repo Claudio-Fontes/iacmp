@@ -5,7 +5,7 @@ import { AWSProvider } from '@iacmp/provider-aws';
 import { AzureProvider } from '@iacmp/provider-azure';
 import { GCPProvider } from '@iacmp/provider-gcp';
 import { TerraformProvider } from '@iacmp/provider-terraform';
-import { Stack, EnvironmentProfile, AccountTier } from '@iacmp/core';
+import { Stack, EnvironmentProfile, AccountTier, tsCompilerOptions } from '@iacmp/core';
 import { loadPlugins } from '@iacmp/plugin-sdk';
 import { synthRoot, providerOutDir } from '../synth-out';
 
@@ -95,15 +95,7 @@ export default class Synth extends Command {
             require(tsNodePath).register({
               transpileOnly: true,
               skipProject: true,
-              compilerOptions: {
-                target: 'ES2022',
-                module: 'commonjs',
-                moduleResolution: 'node',
-                esModuleInterop: true,
-                strict: false,
-                skipLibCheck: true,
-                ignoreDeprecations: '5.0',
-              },
+              compilerOptions: tsCompilerOptions(cwd),
             });
           } else {
             this.warn(`ts-node não encontrado em ${cwd}/node_modules. Rode: npm install`);
@@ -204,18 +196,18 @@ export default class Synth extends Command {
   }
 
   private resolveTsNode(projectDir: string): string | null {
-    // Busca em node_modules do projeto e de diretórios pai (monorepo)
-    const dirs: string[] = [];
+    return this.resolveModule(projectDir, 'ts-node');
+  }
+
+  // Busca um módulo em node_modules do projeto e de diretórios pai (monorepo).
+  private resolveModule(projectDir: string, moduleName: string): string | null {
     let dir = projectDir;
     for (let i = 0; i < 5; i++) {
-      dirs.push(dir);
+      const modPath = path.join(dir, 'node_modules', moduleName);
+      if (fs.existsSync(modPath)) return modPath;
       const parent = path.dirname(dir);
       if (parent === dir) break;
       dir = parent;
-    }
-    for (const d of dirs) {
-      const tsNodePath = path.join(d, 'node_modules', 'ts-node');
-      if (fs.existsSync(tsNodePath)) return tsNodePath;
     }
     return null;
   }

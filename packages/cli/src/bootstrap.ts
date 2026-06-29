@@ -85,15 +85,14 @@ export function ensureProjectInitialized(cwd: string, options: BootstrapOptions 
   // 5. deps necessárias para o synth carregar as stacks (.ts via ts-node) e
   //    compilar os handlers. Instala só se @iacmp/core ainda não está presente.
   if (!hasCore && installDeps) {
-    // typescript fixado em ~5.5: o synth carrega as stacks via ts-node com
-    // compilerOptions de TS 5.x (ignoreDeprecations: '5.0'). Sem o pin, npm traz
-    // a major mais nova (ex: 6.x) que rejeita esse valor e quebra o synth.
-    // Alinhado com o que `iacmp init` pina no package.json gerado.
-    execSync('npm install @iacmp/core ts-node typescript@~5.5.0 @types/node', {
+    // Sem pin de versão: o `iacmp synth` detecta a versão do TypeScript instalada
+    // e adapta seus compilerOptions (ts-node), então qualquer TS >= 5 funciona.
+    // O npm resolve as versões compatíveis de cada pacote pelo engines/peerDeps.
+    execSync('npm install @iacmp/core ts-node typescript @types/node', {
       cwd,
       stdio: 'pipe',
     });
-    created.push('deps: @iacmp/core, ts-node, typescript@~5.5, @types/node');
+    created.push('deps: @iacmp/core, ts-node, typescript, @types/node');
   }
 
   return { bootstrapped: true, created };

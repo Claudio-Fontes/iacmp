@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { Stack } from '@iacmp/core';
+import { Stack, tsCompilerOptions } from '@iacmp/core';
 import { readJsonFile, errMessage } from './utils';
 
 export interface AuditConfig {
@@ -61,15 +61,7 @@ export function loadStacks(cwd: string): Array<{ name: string; stack: Stack }> {
     require(tsNodePath).register({
       transpileOnly: true,
       skipProject: true,
-      compilerOptions: {
-        target: 'ES2022',
-        module: 'commonjs',
-        moduleResolution: 'node',
-        esModuleInterop: true,
-        strict: false,
-        skipLibCheck: true,
-        ignoreDeprecations: '5.0',
-      },
+      compilerOptions: tsCompilerOptions(cwd),
     });
   }
 

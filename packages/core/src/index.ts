@@ -6,6 +6,7 @@ export type { TestableStack } from './testing';
 
 export { validateSemantics, cidrContains } from './validate';
 export { applyEnvironmentDefaults } from './normalize';
+export { tsCompilerOptions, detectTypeScriptMajor } from './ts-compat';
 export {
   DEFAULT_PROFILE,
   databaseDefaultsForTier,
