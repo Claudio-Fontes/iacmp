@@ -430,7 +430,7 @@ O ApiGateway é um construct SEPARADO das Lambdas — um único gateway pode agr
 import { Stack, Fn } from '@iacmp/core';
 const stack = new Stack('nome');
 
-new Fn.Lambda(stack, 'HelloFn', { runtime: 'nodejs20', handler: 'index.handler', code: 'dist/' });
+new Fn.Lambda(stack, 'ProductsFn', { runtime: 'nodejs20', handler: 'index.handler', code: 'dist/' });
 new Fn.Lambda(stack, 'UsersFn', { runtime: 'nodejs20', handler: 'index.handler', code: 'dist/' });
 
 new Fn.ApiGateway(stack, 'Api', {
@@ -443,7 +443,7 @@ new Fn.ApiGateway(stack, 'Api', {
   throttlingBurstLimit?: number,
   throttlingRateLimit?: number,
   routes: [
-    { method: 'GET',  path: '/hello', lambdaId: 'HelloFn' },
+    { method: 'GET',  path: '/products', lambdaId: 'ProductsFn' },
     { method: 'GET',  path: '/users', lambdaId: 'UsersFn' },
     { method: 'POST', path: '/users', lambdaId: 'UsersFn' },
   ],
