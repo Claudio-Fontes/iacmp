@@ -85,17 +85,42 @@ export function ensureProjectInitialized(cwd: string, options: BootstrapOptions 
   // 5. deps necessárias para o synth carregar as stacks (.ts via ts-node) e
   //    compilar os handlers. Instala só se @iacmp/core ainda não está presente.
   if (!hasCore && installDeps) {
-    // Sem pin de versão: o `iacmp synth` detecta a versão do TypeScript instalada
-    // e adapta seus compilerOptions (ts-node), então qualquer TS >= 5 funciona.
-    // O npm resolve as versões compatíveis de cada pacote pelo engines/peerDeps.
-    execSync('npm install @iacmp/core ts-node typescript @types/node', {
+    // Usa o MESMO @iacmp/core que este CLI resolve. Em um checkout de dev do
+    // monorepo, isso é o core local (mais novo que o publicado), evitando que o
+    // projeto baixe uma versão defasada do npm e o synth rejeite engines/recursos
+    // que o CLI atual já suporta. Em produção (npm -g), resolve o core publicado
+    // normalmente. Sem pin de versão: o synth detecta a versão do TS instalada.
+    const coreSpec = resolveCoreInstallSpec();
+    execSync(`npm install ${coreSpec} ts-node typescript @types/node`, {
       cwd,
       stdio: 'pipe',
     });
-    created.push('deps: @iacmp/core, ts-node, typescript, @types/node');
+    created.push(`deps: @iacmp/core${coreSpec.startsWith('@') ? '' : ' (local)'}, ts-node, typescript, @types/node`);
   }
 
   return { bootstrapped: true, created };
+}
+
+/**
+ * Decide o que passar para `npm install` no lugar de `@iacmp/core`:
+ * - checkout de dev do monorepo → o caminho do core local (instala como file:),
+ *   garantindo que o projeto use a MESMA versão que o CLI atual;
+ * - instalação normal (npm) → o nome do pacote, resolvido do registry.
+ *
+ * A heurística de "dev" é a presença de `src/` ao lado do package.json do core
+ * que este CLI resolve — pacotes publicados só trazem `dist/`.
+ */
+export function resolveCoreInstallSpec(): string {
+  try {
+    const corePkgJson = require.resolve('@iacmp/core/package.json');
+    const coreDir = path.dirname(corePkgJson);
+    if (fs.existsSync(path.join(coreDir, 'src'))) {
+      return coreDir; // npm install <path> → "@iacmp/core": "file:<path>"
+    }
+  } catch {
+    // @iacmp/core não resolível a partir do CLI — cai no registry.
+  }
+  return '@iacmp/core';
 }
 
 function sanitizeName(raw: string): string {

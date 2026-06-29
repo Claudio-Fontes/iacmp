@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { ensureProjectInitialized } from '../src/bootstrap';
+import { ensureProjectInitialized, resolveCoreInstallSpec } from '../src/bootstrap';
 
 function makeTmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'iacmp-bootstrap-'));
@@ -84,5 +84,15 @@ describe('ensureProjectInitialized', () => {
 
     const pkg = JSON.parse(read(dir, 'package.json'));
     expect(pkg.version).toBe('9.9.9');
+  });
+});
+
+describe('resolveCoreInstallSpec', () => {
+  test('em checkout de dev → caminho do core local (tem src/), não o nome do registry', () => {
+    const spec = resolveCoreInstallSpec();
+    // rodando dentro do monorepo: o core resolvido tem src/, então retorna um path
+    expect(spec).not.toBe('@iacmp/core');
+    expect(spec).toContain('core');
+    expect(fs.existsSync(path.join(spec, 'src'))).toBe(true);
   });
 });
