@@ -16,12 +16,20 @@ interface Template {
   description: string;
   constructs: string[];    // lista para exibir no --list
   stackSubDir?: string;    // subpasta dentro de stacks/ para o arquivo principal (ex: 'stacks/compute')
-  stackContent: (projectName: string) => string;  // arquivo principal (mantém compatibilidade)
+  stackContent?: (projectName: string) => string; // arquivo principal — ausente = projeto vazio (ex: blank)
   extraFiles?: TemplateFile[];                     // arquivos adicionais
 }
 
 const TEMPLATES: Record<string, Template> = {
-  default: {
+  // Template padrão (sem --template): projeto vazio, só estrutura base. Pensado
+  // para o fluxo `iacmp ai`, que preenche stacks/ com exatamente o que foi
+  // pedido — sem scaffold de exemplo que vire referência órfã ou ruído.
+  blank: {
+    description: 'Projeto vazio (sem scaffold) — ideal para usar com `iacmp ai`',
+    constructs: [],
+  },
+
+  hello: {
     description: 'Lambda Hello World exposta via API Gateway REST (arquivos separados)',
     constructs: ['Fn.Lambda', 'Fn.ApiGateway'],
     stackSubDir: 'stacks/compute',
@@ -417,8 +425,8 @@ export default class Init extends Command {
     accountTier: Flags.string({ description: 'Tier da conta cloud: free ou standard (afeta defaults de RDS, backup, criptografia)', default: 'free', options: ['free', 'standard'] }),
     template: Flags.string({
       char: 't',
-      description: `Template de stack a usar (default, rds, webapp, network, serverless, fullstack)`,
-      default: 'default',
+      description: `Template de stack a usar (blank, hello, rds, webapp, network, serverless, fullstack)`,
+      default: 'blank',
     }),
     list: Flags.boolean({ description: 'Lista os templates disponíveis', default: false }),
   };
@@ -514,12 +522,15 @@ export default class Init extends Command {
       const hasAppCode = !!template.extraFiles?.some(f => f.path.startsWith('src/'));
       fs.writeFileSync(path.join(projectDir, 'tsconfig.json'), tsConfig(hasAppCode));
 
-      // stack (usa o template escolhido) — subpasta por tipo de recurso
-      const stackSubDir = template.stackSubDir
-        ? path.join(projectDir, template.stackSubDir)
-        : stacksDir;
-      fs.mkdirSync(stackSubDir, { recursive: true });
-      fs.writeFileSync(path.join(stackSubDir, stackFileName), template.stackContent(projectName));
+      // stack principal — só quando o template define uma (blank não define).
+      // Sem stackContent, stacks/ nasce vazio para o `iacmp ai` preencher.
+      if (template.stackContent) {
+        const stackSubDir = template.stackSubDir
+          ? path.join(projectDir, template.stackSubDir)
+          : stacksDir;
+        fs.mkdirSync(stackSubDir, { recursive: true });
+        fs.writeFileSync(path.join(stackSubDir, stackFileName), template.stackContent(projectName));
+      }
 
       // arquivos extras do template (ex: stacks separadas)
       if (template.extraFiles) {
@@ -530,16 +541,18 @@ export default class Init extends Command {
         }
       }
 
-      // test/
-      const testDir = path.join(projectDir, 'test');
-      fs.mkdirSync(testDir, { recursive: true });
-      const stackImportPath = template.stackSubDir
-        ? `../${template.stackSubDir}/${projectName}-stack`
-        : `../stacks/${projectName}-stack`;
-      fs.writeFileSync(
-        path.join(testDir, `${projectName}.test.ts`),
-        testContent(projectName, stackImportPath),
-      );
+      // test/ — só faz sentido quando há uma stack principal para testar
+      if (template.stackContent) {
+        const testDir = path.join(projectDir, 'test');
+        fs.mkdirSync(testDir, { recursive: true });
+        const stackImportPath = template.stackSubDir
+          ? `../${template.stackSubDir}/${projectName}-stack`
+          : `../stacks/${projectName}-stack`;
+        fs.writeFileSync(
+          path.join(testDir, `${projectName}.test.ts`),
+          testContent(projectName, stackImportPath),
+        );
+      }
 
       // CI/CD
       const githubWorkflowsDir = path.join(projectDir, '.github', 'workflows');
@@ -556,8 +569,8 @@ export default class Init extends Command {
     } catch {}
 
     const rel = args.name ?? '.';
-    const isDefault = flags.template === 'default';
-    const templateLabel = isDefault ? '' : ` (template: ${flags.template})`;
+    const isBlank = !template.stackContent;
+    const templateLabel = flags.template === 'blank' ? '' : ` (template: ${flags.template})`;
 
     this.log(`\nProjeto '${projectName}' inicializado${templateLabel}.\n`);
     this.log(`  ${rel}/iacmp.json`);
@@ -565,17 +578,19 @@ export default class Init extends Command {
     if (flags.language === 'typescript') {
       this.log(`  ${rel}/package.json`);
       this.log(`  ${rel}/tsconfig.json`);
-      const stackRelPath = template.stackSubDir
-        ? `${template.stackSubDir}/${stackFileName}`
-        : `stacks/${stackFileName}`;
-      this.log(`  ${rel}/${stackRelPath}`);
-      this.log(`  ${rel}/test/${projectName}.test.ts`);
+      if (!isBlank) {
+        const stackRelPath = template.stackSubDir
+          ? `${template.stackSubDir}/${stackFileName}`
+          : `stacks/${stackFileName}`;
+        this.log(`  ${rel}/${stackRelPath}`);
+        this.log(`  ${rel}/test/${projectName}.test.ts`);
+      }
       this.log(`  ${rel}/.github/workflows/iacmp.yml`);
       this.log(`  ${rel}/.gitlab-ci.yml`);
     }
 
-    // mostra os constructs do template
-    if (!isDefault) {
+    // mostra os constructs do template (blank não tem)
+    if (template.constructs.length > 0) {
       this.log(`\nRecursos incluídos:`);
       for (const c of template.constructs) {
         this.log(`  · ${c}`);
@@ -585,6 +600,7 @@ export default class Init extends Command {
     this.log('\nPróximos passos:');
     if (args.name) this.log(`  cd ${args.name}`);
     this.log('  npm install');
-    this.log('  iacmp synth');
+    if (isBlank) this.log('  iacmp ai "descreva a infraestrutura que você quer"');
+    else this.log('  iacmp synth');
   }
 }

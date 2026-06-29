@@ -47,15 +47,32 @@ describe('init <nome> — caso feliz (template default)', () => {
     expect(cfg.language).toBe('typescript'); // default
   });
 
-  test('cria também .gitignore, .env, test/ e workflows de CI', () => {
+  test('cria também .gitignore, .env e workflows de CI', () => {
     cwd = makeEmptyDir();
     runCli(['init', 'meu-proj'], { cwd });
 
     expect(exists(cwd, 'meu-proj/.gitignore')).toBe(true);
     expect(exists(cwd, 'meu-proj/.env')).toBe(true);
-    expect(exists(cwd, 'meu-proj/test/meu-proj.test.ts')).toBe(true);
     expect(exists(cwd, 'meu-proj/.github/workflows/iacmp.yml')).toBe(true);
     expect(exists(cwd, 'meu-proj/.gitlab-ci.yml')).toBe(true);
+  });
+
+  test('blank (sem --template) NÃO cria scaffold de stack nem test/', () => {
+    cwd = makeEmptyDir();
+    runCli(['init', 'meu-proj'], { cwd });
+
+    // projeto vazio: stacks/ não existe (ou está sem .ts) e não há test/
+    expect(exists(cwd, 'meu-proj/test')).toBe(false);
+    expect(exists(cwd, 'meu-proj/src/index.ts')).toBe(false);
+    expect(exists(cwd, 'meu-proj/stacks/network/api-gateway-stack.ts')).toBe(false);
+  });
+
+  test('--template hello cria test/ e o scaffold HelloWorld', () => {
+    cwd = makeEmptyDir();
+    runCli(['init', 'meu-proj', '--template', 'hello'], { cwd });
+
+    expect(exists(cwd, 'meu-proj/test/meu-proj.test.ts')).toBe(true);
+    expect(exists(cwd, 'meu-proj/stacks/compute/meu-proj-stack.ts')).toBe(true);
   });
 });
 
@@ -91,7 +108,7 @@ describe('init — package.json e tsconfig gerados (regressões importantes)', (
 
   test('tsconfig.json NÃO tem paths absolutos (nada de /Users, /home, ../)', () => {
     cwd = makeEmptyDir();
-    runCli(['init', 'tsctest'], { cwd });
+    runCli(['init', 'tsctest', '--template', 'hello'], { cwd });
 
     const raw = read(cwd, 'tsctest/tsconfig.json');
     const tsc = JSON.parse(raw);
@@ -119,9 +136,9 @@ describe('init — package.json e tsconfig gerados (regressões importantes)', (
     expect(path.isAbsolute(co.outDir ?? 'dist')).toBe(false);
   });
 
-  test('template default → handler da Lambda fica em src/, não na raiz nem em stacks/', () => {
+  test('template hello → handler da Lambda fica em src/, não na raiz nem em stacks/', () => {
     cwd = makeEmptyDir();
-    runCli(['init', 'srctest'], { cwd });
+    runCli(['init', 'srctest', '--template', 'hello'], { cwd });
 
     expect(exists(cwd, 'srctest/src/index.ts')).toBe(true);
     expect(exists(cwd, 'srctest/index.ts')).toBe(false);
@@ -136,7 +153,7 @@ describe('init --list', () => {
       expect(r.status).toBe(0);
       expect(r.stdout).toContain('Templates disponíveis');
       // cobre os principais templates documentados
-      for (const t of ['default', 'rds', 'webapp', 'network', 'serverless', 'fullstack']) {
+      for (const t of ['blank', 'hello', 'rds', 'webapp', 'network', 'serverless', 'fullstack']) {
         expect(r.stdout).toContain(t);
       }
       // mostra a dica de uso

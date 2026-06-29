@@ -149,15 +149,9 @@ export default stack;
 - Se declarar \`Network.Subnet\` explícitos → use \`maxAzs: 0\` (ou omita maxAzs)
 - Se usar \`maxAzs > 0\` → NÃO declare \`Network.Subnet\` na mesma stack
 
-**REGRA ABSOLUTA — availabilityZone em subnets com RDS:** sempre que houver \`Database.SQL\` ou \`Database.DocumentDB\` na arquitetura, as \`Network.Subnet\` usadas no banco DEVEM ter \`availabilityZone\` explícito e DIFERENTE entre si. RDS exige subnet group cobrindo ≥ 2 AZs distintas. Exemplo: \`availabilityZone: 'us-east-1a'\` e \`availabilityZone: 'us-east-1b'\`.
+**availabilityZone e porta do SG são DERIVADOS — não escreva:** o synth atribui automaticamente AZs distintas às \`Network.Subnet\` (a partir da região do projeto) e abre a porta do engine no \`Network.SecurityGroup\` que protege o banco. NÃO defina \`availabilityZone\` nas subnets nem \`ingressRules\` de porta de banco no SG — deixe o synth derivar. Só defina manualmente se o usuário pedir um valor específico.
 
-**REGRA ABSOLUTA — Security Group para banco:** use a porta correta: PostgreSQL/Aurora-PostgreSQL → 5432. MySQL/Aurora-MySQL/MariaDB → 3306. SQLServer → 1433. Oracle → 1521.
-
-**REGRA ABSOLUTA — Database.SQL defaults:** adapte ao Account Tier do projeto (vem do contexto iacmp.json):
-- **free**: \`engine: 'postgres'\`, \`instanceType: 'db.t3.micro'\`, \`backupRetentionDays: 0\`, \`storageEncrypted: false\`
-- **standard**: use os valores que fazem sentido para o projeto (ex: \`backupRetentionDays: 7\`, \`storageEncrypted: true\`, instância maior)
-- NÃO use \`instances\` em RDS single-instance — essa propriedade é exclusiva de clusters Aurora
-- Se o contexto não informar o tier, assuma **free** e avise o usuário no campo \`nextSteps\`
+**REGRA — Database.SQL defaults:** NÃO escreva \`backupRetentionDays\` nem \`storageEncrypted\` — o synth DERIVA esses valores do Account Tier do projeto automaticamente (free → 0/false, standard → 7/true). Só inclua essas props se o usuário pedir um valor específico que sobrescreva o default. Para RDS use \`engine: 'postgres'\` e \`instanceType: 'db.t3.micro'\`; NÃO use \`instances\` (é exclusivo de clusters Aurora).
 
 ### Network.Subnet — Subnet explícita
 \`\`\`typescript
@@ -722,11 +716,11 @@ Quando o usuário pedir uma aplicação React com backend CRUD e banco relaciona
 import { Stack, Network } from '@iacmp/core';
 const stack = new Stack('app-vpc');
 new Network.VPC(stack, 'AppVpc', { cidr: '10.0.0.0/16', maxAzs: 0 });
-new Network.Subnet(stack, 'PrivateSubnet1', { vpcId: 'AppVpc', cidr: '10.0.1.0/24', public: false, availabilityZone: 'us-east-1a' });
-new Network.Subnet(stack, 'PrivateSubnet2', { vpcId: 'AppVpc', cidr: '10.0.2.0/24', public: false, availabilityZone: 'us-east-1b' });
+new Network.Subnet(stack, 'PrivateSubnet1', { vpcId: 'AppVpc', cidr: '10.0.1.0/24', public: false });
+new Network.Subnet(stack, 'PrivateSubnet2', { vpcId: 'AppVpc', cidr: '10.0.2.0/24', public: false });
 new Network.SecurityGroup(stack, 'LambdaSG', { vpcId: 'AppVpc', description: 'Lambda access' });
-new Network.SecurityGroup(stack, 'DBSG', { vpcId: 'AppVpc', description: 'DB access',
-  ingressRules: [{ protocol: 'tcp', fromPort: 5432, toPort: 5432, cidr: '10.0.0.0/16' }] });
+// AZ das subnets e porta do DBSG são derivadas pelo synth — não precisa declarar
+new Network.SecurityGroup(stack, 'DBSG', { vpcId: 'AppVpc', description: 'DB access' });
 export default stack;
 \`\`\`
 
@@ -929,8 +923,8 @@ Padrão correto — VPC + DB + Lambdas no mesmo arquivo:
     const stack = new Stack('app-infra');
 
     new Network.VPC(stack, 'AppVpc', { cidr: '10.0.0.0/16', maxAzs: 0 });
-    new Network.Subnet(stack, 'PrivateSubnet1', { vpcId: 'AppVpc', cidr: '10.0.1.0/24', availabilityZone: 'us-east-1a', public: false });
-    new Network.Subnet(stack, 'PrivateSubnet2', { vpcId: 'AppVpc', cidr: '10.0.2.0/24', availabilityZone: 'us-east-1b', public: false });
+    new Network.Subnet(stack, 'PrivateSubnet1', { vpcId: 'AppVpc', cidr: '10.0.1.0/24', public: false });
+    new Network.Subnet(stack, 'PrivateSubnet2', { vpcId: 'AppVpc', cidr: '10.0.2.0/24', public: false });
     new Network.SecurityGroup(stack, 'LambdaSG', { vpcId: 'AppVpc', description: '...' });
     new Network.SecurityGroup(stack, 'AuroraSG', { vpcId: 'AppVpc', description: '...' });
 

@@ -2,6 +2,42 @@
 
 ---
 
+## [1.2.0] — 2026-06-29
+
+Refactor de abstração do core: conhecimento de domínio migrado do prompt da IA para código
+testável (validação semântica, defaults derivados, perfil de ambiente). Erros que antes só
+apareciam no deploy real agora são bloqueados em synth-time ou eliminados na origem.
+
+> **Nota de versão:** a `1.1.0` publicada no npm ficou defasada do código do monorepo (mesma
+> versão, conteúdos diferentes — ex: engines Aurora ausentes na publicada). Este bump para
+> `1.2.0` realinha a versão ao conteúdo. Republicar no npm para que `npm install` traga o código atual.
+
+### Adicionado
+
+- **Validação semântica (`@iacmp/core` → `validateSemantics`)** — roda em synth-time e bloqueia,
+  antes do deploy: Security Group sem a porta do engine do banco que protege, RDS/DocumentDB sem
+  cobertura de ≥2 AZs, `maxAzs > 0` coexistindo com subnets explícitas (conflito de CIDR), CIDR de
+  subnet fora do CIDR da VPC, e referências (`vpcId`/`subnetIds`/`securityGroupIds`) a constructs
+  inexistentes. O loop de auto-correção do `iacmp ai` captura e reenvia esses erros.
+- **Normalização de defaults (`applyEnvironmentDefaults`)** — preenche automaticamente, antes do
+  synth: `availabilityZone` distinto por subnet (derivado da região) e a porta do engine no Security
+  Group do banco. Elimina na origem os dois bugs de deploy mais recorrentes.
+- **Perfil de ambiente (`EnvironmentProfile`, `accountTier` no `iacmp.json`)** — defaults de RDS
+  (backup, criptografia) derivam do tier (`free` → 0/false, `standard` → 7/true). Trocar de conta
+  free para standard passa a ser mudança de configuração, não de código.
+- **Conhecimento de domínio (`@iacmp/core/knowledge`)** — fonte única de verdade para portas por
+  engine SQL e requisitos de AZ, consumida pela validação e pelos defaults.
+- **Referências dinâmicas de banco no synth AWS** — env vars `AppDB.Endpoint`/`Port`/`Password`/
+  `SecretArn` resolvem para `Fn::ImportValue`/`Fn::GetAtt`/`{{resolve:secretsmanager}}`, sem hardcode
+  de endpoint ou senha. Destrava destroy+recreate sem edição manual.
+- **`iacmp init` template `blank` (padrão)** — `iacmp init` sem `--template` cria projeto vazio (sem
+  scaffold), ideal para o fluxo `iacmp ai`. O HelloWorld antigo virou `--template hello` (opt-in).
+
+### Corrigido
+
+- **Inferência de relação no diagrama** — env hint intra-stack só cria relação quando o valor da env
+  var referencia o recurso (antes linkava por tipo, gerando ruído ou perdendo relações reais).
+
 ## Em desenvolvimento
 
 ### Bateria de testes e2e reais na AWS (2026-06-23)

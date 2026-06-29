@@ -722,6 +722,27 @@ describe('AWSProvider', () => {
     expect(tpl.Resources.DBCluster.Properties.BackupRetentionPeriod).toBe(7);
   });
 
+  test('Database.SQL RDS tier free (default) → backup 0 e sem criptografia', () => {
+    new Database.SQL(stack, 'DB', { engine: 'postgres' });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.DB.Properties.BackupRetentionPeriod).toBe(0);
+    expect(tpl.Resources.DB.Properties.StorageEncrypted).toBe(false);
+  });
+
+  test('Database.SQL RDS tier standard → backup 7 e criptografia por default', () => {
+    new Database.SQL(stack, 'DB', { engine: 'postgres' });
+    const tpl = provider.synthesize(stack, [stack], { accountTier: 'standard' }) as any;
+    expect(tpl.Resources.DB.Properties.BackupRetentionPeriod).toBe(7);
+    expect(tpl.Resources.DB.Properties.StorageEncrypted).toBe(true);
+  });
+
+  test('Database.SQL RDS → prop explícita vence o default do tier', () => {
+    new Database.SQL(stack, 'DB', { engine: 'postgres', backupRetentionDays: 3, storageEncrypted: true });
+    const tpl = provider.synthesize(stack, [stack], { accountTier: 'free' }) as any;
+    expect(tpl.Resources.DB.Properties.BackupRetentionPeriod).toBe(3);
+    expect(tpl.Resources.DB.Properties.StorageEncrypted).toBe(true);
+  });
+
   test('Database.SQL engine invalido → lança erro', () => {
     expect(() => new Database.SQL(stack, 'DB', { engine: 'mongodb' as any })).toThrow('engine inválido');
   });

@@ -5,7 +5,7 @@ import { AWSProvider } from '@iacmp/provider-aws';
 import { AzureProvider } from '@iacmp/provider-azure';
 import { GCPProvider } from '@iacmp/provider-gcp';
 import { TerraformProvider } from '@iacmp/provider-terraform';
-import { Stack } from '@iacmp/core';
+import { Stack, EnvironmentProfile, AccountTier } from '@iacmp/core';
 import { loadPlugins } from '@iacmp/plugin-sdk';
 import { synthRoot, providerOutDir } from '../synth-out';
 
@@ -42,6 +42,11 @@ export default class Synth extends Command {
 
     const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
     const provider = flags.provider ?? config.provider ?? 'aws';
+    const profile: EnvironmentProfile = {
+      accountTier: (config.accountTier === 'standard' ? 'standard' : 'free') as AccountTier,
+      region: config.region,
+      availabilityZones: config.availabilityZones,
+    };
     const stacksDir = path.join(cwd, 'stacks');
 
     if (!fs.existsSync(stacksDir)) {
@@ -148,7 +153,7 @@ export default class Synth extends Command {
         switch (provider) {
           case 'aws': {
             const p = new AWSProvider();
-            const template = p.synthesize(typedStack, allStacks);
+            const template = p.synthesize(typedStack, allStacks, profile);
             const outPath = path.join(provOutDir, `${stackName}.json`);
             fs.writeFileSync(outPath, JSON.stringify(template, null, 2) + '\n');
             this.log(`Sintetizado: ${outPath}`);

@@ -1,4 +1,12 @@
-import { Stack, BaseConstruct } from '@iacmp/core';
+import {
+  Stack,
+  BaseConstruct,
+  validateSemantics,
+  applyEnvironmentDefaults,
+  EnvironmentProfile,
+  DEFAULT_PROFILE,
+  databaseDefaultsForTier,
+} from '@iacmp/core';
 
 export interface CloudFormationResource {
   Type: string;
@@ -34,6 +42,8 @@ export interface SynthContext {
   dbSecretSuffix: Map<string, string>;
   /** IDs de Function.Lambda que têm vpcId definido — precisam de VPCAccessExecutionRole. */
   vpcLambdas: Set<string>;
+  /** Perfil de ambiente (tier da conta, região) — fonte dos defaults derivados. */
+  profile: EnvironmentProfile;
 }
 
 /**
@@ -948,6 +958,11 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
       const masterUser = isSqlServer ? 'sqladmin' : 'dbadmin';
       const defaultInstance = (isOracle || isSqlServer) ? 'db.t3.small' : 'db.t3.micro';
 
+      // Defaults DERIVADOS do tier da conta (free vs standard) — o usuário não
+      // precisa mais escrever backupRetentionDays/storageEncrypted no .ts. Props
+      // explícitas sempre vencem o default do tier.
+      const dbDefaults = databaseDefaultsForTier(ctx.profile.accountTier);
+
       const rdsSecretId = `${logicalId}Secret`;
       const rdsProps: Record<string, unknown> = {
         DBInstanceClass:       (props.instanceType as string) ?? defaultInstance,
@@ -957,8 +972,8 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
         MultiAZ:               (props.multiAz as boolean) ?? false,
         MasterUsername:        masterUser,
         MasterUserPassword:    { 'Fn::Sub': `{{resolve:secretsmanager:\${${rdsSecretId}}:SecretString:password}}` },
-        StorageEncrypted:      (props.storageEncrypted as boolean) ?? false,
-        BackupRetentionPeriod: props.backupRetentionDays ?? 0,
+        StorageEncrypted:      (props.storageEncrypted as boolean) ?? dbDefaults.storageEncrypted,
+        BackupRetentionPeriod: props.backupRetentionDays ?? dbDefaults.backupRetentionDays,
         DeletionProtection:    (props.deletionProtection as boolean) ?? false,
       };
       if (licenseModel) rdsProps['LicenseModel'] = licenseModel;
@@ -1846,7 +1861,7 @@ function synthesizeVPCChildren(
   });
 }
 
-export function synthesize(stack: Stack, allStacks?: Stack[]): CloudFormationTemplate {
+export function synthesize(stack: Stack, allStacks?: Stack[], profile: EnvironmentProfile = DEFAULT_PROFILE): CloudFormationTemplate {
   const resources: Record<string, CloudFormationResource> = {};
   const outputs: Record<string, { Value: unknown; Export: { Name: string } }> = {};
 
@@ -1856,6 +1871,23 @@ export function synthesize(stack: Stack, allStacks?: Stack[]): CloudFormationTem
   // `allStacks` (testes isolados), usa só a stack atual como universo —
   // mesmo efeito de antes (toda referência resolve local).
   const universe = allStacks ?? [stack];
+
+  // Normalização: preenche defaults derivados do perfil (AZ de subnet, porta do
+  // SG do banco) in-place ANTES de validar e emitir — assim os bugs recorrentes
+  // deixam de existir na origem, e a validação/synth leem props já consistentes.
+  applyEnvironmentDefaults(universe, profile);
+
+  // Validação semântica provider-agnóstica (porta de SG vs engine, cobertura de
+  // AZ do RDS, conflito maxAzs/subnets, CIDR, referências quebradas) — roda
+  // antes de emitir o template para que esses erros apareçam em synth-time, não
+  // no deploy real. O loop do `iacmp ai` captura e reenvia para auto-correção.
+  const semanticErrors = validateSemantics(universe);
+  if (semanticErrors.length > 0) {
+    throw new Error(
+      `Validação semântica falhou:\n- ${semanticErrors.join('\n- ')}`,
+    );
+  }
+
   const registry = new Map<string, string>();
   const lambdaRoles = new Map<string, { stackName: string; roleLogicalId: string }>();
   const vpcLambdas = new Set<string>();
@@ -1887,7 +1919,7 @@ export function synthesize(stack: Stack, allStacks?: Stack[]): CloudFormationTem
       }
     }
   }
-  const ctx: SynthContext = { currentStackName: stack.name, registry, lambdaRoles, vpcLambdas, dbSecretSuffix };
+  const ctx: SynthContext = { currentStackName: stack.name, registry, lambdaRoles, vpcLambdas, dbSecretSuffix, profile };
 
   for (const construct of stack.constructs) {
     const entries = synthesizeConstruct(construct, ctx);

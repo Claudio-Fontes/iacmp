@@ -356,6 +356,16 @@ function inferCrossStackRelationships(
     'Function.Lambda', 'Compute.Container', 'Compute.Instance', 'Compute.AutoScaling',
   ]);
 
+  // true se algum VALOR de env var referencia o recurso alvo pelo id/label
+  // (normalizado, case-insensitive). Ex: BUCKET_NAME='assets' referencia 'Assets';
+  // DB_HOST='AppDB.Endpoint' referencia 'AppDB'.
+  const envReferencesTarget = (env: Record<string, string>, targetLabel: string): boolean => {
+    const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const t = norm(targetLabel);
+    if (!t) return false;
+    return Object.values(env).some(v => typeof v === 'string' && norm(v).includes(t));
+  };
+
   for (const srcStack of builtStacks) {
     for (const srcNode of srcStack.nodes) {
       if (!ENV_CAPABLE_TYPES.has(srcNode.constructType)) continue;
@@ -366,11 +376,15 @@ function inferCrossStackRelationships(
         const matched = Object.keys(env).some(k => hint.pattern.test(k));
         if (!matched) continue;
 
-        // Procura nó do tipo alvo em todas as stacks (mesma stack incluída)
         for (const tgtStack of builtStacks) {
           for (const tgtNode of tgtStack.nodes) {
             if (tgtNode.constructType !== hint.targetType) continue;
             if (tgtNode.id === srcNode.id) continue;
+            // Intra-stack: a heurística por TIPO é ruidosa (linkaria a todos os
+            // recursos do tipo). Só inferimos quando o VALOR de alguma env var
+            // referencia esse recurso específico. Cross-stack mantém o match por
+            // tipo (env value costuma ser um ARN/endpoint resolvido em deploy).
+            if (tgtStack === srcStack && !envReferencesTarget(env, tgtNode.label)) continue;
             relationships.push({
               sourceId: srcNode.id,
               targetId: tgtNode.id,

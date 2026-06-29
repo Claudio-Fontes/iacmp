@@ -373,13 +373,13 @@ describe('buildModel — inferência cross-stack via environment', () => {
     expect(dsl).not.toContain('"reads table"');
   });
 
-  test('env hint não cria relação dentro da MESMA stack (só cross-stack)', () => {
+  test('env hint intra-stack: cria relação quando o VALOR referencia o recurso', () => {
     const stack = new Stack('mono');
     new Fn.Lambda(stack, 'Worker', {
       runtime: 'nodejs20',
       handler: 'w.handler',
       code: './src',
-      environment: { BUCKET_NAME: 'assets' },
+      environment: { BUCKET_NAME: 'assets' }, // referencia o bucket 'Assets'
     });
     new Storage.Bucket(stack, 'Assets', { versioning: false, publicAccess: false });
 
@@ -387,7 +387,29 @@ describe('buildModel — inferência cross-stack via environment', () => {
 
     const workerId = findNode(model, 'Worker')!.id;
     const assetsId = findNode(model, 'Assets')!.id;
-    // não existe relação "reads bucket" intra-stack
+    // a relação real Lambda→Bucket na mesma stack DEVE aparecer
+    expect(
+      allRels(model).some(
+        r => r.sourceId === workerId && r.targetId === assetsId && r.label === 'reads bucket',
+      ),
+    ).toBe(true);
+  });
+
+  test('env hint intra-stack: NÃO cria relação quando o valor não referencia o recurso', () => {
+    const stack = new Stack('mono');
+    new Fn.Lambda(stack, 'Worker', {
+      runtime: 'nodejs20',
+      handler: 'w.handler',
+      code: './src',
+      environment: { BUCKET_NAME: 'outro-bucket-qualquer' }, // não referencia 'Assets'
+    });
+    new Storage.Bucket(stack, 'Assets', { versioning: false, publicAccess: false });
+
+    const model = buildModel('p', 'aws', 'r', [{ name: 'mono', stack }]);
+
+    const workerId = findNode(model, 'Worker')!.id;
+    const assetsId = findNode(model, 'Assets')!.id;
+    // sem referência pelo valor, não inferimos intra-stack (evita ruído)
     expect(
       allRels(model).some(
         r => r.sourceId === workerId && r.targetId === assetsId && r.label === 'reads bucket',

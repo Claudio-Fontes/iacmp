@@ -4,6 +4,20 @@ export type { BaseConstruct } from './stack';
 export { Testing } from './testing';
 export type { TestableStack } from './testing';
 
+export { validateSemantics, cidrContains } from './validate';
+export { applyEnvironmentDefaults } from './normalize';
+export {
+  DEFAULT_PROFILE,
+  databaseDefaultsForTier,
+} from './profile';
+export type { AccountTier, EnvironmentProfile, DatabaseDefaults } from './profile';
+export {
+  SQL_ENGINE_PORTS,
+  defaultPortForEngine,
+  isAuroraEngine,
+  RDS_MIN_AZ_COUNT,
+} from './knowledge/database';
+
 export { Compute } from './constructs/compute';
 export type {
   ComputeInstanceProps,

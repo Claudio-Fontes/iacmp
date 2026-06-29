@@ -1,6 +1,6 @@
 {
   "name": "iacmp",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "IaC Multi Plataforma — CLI inteligente para AWS, Azure, GCP e Terraform com geração de stacks via IA",
   "keywords": [
     "iac",
@@ -45,7 +45,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.105.0",
-    "@iacmp/core": "^1.1.0",
+    "@iacmp/core": "^1.2.0",
     "@oclif/core": "^4.0.0",
     "chalk": "^4.1.2",
     "diff": "^5.2.0",
