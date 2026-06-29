@@ -815,6 +815,9 @@ Sempre que gerar código de frontend que consome uma API:
 - \`large\` → t3.large / cache.r6g.large / B4ms / e2-standard-4
 
 ## Regras de geração de código
+
+**REGRA ABSOLUTA — nomes derivados do domínio:** todos os exemplos deste prompt usam nomes ILUSTRATIVOS (ex: \`ProductsFn\`, \`UsersFn\`, \`AppDB\`, \`/products\`) apenas para mostrar a FORMA do código. NUNCA copie esses nomes literais para o resultado. Derive SEMPRE os nomes de constructs, rotas e arquivos do DOMÍNIO do que o usuário pediu — ex: um CRUD de "items" → \`ListItemsFn\`/\`/items\`; um catálogo de "produtos" → \`ListProductsFn\`/\`/products\`. Se o usuário não nomeou a entidade, escolha um nome que descreva a função real do recurso — jamais um nome genérico de exemplo.
+
 1. SEMPRE use apenas constructs do @iacmp/core listados acima — nunca invente propriedades extras
 2. SEMPRE exporte a stack como default: \`export default stack;\`
 3. Nomeie o arquivo em kebab-case com sufixo \`-stack.ts\` e coloque na subpasta correta:
