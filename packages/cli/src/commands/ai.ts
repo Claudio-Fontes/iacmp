@@ -24,6 +24,7 @@ import {
   getCached,
   setCache,
 } from '@iacmp/ai';
+import { ensureProjectInitialized } from '../bootstrap';
 
 type AskFn = (question: string) => Promise<string>;
 
@@ -303,6 +304,21 @@ export default class AI extends Command {
     const cwd = process.cwd();
     const dryRun = flags['dry-run'];
     const iacProvider = resolveIaCProvider({ provider: flags.provider }, cwd);
+
+    // Bootstrap silencioso: numa pasta vazia (só .env), cria iacmp.json/tsconfig
+    // e instala @iacmp/core + ts-node para que o loop de validação `iacmp synth`
+    // funcione. No-op se o projeto já estiver inicializado.
+    if (!dryRun) {
+      const spinner = ora({ text: 'Preparando projeto...', spinner: 'dots', discardStdin: false }).start();
+      try {
+        const result = ensureProjectInitialized(cwd, { provider: iacProvider });
+        if (result.bootstrapped) spinner.succeed(`Projeto inicializado (${result.created.join(', ')})`);
+        else spinner.stop();
+      } catch (err) {
+        spinner.fail(`Falha ao preparar o projeto: ${(err as Error).message}`);
+        this.error('Não foi possível inicializar o projeto automaticamente. Rode `iacmp init` manualmente.');
+      }
+    }
 
     if (flags.chat) {
       // Modo chat: spawn de processo filho com stdio herdado — oclif não interfere no stdin
