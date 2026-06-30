@@ -1,4 +1,4 @@
-import { Stack, Network, Database, Fn, validateSemantics, cidrContains } from '../src';
+import { Stack, Network, Database, Fn, Policy, Storage, validateSemantics, cidrContains } from '../src';
 
 function vpcStack(maxAzs = 0): Stack {
   const s = new Stack('app-vpc');
@@ -93,6 +93,85 @@ describe('validateSemantics', () => {
   test('aceita id literal de infra existente', () => {
     const s = new Stack('app');
     new Fn.Lambda(s, 'Fn1', { runtime: 'nodejs20', handler: 'h.handler', code: '.', vpcId: 'vpc-12345', subnetIds: ['subnet-abc', 'subnet-def'] });
+    expect(validateSemantics([s])).toEqual([]);
+  });
+});
+
+describe('validateSemantics — integridade de referência', () => {
+  test('Policy.IAM com attachTo inexistente é pego', () => {
+    const s = new Stack('app');
+    new Fn.Lambda(s, 'RealFn', { runtime: 'nodejs20', handler: 'h.handler', code: '.' });
+    new Policy.IAM(s, 'P', { attachTo: 'TypoFn', attachType: 'lambda', statements: [{ effect: 'Allow', actions: ['s3:GetObject'] }] });
+    const errors = validateSemantics([s]);
+    expect(errors.some(e => e.includes('TypoFn') && e.includes('attachTo'))).toBe(true);
+  });
+
+  test('Policy.IAM com attachTo válido passa', () => {
+    const s = new Stack('app');
+    new Fn.Lambda(s, 'RealFn', { runtime: 'nodejs20', handler: 'h.handler', code: '.' });
+    new Policy.IAM(s, 'P', { attachTo: 'RealFn', attachType: 'lambda', statements: [{ effect: 'Allow', actions: ['s3:GetObject'] }] });
+    expect(validateSemantics([s])).toEqual([]);
+  });
+
+  test('ApiGateway routes[].lambdaId inexistente é pego', () => {
+    const s = new Stack('app');
+    new Fn.Lambda(s, 'ListFn', { runtime: 'nodejs20', handler: 'h.handler', code: '.' });
+    new Fn.ApiGateway(s, 'Api', { name: 'API', routes: [
+      { method: 'GET', path: '/items', lambdaId: 'ListFn' },
+      { method: 'POST', path: '/items', lambdaId: 'CreateFn' }, // não existe
+    ] });
+    const errors = validateSemantics([s]);
+    expect(errors.some(e => e.includes('CreateFn') && e.includes('lambdaId'))).toBe(true);
+  });
+
+  test('ApiGateway authorizerLambdaId inexistente é pego', () => {
+    const s = new Stack('app');
+    new Fn.Lambda(s, 'ProtFn', { runtime: 'nodejs20', handler: 'h.handler', code: '.' });
+    new Fn.ApiGateway(s, 'Api', { name: 'API', authorizerLambdaId: 'AuthFnTypo', routes: [
+      { method: 'GET', path: '/x', lambdaId: 'ProtFn' },
+    ] });
+    const errors = validateSemantics([s]);
+    expect(errors.some(e => e.includes('AuthFnTypo'))).toBe(true);
+  });
+
+  test('CDN bucketRef inexistente é pego', () => {
+    const s = new Stack('app');
+    new Storage.Bucket(s, 'AppBucket', { websiteHosting: false });
+    new Network.CDN(s, 'CDN', { origins: [{ id: 'o', domainName: 'x.s3.amazonaws.com', bucketRef: 'BucketTypo' }] });
+    const errors = validateSemantics([s]);
+    expect(errors.some(e => e.includes('BucketTypo') && e.includes('bucketRef'))).toBe(true);
+  });
+
+  test('CDN bucketRef válido passa', () => {
+    const s = new Stack('app');
+    new Storage.Bucket(s, 'AppBucket', { websiteHosting: false });
+    new Network.CDN(s, 'CDN', { origins: [{ id: 'o', domainName: 'x.s3.amazonaws.com', bucketRef: 'AppBucket' }] });
+    expect(validateSemantics([s])).toEqual([]);
+  });
+});
+
+describe('validateSemantics — refs de env var', () => {
+  test('env var X.Endpoint com id inexistente é pego', () => {
+    const s = new Stack('app');
+    new Database.SQL(s, 'AppDB', { engine: 'postgres' });
+    new Fn.Lambda(s, 'Fn', { runtime: 'nodejs20', handler: 'h.handler', code: '.',
+      environment: { DB_HOST: 'Typo.Endpoint' } });
+    const errors = validateSemantics([s]);
+    expect(errors.some(e => e.includes('Typo') && e.includes('DB_HOST'))).toBe(true);
+  });
+
+  test('env var X.Endpoint com id correto passa', () => {
+    const s = new Stack('app');
+    new Database.SQL(s, 'AppDB', { engine: 'postgres' });
+    new Fn.Lambda(s, 'Fn', { runtime: 'nodejs20', handler: 'h.handler', code: '.',
+      environment: { DB_HOST: 'AppDB.Endpoint', DB_PORT: 'AppDB.Port', DB_PASSWORD: 'AppDB.Password' } });
+    expect(validateSemantics([s])).toEqual([]);
+  });
+
+  test('env var literal comum não dispara falso positivo', () => {
+    const s = new Stack('app');
+    new Fn.Lambda(s, 'Fn', { runtime: 'nodejs20', handler: 'h.handler', code: '.',
+      environment: { LOG_LEVEL: 'info', NODE_ENV: 'production', REGION: 'us-east-1' } });
     expect(validateSemantics([s])).toEqual([]);
   });
 });

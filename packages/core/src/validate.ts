@@ -22,11 +22,13 @@ export function validateSemantics(stacks: Stack[], profile?: EnvironmentProfile)
     for (const c of s.constructs) byId.set(c.id, { c, stack: s.name });
   }
 
-  const isLiteralCloudId = (v: string) =>
-    /^(vpc|subnet|sg)-[0-9a-zA-Z]+$/.test(v);
+  // Valor que NÃO é um id de construct gerenciado, e sim uma referência a infra
+  // externa/literal (id real da nuvem, ARN, caminho) — esses não validamos.
+  const looksLikeExternalRef = (v: string) =>
+    /^(vpc|subnet|sg)-[0-9a-zA-Z]+$/.test(v) || v.includes(':') || v.includes('/') || v.startsWith('arn:');
 
-  // Props que carregam referências a outros constructs (id como string)
-  const SINGLE_REF_PROPS = ['vpcId', 'subnetId'];
+  // Props que carregam referências a outros constructs (id como string).
+  const SINGLE_REF_PROPS = ['vpcId', 'subnetId', 'attachTo', 'authorizerLambdaId', 'wafAclId'];
   const LIST_REF_PROPS = ['subnetIds', 'securityGroupIds'];
 
   for (const s of stacks) {
@@ -34,22 +36,55 @@ export function validateSemantics(stacks: Stack[], profile?: EnvironmentProfile)
       const props = c.props as Record<string, unknown>;
 
       // ── A) Referências quebradas ──────────────────────────────────────────
-      const refs: string[] = [];
+      // (value, rótulo do campo) para mensagens precisas.
+      const refs: Array<[string, string]> = [];
       for (const k of SINGLE_REF_PROPS) {
-        if (typeof props[k] === 'string') refs.push(props[k] as string);
+        if (typeof props[k] === 'string') refs.push([props[k] as string, k]);
       }
       for (const k of LIST_REF_PROPS) {
         if (Array.isArray(props[k])) {
-          for (const v of props[k] as unknown[]) if (typeof v === 'string') refs.push(v);
+          for (const v of props[k] as unknown[]) if (typeof v === 'string') refs.push([v, k]);
         }
       }
-      for (const ref of refs) {
-        if (isLiteralCloudId(ref)) continue; // id real de infra existente
+      // routes[].lambdaId (Function.ApiGateway)
+      if (Array.isArray(props.routes)) {
+        for (const r of props.routes as Array<Record<string, unknown>>) {
+          if (typeof r?.lambdaId === 'string') refs.push([r.lambdaId, 'routes[].lambdaId']);
+        }
+      }
+      // origins[].bucketRef (Network.CDN)
+      if (Array.isArray(props.origins)) {
+        for (const o of props.origins as Array<Record<string, unknown>>) {
+          if (typeof o?.bucketRef === 'string') refs.push([o.bucketRef, 'origins[].bucketRef']);
+        }
+      }
+      for (const [ref, label] of refs) {
+        if (looksLikeExternalRef(ref)) continue; // id real/externo — não gerenciado
         if (!byId.has(ref)) {
           errors.push(
-            `${c.type} "${c.id}" referencia "${ref}", que não existe em nenhuma stack do projeto. ` +
-            `Verifique o id (ou use um id literal de recurso já existente, ex: vpc-12345).`,
+            `${c.type} "${c.id}" referencia "${ref}" em ${label}, que não existe em nenhuma stack do projeto. ` +
+            `Verifique o id — provavelmente um erro de digitação.`,
           );
+        }
+      }
+
+      // ── G) Referências de env var (ex: "AppDB.Endpoint") ──────────────────
+      // O synth resolve "<id>.<Field>" para o recurso real; se o <id> não
+      // existe, o valor vira a STRING LITERAL e o app falha em runtime
+      // (ENOTFOUND no host, secret inexistente). Pegamos o typo aqui.
+      const env = props.environment as Record<string, unknown> | undefined;
+      if (env && typeof env === 'object') {
+        for (const [key, val] of Object.entries(env)) {
+          if (typeof val !== 'string') continue;
+          const m = /^([^.]+)\.(Endpoint|Port|SecretArn|Password)$/.exec(val);
+          if (!m) continue;
+          if (!byId.has(m[1])) {
+            errors.push(
+              `${c.type} "${c.id}": env var ${key}="${val}" referencia o construct "${m[1]}", que não existe. ` +
+              `Sem um construct com esse id, o valor vira a string literal "${val}" e o app falha em runtime. ` +
+              `Use o id real do banco (ex: o id do Database.SQL declarado).`,
+            );
+          }
         }
       }
     }
