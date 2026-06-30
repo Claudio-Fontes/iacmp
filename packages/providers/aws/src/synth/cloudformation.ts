@@ -1793,6 +1793,38 @@ function validateResourceReferences(resources: Record<string, CloudFormationReso
   }
 }
 
+/**
+ * Detecta null/undefined em qualquer propriedade dos resources ANTES do deploy.
+ * Causa típica: a IA referencia uma propriedade que não existe no construct
+ * (ex: `secretArn` em Secret.Vault), que em TS é `undefined` e vira `null` no
+ * template — o CloudFormation rejeita com "'null' values are not allowed".
+ * Pega na origem, com o caminho exato.
+ */
+function validateNoNullValues(resources: Record<string, CloudFormationResource>): void {
+  const bad: string[] = [];
+  const walk = (node: unknown, pathStr: string): void => {
+    if (node === null || node === undefined) {
+      bad.push(pathStr);
+      return;
+    }
+    if (Array.isArray(node)) {
+      node.forEach((v, i) => walk(v, `${pathStr}[${i}]`));
+    } else if (typeof node === 'object') {
+      for (const [k, v] of Object.entries(node as Record<string, unknown>)) walk(v, `${pathStr}.${k}`);
+    }
+  };
+  for (const [id, resource] of Object.entries(resources)) {
+    walk(resource.Properties, id);
+  }
+  if (bad.length > 0) {
+    throw new Error(
+      `Valor null/undefined no template (CloudFormation rejeita): ${bad.map(p => `"${p}"`).join(', ')}. ` +
+      `Causa comum: referência a uma propriedade que não existe no construct ` +
+      `(ex: Secret.Vault não tem .secretArn; use a env var resolvida pelo synth ou o id do recurso).`
+    );
+  }
+}
+
 function synthesizeVPCChildren(
   logicalId: string,
   cidr: string,
@@ -2010,6 +2042,7 @@ export function synthesize(stack: Stack, allStacks?: Stack[], profile: Environme
   }
 
   validateResourceReferences(resources);
+  validateNoNullValues(resources);
 
   const template: CloudFormationTemplate = {
     AWSTemplateFormatVersion: '2010-09-09',

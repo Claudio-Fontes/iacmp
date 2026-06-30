@@ -23,6 +23,9 @@ import {
   AIGeneratedResponse,
   getCached,
   setCache,
+  buildIndexes,
+  retrieve,
+  formatRetrievedContext,
 } from '@iacmp/ai';
 import { ensureProjectInitialized } from '../bootstrap';
 
@@ -49,6 +52,23 @@ const REVIEW_PROMPT = (fileCount: number): string =>
   `4. SCHEMA E SQL: a tabela tem TODOS os campos da spec; o handler de listagem cria a tabela (CREATE TABLE IF NOT EXISTS) com todos os campos; INSERT/UPDATE leem e escrevem todos os campos; a contagem de colunas BATE com a de valores ($1,$2,...); SQL parametrizado.\n` +
   `5. REFERÊNCIAS: env vars de banco usam o id real do Database (ex: AppDB.Endpoint); rotas usam os lambdaId reais.\n\n` +
   `Se encontrar QUALQUER defeito, retorne o JSON COMPLETO CORRIGIDO com os ${fileCount} arquivo(s) (todos, não só os corrigidos). Se estiver tudo perfeito, retorne exatamente o mesmo JSON. Responda APENAS com o JSON, sem texto antes ou depois.`;
+
+// Recupera conhecimento (docs de construct + padrões de plataforma) relevante
+// ao pedido e o formata para injeção no contexto da geração. Usa só BM25
+// (offline, sem API key) — rápido. Falha graciosamente: sem RAG, a geração
+// segue só com o system-prompt. É o que tira regras de padrão do prompt fixo e
+// as torna conhecimento consultável (ex: "separar stacks por camada").
+async function retrieveGenerationContext(cwd: string, prompt: string, systemPromptTemplate: string): Promise<string> {
+  try {
+    const indexes = await buildIndexes({ projectDir: cwd, systemPromptTemplate });
+    // Foco em docs (API dos constructs) e knowledge (padrões/limites) — as
+    // stacks do projeto já entram via readProjectContext.
+    const results = retrieve(indexes, prompt, { projectK: 0, sourceK: 0, docsK: 4, knowledgeK: 6 });
+    return formatRetrievedContext(results);
+  } catch {
+    return '';
+  }
+}
 
 function resolveAIProvider(): AIProvider {
   const model = process.env['IACMP_MODEL'];
@@ -418,7 +438,17 @@ export default class AI extends Command {
 
     const session = new ChatSession();
     const { ask, close } = createDirectAsk();
-    const projectContext = readProjectContext(cwd);
+    let projectContext = readProjectContext(cwd);
+    // RAG: enriquece o contexto da geração com conhecimento relevante ao pedido
+    // (docs de construct + padrões de plataforma) — em vez de inflar o prompt fixo.
+    const ragSpinner = ora({ text: 'Recuperando conhecimento relevante...', spinner: 'dots', discardStdin: false }).start();
+    const ragContext = await retrieveGenerationContext(cwd, args.prompt!, buildSystemPrompt(''));
+    if (ragContext) {
+      projectContext = `${projectContext}\n\n${ragContext}`;
+      ragSpinner.succeed('Conhecimento recuperado (RAG)');
+    } else {
+      ragSpinner.stop();
+    }
     const provider = createContextualProvider(aiProvider, projectContext);
     session.addUserMessage(args.prompt);
     try {

@@ -851,4 +851,14 @@ describe('AWSProvider', () => {
     const tpl = provider.synthesize(stack) as any;
     expect(tpl.Resources.Handler.Properties.VpcConfig).toBeUndefined();
   });
+
+  test('valor null em prop (propriedade inventada) → synth falha com caminho (caso openai26 secretArn)', () => {
+    // Simula `resources: [vault.secretArn]` onde secretArn é undefined → null.
+    new Policy.IAM(stack, 'P', {
+      attachTo: 'SomeFn', attachType: 'lambda',
+      statements: [{ effect: 'Allow', actions: ['secretsmanager:GetSecretValue'], resources: [undefined as any] }],
+    });
+    new Fn.Lambda(stack, 'SomeFn', { runtime: 'nodejs20', handler: 'h.handler', code: '.' });
+    expect(() => provider.synthesize(stack)).toThrow(/null\/undefined/i);
+  });
 });

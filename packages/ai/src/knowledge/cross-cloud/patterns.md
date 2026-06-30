@@ -240,3 +240,28 @@ Implementação AWS:
 - Tague todos os recursos: `Environment`, `Team`, `Project`, `CostCenter`
 - AWS Cost Explorer: agrupe por tag para ver custo por time/projeto
 - Budget Alerts: configure para alertar quando custo ultrapassa threshold
+
+## Organização de stacks no iacmp
+
+### Separação por camada (uma stack por responsabilidade)
+Ao gerar infraestrutura com iacmp, SEMPRE separe os recursos em múltiplas stacks
+por camada/responsabilidade — nunca tudo num único arquivo. Cada stack é um
+arquivo `.ts` em sua subpasta:
+
+- `stacks/network/` — Network.VPC, Network.Subnet, Network.SecurityGroup, Network.LoadBalancer, Network.CDN, Network.WAF, Function.ApiGateway
+- `stacks/database/` — Database.SQL, Database.DocumentDB, Database.DynamoDB, Cache.Redis, Cache.Memcached
+- `stacks/compute/` — Fn.Lambda, Compute.Instance, Compute.Container, Compute.Kubernetes
+- `stacks/storage/` — Storage.Bucket, Storage.FileSystem, Storage.Archive
+- `stacks/security/` — Secret.Vault, Certificate.TLS, Policy.IAM (quando agrupadas)
+- `stacks/messaging/` — Messaging.Queue, Messaging.Topic, Events.EventBridge
+- `stacks/monitoring/` — Monitoring.Alarm, Monitoring.Dashboard, Logging.Stream
+
+Por que separar:
+- Deploy/destroy independente por camada (a rede sobe antes do banco, o banco antes do compute)
+- Blast radius menor: um rollback numa stack não derruba as outras
+- Referências cross-stack explícitas (Fn::ImportValue) deixam as dependências visíveis
+- Um arquivo monolítico com 20+ recursos é difícil de revisar e manter
+
+Exemplo de um app web CRUD: `stacks/network/vpc-stack.ts`, `stacks/database/db-stack.ts`,
+`stacks/compute/api-stack.ts`, `stacks/network/api-gateway-stack.ts`,
+`stacks/storage/frontend-bucket-stack.ts` — cinco stacks, nunca uma só.
