@@ -1881,7 +1881,7 @@ export function synthesize(stack: Stack, allStacks?: Stack[], profile: Environme
   // AZ do RDS, conflito maxAzs/subnets, CIDR, referências quebradas) — roda
   // antes de emitir o template para que esses erros apareçam em synth-time, não
   // no deploy real. O loop do `iacmp ai` captura e reenvia para auto-correção.
-  const semanticErrors = validateSemantics(universe);
+  const semanticErrors = validateSemantics(universe, profile);
   if (semanticErrors.length > 0) {
     throw new Error(
       `Validação semântica falhou:\n- ${semanticErrors.join('\n- ')}`,

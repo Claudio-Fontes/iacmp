@@ -1,6 +1,7 @@
 import { Stack, BaseConstruct } from './stack';
 import { SQLEngine } from './constructs/database';
-import { defaultPortForEngine, RDS_MIN_AZ_COUNT } from './knowledge/database';
+import { defaultPortForEngine, RDS_MIN_AZ_COUNT, isAuroraEngine } from './knowledge/database';
+import { EnvironmentProfile } from './profile';
 
 /**
  * Validação semântica provider-agnóstica que roda em SYNTH-TIME, sobre os
@@ -12,7 +13,7 @@ import { defaultPortForEngine, RDS_MIN_AZ_COUNT } from './knowledge/database';
  *
  * Retorna a lista de erros (vazia = ok). Não lança — quem chama decide.
  */
-export function validateSemantics(stacks: Stack[]): string[] {
+export function validateSemantics(stacks: Stack[], profile?: EnvironmentProfile): string[] {
   const errors: string[] = [];
 
   // Índice global constructId → { construct, stackName }
@@ -147,6 +148,38 @@ export function validateSemantics(stacks: Stack[]): string[] {
               `Adicione uma regra { protocol: 'tcp', fromPort: ${port}, toPort: ${port}, cidr: '...' }.`,
             );
           }
+        }
+      }
+    }
+  }
+
+  // ── F) Conta free tier: recursos/configs que a AWS rejeita no deploy ───────
+  // Só valida quando o tier é explicitamente 'free' (ou ausente, que assume free).
+  if (!profile || profile.accountTier === 'free') {
+    for (const s of stacks) {
+      for (const c of s.constructs) {
+        if (c.type !== 'Database.SQL') continue;
+        const dp = c.props as Record<string, unknown>;
+        const engine = dp.engine as SQLEngine;
+
+        if (isAuroraEngine(engine)) {
+          errors.push(
+            `Database.SQL "${c.id}" usa engine Aurora ("${engine}"), que NÃO é elegível para free tier AWS. ` +
+            `Para conta free tier use engine 'postgres' ou 'mysql' (instância única). ` +
+            `Se a conta for paga, defina "accountTier": "standard" no iacmp.json.`,
+          );
+        }
+        if (typeof dp.backupRetentionDays === 'number' && dp.backupRetentionDays > 0) {
+          errors.push(
+            `Database.SQL "${c.id}" tem backupRetentionDays: ${dp.backupRetentionDays}, mas free tier AWS só permite 0. ` +
+            `Omita a propriedade (o synth deriva 0 do tier free) ou use "accountTier": "standard" se a conta for paga.`,
+          );
+        }
+        if (dp.storageEncrypted === true) {
+          errors.push(
+            `Database.SQL "${c.id}" tem storageEncrypted: true, que não é suportado em RDS no free tier AWS. ` +
+            `Omita a propriedade (o synth deriva false do tier free) ou use "accountTier": "standard" se a conta for paga.`,
+          );
         }
       }
     }

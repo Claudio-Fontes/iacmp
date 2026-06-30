@@ -649,7 +649,7 @@ describe('AWSProvider', () => {
 
   test('Database.SQL aurora-mysql → gera DBCluster + DBInstance (não DBInstance single)', () => {
     new Database.SQL(stack, 'DB', { engine: 'aurora-mysql' });
-    const tpl = provider.synthesize(stack) as any;
+    const tpl = provider.synthesize(stack, undefined, { accountTier: 'standard' }) as any;
     expect(tpl.Resources.DBCluster.Type).toBe('AWS::RDS::DBCluster');
     expect(tpl.Resources.DBCluster.Properties.Engine).toBe('aurora-mysql');
     expect(tpl.Resources.DBCluster.Properties.EngineVersion).toBe('8.0.mysql_aurora.3.08.0');
@@ -660,7 +660,7 @@ describe('AWSProvider', () => {
 
   test('Database.SQL aurora-postgresql → gera DBCluster com engine aurora-postgresql', () => {
     new Database.SQL(stack, 'DB', { engine: 'aurora-postgresql' });
-    const tpl = provider.synthesize(stack) as any;
+    const tpl = provider.synthesize(stack, undefined, { accountTier: 'standard' }) as any;
     expect(tpl.Resources.DBCluster.Type).toBe('AWS::RDS::DBCluster');
     expect(tpl.Resources.DBCluster.Properties.Engine).toBe('aurora-postgresql');
     expect(tpl.Resources.DBCluster.Properties.EngineVersion).toBe('16.6');
@@ -669,7 +669,7 @@ describe('AWSProvider', () => {
 
   test('Database.SQL aurora-mysql com instances:2 → gera 2 DBInstance', () => {
     new Database.SQL(stack, 'DB', { engine: 'aurora-mysql', instances: 2 });
-    const tpl = provider.synthesize(stack) as any;
+    const tpl = provider.synthesize(stack, undefined, { accountTier: 'standard' }) as any;
     expect(tpl.Resources.DB.Type).toBe('AWS::RDS::DBInstance');
     expect(tpl.Resources.DBInstance2.Type).toBe('AWS::RDS::DBInstance');
     expect(tpl.Resources.DBInstance2.Properties.DBClusterIdentifier).toEqual({ Ref: 'DBCluster' });
@@ -681,7 +681,7 @@ describe('AWSProvider', () => {
       subnetIds: ['subnet-1', 'subnet-2'],
       securityGroupIds: ['sg-1'],
     });
-    const tpl = provider.synthesize(stack) as any;
+    const tpl = provider.synthesize(stack, undefined, { accountTier: 'standard' }) as any;
     expect(tpl.Resources.DBSubnetGroup.Type).toBe('AWS::RDS::DBSubnetGroup');
     expect(tpl.Resources.DBSubnetGroup.Properties.SubnetIds).toEqual(['subnet-1', 'subnet-2']);
     expect(tpl.Resources.DBCluster.Properties.DBSubnetGroupName).toEqual({ Ref: 'DBSubnetGroup' });
@@ -690,7 +690,7 @@ describe('AWSProvider', () => {
 
   test('Database.SQL aurora-mysql → gera Secret para senha e referencia no cluster', () => {
     new Database.SQL(stack, 'DB', { engine: 'aurora-mysql' });
-    const tpl = provider.synthesize(stack) as any;
+    const tpl = provider.synthesize(stack, undefined, { accountTier: 'standard' }) as any;
     expect(tpl.Resources.DBSecret.Type).toBe('AWS::SecretsManager::Secret');
     expect(tpl.Resources.DBCluster.Properties.MasterUserPassword).toMatchObject({
       'Fn::Sub': expect.stringContaining('DBSecret'),
@@ -699,26 +699,26 @@ describe('AWSProvider', () => {
 
   test('Database.SQL aurora-mysql com deletionProtection → DeletionPolicy Retain', () => {
     new Database.SQL(stack, 'DB', { engine: 'aurora-mysql', deletionProtection: true });
-    const tpl = provider.synthesize(stack) as any;
+    const tpl = provider.synthesize(stack, undefined, { accountTier: 'standard' }) as any;
     expect(tpl.Resources.DBCluster.DeletionPolicy).toBe('Retain');
     expect(tpl.Resources.DB.DeletionPolicy).toBe('Retain');
   });
 
   test('Database.SQL aurora-mysql sem deletionProtection → DeletionPolicy Snapshot', () => {
     new Database.SQL(stack, 'DB', { engine: 'aurora-mysql' });
-    const tpl = provider.synthesize(stack) as any;
+    const tpl = provider.synthesize(stack, undefined, { accountTier: 'standard' }) as any;
     expect(tpl.Resources.DBCluster.DeletionPolicy).toBe('Snapshot');
   });
 
   test('Database.SQL aurora → StorageEncrypted true por default', () => {
     new Database.SQL(stack, 'DB', { engine: 'aurora-mysql' });
-    const tpl = provider.synthesize(stack) as any;
+    const tpl = provider.synthesize(stack, undefined, { accountTier: 'standard' }) as any;
     expect(tpl.Resources.DBCluster.Properties.StorageEncrypted).toBe(true);
   });
 
   test('Database.SQL aurora → BackupRetentionPeriod 7 por default', () => {
     new Database.SQL(stack, 'DB', { engine: 'aurora-mysql' });
-    const tpl = provider.synthesize(stack) as any;
+    const tpl = provider.synthesize(stack, undefined, { accountTier: 'standard' }) as any;
     expect(tpl.Resources.DBCluster.Properties.BackupRetentionPeriod).toBe(7);
   });
 
@@ -736,9 +736,11 @@ describe('AWSProvider', () => {
     expect(tpl.Resources.DB.Properties.StorageEncrypted).toBe(true);
   });
 
-  test('Database.SQL RDS → prop explícita vence o default do tier', () => {
+  test('Database.SQL RDS → prop explícita vence o default do tier (standard)', () => {
+    // backup/cripto explícitos só são válidos em conta standard; em free a
+    // validação semântica bloqueia (testada à parte em validate.test.ts).
     new Database.SQL(stack, 'DB', { engine: 'postgres', backupRetentionDays: 3, storageEncrypted: true });
-    const tpl = provider.synthesize(stack, [stack], { accountTier: 'free' }) as any;
+    const tpl = provider.synthesize(stack, [stack], { accountTier: 'standard' }) as any;
     expect(tpl.Resources.DB.Properties.BackupRetentionPeriod).toBe(3);
     expect(tpl.Resources.DB.Properties.StorageEncrypted).toBe(true);
   });

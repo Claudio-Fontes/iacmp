@@ -97,6 +97,52 @@ describe('validateSemantics', () => {
   });
 });
 
+describe('validateSemantics — free tier', () => {
+  function dbOnly(props: any): Stack[] {
+    const net = new Stack('net');
+    new Network.VPC(net, 'AppVpc', { cidr: '10.0.0.0/16', maxAzs: 0 });
+    new Network.Subnet(net, 'Sub1', { vpcId: 'AppVpc', cidr: '10.0.1.0/24', availabilityZone: 'us-east-1a' });
+    new Network.Subnet(net, 'Sub2', { vpcId: 'AppVpc', cidr: '10.0.2.0/24', availabilityZone: 'us-east-1b' });
+    new Network.SecurityGroup(net, 'DBSG', { vpcId: 'AppVpc',
+      ingressRules: [{ protocol: 'tcp', fromPort: 5432, toPort: 5432, cidr: '10.0.0.0/16' }] });
+    const db = new Stack('db');
+    new Database.SQL(db, 'AppDB', { subnetIds: ['Sub1', 'Sub2'], securityGroupIds: ['DBSG'], ...props });
+    return [net, db];
+  }
+
+  test('free: bloqueia engine Aurora', () => {
+    const errors = validateSemantics(dbOnly({ engine: 'aurora-postgresql' }), { accountTier: 'free' });
+    expect(errors.some(e => e.includes('Aurora') && e.includes('free tier'))).toBe(true);
+  });
+
+  test('free: bloqueia backupRetentionDays > 0', () => {
+    const errors = validateSemantics(dbOnly({ engine: 'postgres', backupRetentionDays: 7 }), { accountTier: 'free' });
+    expect(errors.some(e => e.includes('backupRetentionDays'))).toBe(true);
+  });
+
+  test('free: bloqueia storageEncrypted true', () => {
+    const errors = validateSemantics(dbOnly({ engine: 'postgres', storageEncrypted: true }), { accountTier: 'free' });
+    expect(errors.some(e => e.includes('storageEncrypted'))).toBe(true);
+  });
+
+  test('free: postgres simples passa', () => {
+    expect(validateSemantics(dbOnly({ engine: 'postgres' }), { accountTier: 'free' })).toEqual([]);
+  });
+
+  test('standard: Aurora + backup + cripto passam', () => {
+    const errors = validateSemantics(
+      dbOnly({ engine: 'aurora-postgresql', backupRetentionDays: 7, storageEncrypted: true }),
+      { accountTier: 'standard' },
+    );
+    expect(errors).toEqual([]);
+  });
+
+  test('sem profile: assume free e bloqueia Aurora', () => {
+    const errors = validateSemantics(dbOnly({ engine: 'aurora-mysql' }));
+    expect(errors.some(e => e.includes('Aurora'))).toBe(true);
+  });
+});
+
 describe('cidrContains', () => {
   test('contido', () => {
     expect(cidrContains('10.0.0.0/16', '10.0.1.0/24')).toBe(true);
