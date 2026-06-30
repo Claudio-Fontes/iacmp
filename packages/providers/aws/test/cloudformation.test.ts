@@ -861,4 +861,31 @@ describe('AWSProvider', () => {
     new Fn.Lambda(stack, 'SomeFn', { runtime: 'nodejs20', handler: 'h.handler', code: '.' });
     expect(() => provider.synthesize(stack)).toThrow(/null\/undefined/i);
   });
+
+  test('Secret.Vault.SecretArn em env var → Ref para o Vault (não null)', () => {
+    new Secret.Vault(stack, 'JwtSecret', { description: 'jwt' });
+    new Fn.Lambda(stack, 'Fn', { runtime: 'nodejs20', handler: 'h.handler', code: '.',
+      environment: { JWT_SECRET_ARN: 'JwtSecret.SecretArn' } });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.Fn.Properties.Environment.Variables.JWT_SECRET_ARN).toEqual({ Ref: 'JwtSecret' });
+  });
+
+  test('Secret.Vault.SecretArn em Policy.IAM resources → Ref para o Vault', () => {
+    new Secret.Vault(stack, 'JwtSecret', { description: 'jwt' });
+    new Fn.Lambda(stack, 'AuthFn', { runtime: 'nodejs20', handler: 'h.handler', code: '.' });
+    new Policy.IAM(stack, 'AuthPolicy', { attachTo: 'AuthFn', attachType: 'lambda',
+      statements: [{ effect: 'Allow', actions: ['secretsmanager:GetSecretValue'], resources: ['JwtSecret.SecretArn'] }] });
+    const tpl = provider.synthesize(stack) as any;
+    const role = tpl.Resources.AuthPolicyRole;
+    expect(role.Properties.Policies[0].PolicyDocument.Statement[0].Resource).toEqual([{ Ref: 'JwtSecret' }]);
+  });
+
+  test('Secret.Vault exporta SecretArn como Output (cross-stack)', () => {
+    new Secret.Vault(stack, 'JwtSecret', { description: 'jwt' });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Outputs.JwtSecretSecretArn).toEqual({
+      Value: { Ref: 'JwtSecret' },
+      Export: { Name: 'test-stack-JwtSecret-SecretArn' },
+    });
+  });
 });

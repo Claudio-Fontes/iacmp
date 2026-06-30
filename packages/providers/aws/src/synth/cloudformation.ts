@@ -40,6 +40,8 @@ export interface SynthContext {
   lambdaRoles: Map<string, { stackName: string; roleLogicalId: string }>;
   /** constructId de Database → sufixo do nome do secret (ex: 'AppDB' → 'db-password' ou 'aurora-password'). */
   dbSecretSuffix: Map<string, string>;
+  /** IDs de Secret.Vault — o próprio logicalId É o secret (Ref retorna o ARN). */
+  secretVaults: Set<string>;
   /** IDs de Function.Lambda que têm vpcId definido — precisam de VPCAccessExecutionRole. */
   vpcLambdas: Set<string>;
   /** Perfil de ambiente (tier da conta, região) — fonte dos defaults derivados. */
@@ -187,6 +189,21 @@ function resolveSecurityGroupId(id: string, ctx: SynthContext): unknown {
  * Padrão: "<constructId>.<field>" onde field = Endpoint | Port | SecretArn | Username
  * Mesmo stack → Fn::GetAtt / Ref. Cross-stack → Fn::ImportValue.
  */
+/**
+ * Resolve um item de `resources` numa Policy.IAM. Aceita o mesmo padrão
+ * "<constructId>.SecretArn"/".Arn" das env vars (ex: 'JwtSecret.SecretArn') →
+ * referência real ao recurso. ARNs literais, '*' e qualquer outra string passam
+ * inalterados.
+ */
+function resolvePolicyResource(value: string, ctx: SynthContext): unknown {
+  const match = /^([^.]+)\.(SecretArn|Arn)$/.exec(value);
+  if (!match) return value;
+  const [, constructId] = match;
+  if (!ctx.registry.has(constructId)) return value;
+  // Reusa a resolução de env var (Ref/ImportValue conforme local vs cross-stack).
+  return resolveEnvVarValue(`${constructId}.SecretArn`, ctx);
+}
+
 function resolveEnvVarValue(value: string, ctx: SynthContext): unknown {
   const match = /^([^.]+)\.(Endpoint|Port|SecretArn|Username|Password)$/.exec(value);
   if (!match) return value;
@@ -194,6 +211,13 @@ function resolveEnvVarValue(value: string, ctx: SynthContext): unknown {
   const ownerStack = ctx.registry.get(constructId);
   if (!ownerStack) return value;
   const logicalId = constructId.replace(/[^a-zA-Z0-9]/g, '');
+
+  // Secret.Vault standalone: o próprio recurso É o secret — Ref retorna o ARN.
+  // (Database tem um sub-recurso `${logicalId}Secret`; Vault não.)
+  if (field === 'SecretArn' && ctx.secretVaults.has(constructId)) {
+    if (ownerStack === ctx.currentStackName) return { Ref: logicalId };
+    return { 'Fn::ImportValue': `${ownerStack}-${constructId}-SecretArn` };
+  }
 
   // Password: CloudFormation dynamic reference — resolvido em deploy time (sem SDK runtime)
   if (field === 'Password') {
@@ -1487,7 +1511,7 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
               Statement: statements.map(s => ({
                 Effect: s.effect as string,
                 Action: s.actions as string[],
-                Resource: (s.resources as string[]) ?? ['*'],
+                Resource: ((s.resources as string[]) ?? ['*']).map(r => resolvePolicyResource(r, ctx)),
                 ...(s.conditions ? { Condition: s.conditions } : {}),
               })),
             },
@@ -1924,9 +1948,11 @@ export function synthesize(stack: Stack, allStacks?: Stack[], profile: Environme
   const lambdaRoles = new Map<string, { stackName: string; roleLogicalId: string }>();
   const vpcLambdas = new Set<string>();
   const dbSecretSuffix = new Map<string, string>();
+  const secretVaults = new Set<string>();
   for (const s of universe) {
     for (const c of s.constructs) {
       registry.set(c.id, s.name);
+      if (c.type === 'Secret.Vault') secretVaults.add(c.id);
       if (c.type === 'Policy.IAM') {
         const p = c.props as Record<string, unknown>;
         if (p.attachType === 'lambda' && typeof p.attachTo === 'string') {
@@ -1951,7 +1977,7 @@ export function synthesize(stack: Stack, allStacks?: Stack[], profile: Environme
       }
     }
   }
-  const ctx: SynthContext = { currentStackName: stack.name, registry, lambdaRoles, vpcLambdas, dbSecretSuffix, profile };
+  const ctx: SynthContext = { currentStackName: stack.name, registry, lambdaRoles, vpcLambdas, dbSecretSuffix, secretVaults, profile };
 
   for (const construct of stack.constructs) {
     const entries = synthesizeConstruct(construct, ctx);
@@ -1982,6 +2008,14 @@ export function synthesize(stack: Stack, allStacks?: Stack[], profile: Environme
       outputs[`${logicalId}GroupId`] = {
         Value: { 'Fn::GetAtt': [logicalId, 'GroupId'] },
         Export: { Name: `${stack.name}-${construct.id}-GroupId` },
+      };
+    }
+    if (construct.type === 'Secret.Vault') {
+      // Ref de AWS::SecretsManager::Secret retorna o ARN — exporta para cross-stack.
+      const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
+      outputs[`${logicalId}SecretArn`] = {
+        Value: { Ref: logicalId },
+        Export: { Name: `${stack.name}-${construct.id}-SecretArn` },
       };
     }
     if (construct.type === 'Function.Lambda') {

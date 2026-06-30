@@ -233,6 +233,7 @@ async function runGeneration(provider, session, lastPrompt, projectContext) {
     const reviewPrompt =
       `Antes de finalizar, revise sua resposta anterior como um engenheiro sênior revisando um Pull Request, comparando-a com o pedido ORIGINAL. Verifique CADA item:\n` +
       `1. REQUISITOS: todo requisito explícito do pedido está implementado?\n` +
+      `1b. SEPARAÇÃO POR CAMADA: recursos divididos em múltiplas stacks (network/database/compute/security), NÃO tudo num arquivo só? Se VPC+banco+lambdas+secret estão juntos, SEPARE.\n` +
       `2. PONTO DE ENTRADA HTTP (crítico): "API REST/HTTP" servida por Lambdas EXIGE um Fn.ApiGateway com routes[] apontando para cada lambdaId. Se NENHUM arquivo tiver Fn.ApiGateway, CRIE stacks/network/api-gateway-stack.ts com Fn.ApiGateway (type: 'HTTP', cors: true, uma rota por método). NUNCA use Network.LoadBalancer.\n` +
       `3. CRUD COMPLETO: listar/obter/criar/atualizar/deletar existem e wireadas nas rotas.\n` +
       `4. SCHEMA E SQL: tabela com TODOS os campos da spec; handler de listagem cria a tabela (CREATE TABLE IF NOT EXISTS) com todos os campos; INSERT/UPDATE leem/escrevem todos; contagem de colunas BATE com a de valores; SQL parametrizado.\n` +

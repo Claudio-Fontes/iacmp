@@ -824,7 +824,7 @@ Sempre que gerar código de frontend que consome uma API:
 
 1. SEMPRE use apenas constructs do @iacmp/core listados acima — nunca invente propriedades extras
 2. SEMPRE exporte a stack como default: \`export default stack;\`
-3. Nomeie o arquivo em kebab-case com sufixo \`-stack.ts\` e coloque na subpasta correta:
+3. **SEPARE EM MÚLTIPLAS STACKS POR CAMADA — nunca tudo num arquivo só.** Cada camada vira um arquivo \`.ts\` separado, em sua subpasta. Um app com rede + banco + lambdas + secret + gateway = 4-5 arquivos distintos (ex: \`stacks/network/vpc-stack.ts\`, \`stacks/database/db-stack.ts\`, \`stacks/compute/api-stack.ts\`, \`stacks/security/secret-stack.ts\`, \`stacks/network/api-gateway-stack.ts\`). Juntar VPC + RDS + Lambda + Secret num único \`api-stack.ts\` é ERRADO — dificulta deploy/destroy por camada e revisão. Nomeie em kebab-case com sufixo \`-stack.ts\` na subpasta correta:
    - \`stacks/compute/\` → Compute.*, Fn.Lambda
    - \`stacks/database/\` → Database.SQL, Database.DocumentDB, Database.DynamoDB, Cache.Redis, Cache.Memcached
    - \`stacks/storage/\` → Storage.Bucket, Storage.FileSystem, Storage.Archive

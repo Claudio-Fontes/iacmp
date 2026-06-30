@@ -217,7 +217,11 @@ Gere o handler TypeScript que: lê o arquivo do S3, parseia como JSON (array de 
 - Lambda "PublicHealthFn" sem autenticação (rota GET /health)
 - API Gateway REST com authType NONE na rota /health e authorizerLambdaId nos demais
 - Secret.Vault "JwtSecret" para armazenar a chave secreta JWT
-- Policy IAM para a JwtAuthorizerFn com secretsmanager:GetSecretValue
+- Policy IAM para a JwtAuthorizerFn com secretsmanager:GetSecretValue (no resources use 'JwtSecret.SecretArn' — o synth resolve para o ARN real)
+
+Para referenciar o ARN do secret (na env var das Lambdas e no resources da Policy IAM), use a string 'JwtSecret.SecretArn' — o synth resolve automaticamente. Secret.Vault NÃO tem propriedade .secretArn/.secretId em código; use sempre a string 'JwtSecret.SecretArn'.
+
+Organize em stacks separadas por camada: stacks/security/ para o Secret.Vault, stacks/compute/ para as Lambdas, stacks/network/ para o API Gateway.
 
 Gere os handlers TypeScript: o authorizer usa a biblioteca jsonwebtoken para verificar o token com a chave do Secrets Manager. As rotas protegidas leem o userId do contexto do authorizer.`,
   },
