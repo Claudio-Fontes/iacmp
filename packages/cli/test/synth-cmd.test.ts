@@ -321,6 +321,48 @@ module.exports = stack;
       const r = runCli(['synth', '--provider', 'aws'], { cwd: dir });
       expect(r.status).toBe(0);
     });
+
+    test('INSERT com colunas != valores no handler → synth falha (bug createItem openai21)', () => {
+      dir = makeProject({
+        provider: 'aws',
+        stacks: {
+          'compute.js': `const { Stack, Fn } = require('@iacmp/core');
+const stack = new Stack('proj-lambda');
+new Fn.Lambda(stack, 'CreateFn', { runtime: 'nodejs20', handler: 'dist/create.handler', code: '.' });
+module.exports = stack;
+`,
+        },
+        files: { 'src/create.ts': `export async function handler() {
+  await db.query('INSERT INTO items (name, description, created_at) VALUES ($1, $2)', [a, b]);
+}
+` },
+      });
+
+      const r = runCli(['synth', '--provider', 'aws'], { cwd: dir });
+      expect(r.status).not.toBe(0);
+      expect(r.all).toContain('INSERT com 3 coluna');
+    });
+
+    test('INSERT correto (colunas == valores) → synth ok', () => {
+      dir = makeProject({
+        provider: 'aws',
+        stacks: {
+          'compute.js': `const { Stack, Fn } = require('@iacmp/core');
+const stack = new Stack('proj-lambda');
+new Fn.Lambda(stack, 'CreateFn', { runtime: 'nodejs20', handler: 'dist/create.handler', code: '.' });
+module.exports = stack;
+`,
+        },
+        files: { 'src/create.ts': `export async function handler() {
+  await db.query('INSERT INTO items (name, description) VALUES ($1, $2)', [a, b]);
+  await db.query('INSERT INTO logs (msg, created_at) VALUES ($1, NOW())', [m]);
+}
+` },
+      });
+
+      const r = runCli(['synth', '--provider', 'aws'], { cwd: dir });
+      expect(r.status).toBe(0);
+    });
   });
 
   describe('idempotência / re-synth', () => {

@@ -223,6 +223,48 @@ export function validateSemantics(stacks: Stack[], profile?: EnvironmentProfile)
     }
   }
 
+  // ── I) Compute em VPC exige subnets ───────────────────────────────────────
+  // Fargate (Compute.Container) sem subnets: o synth gera cluster+task mas PULA
+  // o Service — deploy "passa" mas NADA roda (falha silenciosa). EKS exige ≥2 AZs.
+  const countManagedAzs = (ids: string[]): { azs: number; managed: number } => {
+    const m = ids.map(i => byId.get(i)).filter((x): x is { c: BaseConstruct; stack: string } => !!x && x.c.type === 'Network.Subnet');
+    const azSet = new Set<string>();
+    for (const sub of m) {
+      const az = (sub.c.props as Record<string, unknown>).availabilityZone as string | undefined;
+      if (az) azSet.add(az);
+    }
+    return { azs: azSet.size, managed: m.length };
+  };
+  for (const s of stacks) {
+    for (const c of s.constructs) {
+      const sp = c.props as Record<string, unknown>;
+      const subnetIds = (sp.subnetIds as string[] | undefined) ?? [];
+      if (c.type === 'Compute.Container') {
+        if (subnetIds.length === 0) {
+          errors.push(
+            `Compute.Container "${c.id}" (Fargate) não tem subnetIds. Sem subnets o ECS Service não é criado ` +
+            `e NADA roda (falha silenciosa no deploy). Informe subnetIds com subnets privadas em ≥2 AZs.`,
+          );
+        }
+      }
+      if (c.type === 'Compute.Kubernetes') {
+        if (subnetIds.length === 0) {
+          errors.push(
+            `Compute.Kubernetes "${c.id}" (EKS) não tem subnetIds. EKS exige ≥2 subnets em AZs diferentes. Informe subnetIds.`,
+          );
+        } else {
+          const { azs, managed } = countManagedAzs(subnetIds);
+          if (managed > 0 && azs < RDS_MIN_AZ_COUNT) {
+            errors.push(
+              `Compute.Kubernetes "${c.id}" (EKS) usa subnets cobrindo ${azs} AZ(s). EKS exige ≥${RDS_MIN_AZ_COUNT}. ` +
+              `Use subnets com availabilityZone diferente.`,
+            );
+          }
+        }
+      }
+    }
+  }
+
   // ── F) Conta free tier: recursos/configs que a AWS rejeita no deploy ───────
   // Só valida quando o tier é explicitamente 'free' (ou ausente, que assume free).
   if (!profile || profile.accountTier === 'free') {

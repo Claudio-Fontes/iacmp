@@ -1,4 +1,4 @@
-import { Stack, Network, Database, Fn, Policy, Storage, validateSemantics, cidrContains } from '../src';
+import { Stack, Network, Database, Fn, Policy, Storage, Compute, validateSemantics, cidrContains } from '../src';
 
 function vpcStack(maxAzs = 0): Stack {
   const s = new Stack('app-vpc');
@@ -205,6 +205,28 @@ describe('validateSemantics — Load Balancer', () => {
       listeners: [{ port: 443, protocol: 'HTTPS' }], targetGroups: [{ name: 'tg', port: 80, protocol: 'HTTP' }] });
     const errors = validateSemantics([s]);
     expect(errors.some(e => e.includes('AZ'))).toBe(true);
+  });
+});
+
+describe('validateSemantics — Compute em VPC', () => {
+  test('Fargate sem subnets é pego (falha silenciosa no deploy)', () => {
+    const s = new Stack('app');
+    new Compute.Container(s, 'Api', { image: 'x:latest', cpu: 256, memory: 512, port: 3000 });
+    const errors = validateSemantics([s]);
+    expect(errors.some(e => e.includes('Api') && e.includes('subnetIds'))).toBe(true);
+  });
+
+  test('Fargate com subnets passa', () => {
+    const s = new Stack('app');
+    new Compute.Container(s, 'Api', { image: 'x:latest', cpu: 256, memory: 512, port: 3000, subnetIds: ['subnet-a', 'subnet-b'] });
+    expect(validateSemantics([s])).toEqual([]);
+  });
+
+  test('EKS sem subnets é pego', () => {
+    const s = new Stack('app');
+    new Compute.Kubernetes(s, 'Cluster', {});
+    const errors = validateSemantics([s]);
+    expect(errors.some(e => e.includes('Cluster') && e.includes('EKS'))).toBe(true);
   });
 });
 

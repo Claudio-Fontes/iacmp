@@ -144,6 +144,16 @@ export default class Synth extends Command {
       );
     }
 
+    // ── Validação de SQL nos handlers (src/) ────────────────────────────────
+    // Pega INSERT com contagem de colunas != valores — bug recorrente da IA que
+    // só apareceria em runtime ("INSERT has more target columns than expressions").
+    const sqlErrors = this.validateHandlerSql(cwd);
+    if (sqlErrors.length > 0) {
+      this.error(
+        `SQL inválido em handler(s):\n\n` + sqlErrors.map(e => `  • ${e}`).join('\n'),
+      );
+    }
+
     // ── Passada 2: sintetiza e grava só as stacks que o --stack pediu ───────
     const targetStacks = loadedStacks.filter(s => !flags.stack || s.stackName === flags.stack);
     if (targetStacks.length === 0) {
@@ -256,6 +266,49 @@ export default class Synth extends Command {
           errors.push(
             `Fn.Lambda "${c.id}": handler '${handler}' não tem origem — esperado src/${stem}.ts. ` +
             `Crie o arquivo do handler ou ajuste o campo handler.`,
+          );
+        }
+      }
+    }
+    return errors;
+  }
+
+  /**
+   * Varre src/**.ts por INSERTs com contagem de colunas != valores — bug comum
+   * em handlers gerados (ex: INSERT INTO items (a,b,c) VALUES ($1,$2)). Só sinaliza
+   * o caso single-line inequívoco para não gerar falso positivo (multi-row,
+   * subquery, multi-linha são ignorados).
+   */
+  private validateHandlerSql(cwd: string): string[] {
+    const errors: string[] = [];
+    const srcDir = path.join(cwd, 'src');
+    if (!fs.existsSync(srcDir)) return errors;
+
+    const tsFiles: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) walk(full);
+        else if (e.name.endsWith('.ts') || e.name.endsWith('.js')) tsFiles.push(full);
+      }
+    };
+    walk(srcDir);
+
+    // INSERT INTO <tabela> (col1, col2, ...) VALUES (v1, v2, ...) — uma linha.
+    const re = /INSERT\s+INTO\s+\w+\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)/gi;
+    for (const file of tsFiles) {
+      const content = fs.readFileSync(file, 'utf-8');
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(content)) !== null) {
+        const cols = m[1].split(',').map(x => x.trim()).filter(Boolean);
+        const vals = m[2].split(',').map(x => x.trim()).filter(Boolean);
+        // Só sinaliza VALUES com placeholders simples ($n ou ?) — evita falso
+        // positivo com funções/expressões que possam ter vírgulas internas.
+        const simpleVals = vals.every(v => /^(\$\d+|\?)$/.test(v));
+        if (simpleVals && cols.length !== vals.length) {
+          errors.push(
+            `${path.relative(cwd, file)}: INSERT com ${cols.length} coluna(s) (${cols.join(', ')}) ` +
+            `mas ${vals.length} valor(es) (${vals.join(', ')}). A contagem deve bater.`,
           );
         }
       }
