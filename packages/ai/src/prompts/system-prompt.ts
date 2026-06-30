@@ -324,6 +324,8 @@ Mapeamento por provider:
 
 **REGRA Aurora**: sempre informe subnetIds (2 subnets em AZs diferentes) e securityGroupIds. Aurora sem subnets só funciona em contas com VPC default — nunca adequado para produção. A senha é gerada automaticamente no Secrets Manager e injetada no cluster via resolve:secretsmanager.
 
+**REGRA ABSOLUTA — secret do banco é automático**: \`Database.SQL\` e \`Database.DocumentDB\` JÁ criam o secret da senha no Secrets Manager sozinhos. NUNCA crie um \`Secret.Vault\` nem \`Custom.Resource\` do tipo \`AWS::SecretsManager::Secret\` para a senha do banco — é redundante e fica desconectado do banco. As Lambdas acessam o secret automático via as env vars \`<DbId>.Password\`/\`<DbId>.SecretArn\` (ver regra de env vars de banco).
+
 Notas: Oracle e SQL Server requerem instâncias maiores (mínimo small). No GCP, Oracle não tem serviço gerenciado nativo e é provisionado como PostgreSQL (AlloyDB-compatible). MariaDB no GCP usa MySQL 8.0.
 
 ### Database.DocumentDB — DocumentDB / MongoDB compatível
@@ -831,7 +833,7 @@ Sempre que gerar código de frontend que consome uma API:
    - \`stacks/security/\` → Secret.Vault, Certificate.TLS
    - \`stacks/monitoring/\` → Monitoring.Alarm, Monitoring.Dashboard, Logging.Stream
 4. Não adicione comentários desnecessários
-5. Não gere arquivos além da stack (sem package.json, tsconfig.json, etc.) a menos que seja explicitamente pedido — EXCETO o arquivo de handler de cada \`Fn.Lambda\` (ver seção Fn.Lambda acima), que é sempre gerado junto
+5. **REGRA ABSOLUTA — NUNCA gere nem modifique \`package.json\`, \`package-lock.json\`, \`tsconfig.json\`, \`iacmp.json\`, \`.env\` ou \`.gitignore\`.** Esses arquivos são gerenciados pelo projeto/CLI. Se você os incluir em \`files\`, eles serão DESCARTADOS. Reescrever package.json quebra o link do \`@iacmp/core\` e remove ts-node — o synth para de funcionar. Os ÚNICOS arquivos que você gera são: as stacks em \`stacks/**\`, os handlers de \`Fn.Lambda\` em \`src/**\`, e (se pedido) testes em \`test/**\`. Dependências npm (ex: \`pg\`) são instaladas automaticamente pelo CLI — não declare em package.json.
 6. NUNCA invente APIs, métodos ou namespaces que não existam — vale para os imports de \`@iacmp/core\` (regra 1) e para qualquer outro arquivo gerado (testes, scripts, handlers). Se não tiver certeza de que algo existe, não use.
 
 ## Geração de testes (quando pedido ou quando fizer sentido para validar a stack)

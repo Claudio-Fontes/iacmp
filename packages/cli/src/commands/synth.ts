@@ -81,6 +81,7 @@ export default class Synth extends Command {
     // projeto inteiro, mesmo quando o usuário só quer sintetizar uma stack.
     const allStackFiles = findStackFiles(stacksDir);
     const loadedStacks: LoadedStack[] = [];
+    const loadErrors: string[] = [];
 
     for (const stackPath of allStackFiles) {
       const file = path.basename(stackPath);
@@ -104,7 +105,10 @@ export default class Synth extends Command {
         }
         stackModule = require(stackPath) as Record<string, unknown>;
       } catch (err) {
-        this.warn(`Não foi possível carregar ${file}: ${(err as Error).message}`);
+        // Erro de compilação/sintaxe num stack é FALHA, não warning — antes o
+        // arquivo sumia silenciosamente do output e o loop de validação da IA
+        // achava que estava tudo certo (via "Synth validado" com exit 0).
+        loadErrors.push(`${file}: ${(err as Error).message}`);
         continue;
       }
 
@@ -115,6 +119,13 @@ export default class Synth extends Command {
       }
 
       loadedStacks.push({ stackName, stack: stack as Stack });
+    }
+
+    if (loadErrors.length > 0) {
+      this.error(
+        `Falha ao carregar ${loadErrors.length} stack(s) — corrija os erros de compilação:\n\n` +
+        loadErrors.map(e => `  • ${e}`).join('\n'),
+      );
     }
 
     if (loadedStacks.length === 0) {

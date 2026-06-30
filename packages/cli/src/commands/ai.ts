@@ -172,6 +172,17 @@ async function runGeneration(
     setCache(cwd, lastUserPrompt, raw);
   }
 
+  // Arquivos de projeto/ambiente são do bootstrap, NÃO da IA. Quando a IA os
+  // reescreve (ex: package.json), ela clobbera o link do @iacmp/core e remove
+  // ts-node/typescript — e o synth para de carregar as stacks. Descarta esses
+  // arquivos da resposta antes de escrever.
+  const PROTECTED = new Set(['package.json', 'package-lock.json', 'tsconfig.json', 'iacmp.json', '.env', '.gitignore']);
+  const droppedFiles = parsed.files.filter(f => PROTECTED.has(f.path.split('/').pop() ?? ''));
+  if (droppedFiles.length > 0) {
+    parsed.files = parsed.files.filter(f => !PROTECTED.has(f.path.split('/').pop() ?? ''));
+    console.log(chalk.dim(`  (ignorando ${droppedFiles.map(f => f.path).join(', ')} — gerenciados pelo projeto, não pela IA)`));
+  }
+
   const tsFiles = parsed.files.filter(f => f.path.endsWith('.ts'));
   if (tsFiles.length > 0) {
     let result = validateTypeScript(tsFiles, cwd);
