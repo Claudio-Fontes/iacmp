@@ -88,14 +88,18 @@ export function ensureProjectInitialized(cwd: string, options: BootstrapOptions 
     // Usa o MESMO @iacmp/core que este CLI resolve. Em um checkout de dev do
     // monorepo, isso é o core local (mais novo que o publicado), evitando que o
     // projeto baixe uma versão defasada do npm e o synth rejeite engines/recursos
-    // que o CLI atual já suporta. Em produção (npm -g), resolve o core publicado
-    // normalmente. Sem pin de versão: o synth detecta a versão do TS instalada.
+    // que o CLI atual já suporta. Em produção (npm -g), resolve o core publicado.
     const coreSpec = resolveCoreInstallSpec();
-    execSync(`npm install ${coreSpec} ts-node typescript @types/node`, {
+    // typescript fixado em ~5.5 (igual o `iacmp init`): o projeto pinar seu build
+    // tool é prática normal e estável. A TS mais nova (6.x) trata a deprecation
+    // de moduleResolution:node10 como ERRO e muda a resolução de @types, quebrando
+    // o `tsc` dos handlers. O synth (ts-node) detecta dinamicamente a versão via
+    // ts-compat — independente deste pin.
+    execSync(`npm install ${coreSpec} ts-node typescript@~5.5.0 @types/node`, {
       cwd,
       stdio: 'pipe',
     });
-    created.push(`deps: @iacmp/core${coreSpec.startsWith('@') ? '' : ' (local)'}, ts-node, typescript, @types/node`);
+    created.push(`deps: @iacmp/core${coreSpec.startsWith('@') ? '' : ' (local)'}, ts-node, typescript@~5.5, @types/node`);
   }
 
   return { bootstrapped: true, created };
@@ -136,7 +140,13 @@ function tsconfigContent(): string {
         module: 'CommonJS',
         moduleResolution: 'node',
         lib: ['es2022'],
-        strict: true,
+        // Leniente de propósito: os handlers em src/ são gerados pela IA e
+        // importam libs (pg, ioredis, aws-sdk...) que nem sempre têm @types
+        // instalados. Strict aqui bloquearia o build por "implicit any" mesmo
+        // com o JS de saída perfeitamente válido para o Lambda. O que importa é
+        // emitir dist/*.js correto, não type-check rigoroso de código gerado.
+        strict: false,
+        noImplicitAny: false,
         esModuleInterop: true,
         skipLibCheck: true,
         strictPropertyInitialization: false,
