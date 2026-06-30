@@ -8,36 +8,36 @@ export interface PromptEntry {
 
 export const PROMPT_LIBRARY: PromptEntry[] = [
   {
-    id: '01-react-crud-aurora',
-    title: 'App React CRUD + Aurora + CloudFront',
+    id: '01-react-crud-rds',
+    title: 'App React CRUD + RDS PostgreSQL + CloudFront',
     category: 'Fullstack',
-    description: 'Aplicação React completa com backend CRUD, Aurora MySQL, VPC, CloudFront e alta disponibilidade.',
-    prompt: `Crie uma infraestrutura completa na AWS para uma aplicação web CRUD com as seguintes características:
+    description: 'Aplicação React completa com backend CRUD, RDS PostgreSQL (free tier), VPC e CloudFront.',
+    prompt: `Crie uma infraestrutura completa na AWS para uma aplicação web CRUD (conta AWS free tier) com as seguintes características:
 
 Frontend: aplicação React (SPA), servida via S3 + CloudFront com HTTPS
 
 Backend: API REST com os métodos GET (listar todos), GET por ID, POST, PUT e DELETE — cada método em uma Lambda separada, todas dentro de uma VPC privada
 
-Banco de dados: Aurora MySQL com 2 instâncias (writer + reader) em subnets privadas, criptografado, backup de 7 dias
+Banco de dados: RDS PostgreSQL (db.t3.micro, instância única) em subnets privadas — SEM criptografia e SEM backup (free tier não suporta)
 
 Rede:
 - VPC com CIDR 10.0.0.0/16
-- 2 subnets privadas em AZs diferentes (para Aurora e Lambdas)
+- 2 subnets privadas em AZs diferentes (para o RDS e as Lambdas)
 - Security Group para as Lambdas (egress liberado, sem ingress direto)
-- Security Group para o Aurora (ingress na porta 3306 apenas da VPC)
+- Security Group para o RDS (ingress na porta 5432 apenas da VPC)
 
 Segurança:
 - Cada Lambda com Policy IAM mínima (só as actions necessárias)
-- Aurora com senha gerada automaticamente no Secrets Manager
+- RDS com senha gerada automaticamente no Secrets Manager
 - Lambdas acessam o secret via Policy IAM com secretsmanager:GetSecretValue
 - CloudFront com HTTPS obrigatório (redirect-to-https)
 - S3 privado, acesso só via CloudFront (OAC)
 
 Alta disponibilidade:
-- Aurora com 2 instâncias em AZs diferentes
+- RDS em subnet group cobrindo 2 AZs
 - Lambdas em múltiplas AZs (2 subnets)
 
-Gere também os handlers Node.js (TypeScript) para cada Lambda com lógica real de conexão ao Aurora via secret do Secrets Manager e operações CRUD na tabela items (campos: id, name, description, createdAt).`,
+Gere também os handlers Node.js (TypeScript) para cada Lambda com lógica real de conexão ao PostgreSQL via secret do Secrets Manager e operações CRUD na tabela items (campos: id, name, description, createdAt).`,
   },
   {
     id: '02-serverless-api-dynamodb',
@@ -163,7 +163,7 @@ Gere o handler TypeScript com lógica real de cache usando a biblioteca ioredis.
     prompt: `Crie uma infraestrutura de API com banco relacional na AWS com:
 
 - VPC com CIDR 10.0.0.0/16 e 2 subnets privadas
-- RDS PostgreSQL (db.t3.micro) em subnets privadas, criptografado, senha no Secrets Manager
+- RDS PostgreSQL (db.t3.micro) em subnets privadas, senha no Secrets Manager (conta free tier: sem criptografia e sem backup)
 - Security Group para Lambda e Security Group para RDS (ingress 5432 só do SG da Lambda)
 - Lambdas dentro da VPC: ListUsersFn, GetUserFn, CreateUserFn, UpdateUserFn, DeleteUserFn
 - API Gateway REST /users com rotas CRUD completas
@@ -276,11 +276,11 @@ Adicione em warnings os custos do WAF (USD 5/mês por WebACL + USD 1/mês por re
     id: '16-documentdb-api',
     title: 'Document Store com DocumentDB',
     category: 'Backend',
-    description: 'API com DocumentDB (compatível MongoDB) para dados semi-estruturados.',
+    description: 'API com DocumentDB (compatível MongoDB) para dados semi-estruturados. ATENÇÃO: DocumentDB NÃO é free tier (instância mínima db.t3.medium é paga).',
     prompt: `Crie uma infraestrutura de document store na AWS com:
 
 - VPC com CIDR 10.0.0.0/16 e 2 subnets privadas
-- Database.DocumentDB com 1 instância (db.t3.medium), criptografado, backup 7 dias, em subnets privadas
+- Database.DocumentDB com 1 instância (db.t3.medium) em subnets privadas — sem criptografia e sem backup (NOTA: DocumentDB não é free tier, gera custo)
 - Security Group para Lambda (egress liberado)
 - Security Group para DocumentDB (ingress na porta 27017 só do SG da Lambda)
 - Lambdas dentro da VPC com conexão ao DocumentDB: ListDocsFn, GetDocFn, CreateDocFn, UpdateDocFn, DeleteDocFn
@@ -350,7 +350,7 @@ Rede:
 - Security Groups separados para Lambda, RDS e Redis com regras mínimas
 
 Banco de dados:
-- RDS PostgreSQL (db.t3.micro) em subnets privadas, criptografado, senha no Secrets Manager, backup 7 dias
+- RDS PostgreSQL (db.t3.micro) em subnets privadas, senha no Secrets Manager (conta free tier: sem criptografia e sem backup)
 
 Cache:
 - ElastiCache Redis (cache.t3.micro) com TTL configurável para cache de leituras
