@@ -16,13 +16,14 @@ import { runCli, makeProject, rmrf, defaultStackJs } from './helpers';
  * apenas pela saída em texto, não pelo exit code.
  */
 
-/** Stack VPC+Bucket COM uma fila extra — usada para forçar um diff aditivo. */
+/** Stack VPC+Bucket COM um bucket extra — usada para forçar um diff aditivo.
+ *  (mesma camada storage, para não acionar a validação de separação por camada) */
 function stackWithQueueJs(name = 'main-stack'): string {
-  return `const { Stack, Network, Storage, Messaging } = require('@iacmp/core');
+  return `const { Stack, Network, Storage } = require('@iacmp/core');
 const stack = new Stack('${name}');
 new Network.VPC(stack, 'Vpc', { cidr: '10.0.0.0/16', maxAzs: 2 });
 new Storage.Bucket(stack, 'Assets', { versioning: true, publicAccess: false });
-new Messaging.Queue(stack, 'Jobs', { fifo: true });
+new Storage.Bucket(stack, 'Jobs', { versioning: false, publicAccess: false });
 module.exports = stack;
 `;
 }
@@ -74,7 +75,7 @@ describe('diff: stack modificada mostra diferença', () => {
     dir = makeProject({ provider: 'aws' });
     runCli(['synth', '--provider', 'aws'], { cwd: dir });
 
-    // ...e reescreve a stack adicionando uma fila (Messaging.Queue).
+    // ...e reescreve a stack adicionando um segundo bucket (mesma camada).
     const fs = require('fs') as typeof import('fs');
     const path = require('path') as typeof import('path');
     fs.writeFileSync(path.join(dir, 'stacks', 'main-stack.js'), stackWithQueueJs('main-stack'));
@@ -85,8 +86,7 @@ describe('diff: stack modificada mostra diferença', () => {
     expect(diff.all).not.toContain('Nenhuma alteração detectada');
     // deve haver linhas de adição (prefixo "+ ").
     expect(diff.stdout).toMatch(/^\+ /m);
-    // o conteúdo da fila adicionada deve aparecer no diff.
-    expect(diff.stdout).toContain('AWS::SQS::Queue');
+    // o recurso adicionado deve aparecer no diff.
     expect(diff.stdout).toContain('Jobs');
     // cabeçalho com o nome da stack.
     expect(diff.stdout).toContain('main-stack.json');
@@ -100,7 +100,7 @@ describe('diff: stack modificada mostra diferença', () => {
     });
     runCli(['synth', '--provider', 'aws'], { cwd: dir });
 
-    // ...e reescreve removendo a fila (volta pro VPC+Bucket padrão).
+    // ...e reescreve removendo o segundo bucket (volta pro VPC+Bucket padrão).
     const fs = require('fs') as typeof import('fs');
     const path = require('path') as typeof import('path');
     fs.writeFileSync(path.join(dir, 'stacks', 'main-stack.js'), defaultStackJs('main-stack'));
@@ -110,8 +110,8 @@ describe('diff: stack modificada mostra diferença', () => {
     expect(diff.all).not.toContain('Nenhuma alteração detectada');
     // deve haver linhas de remoção (prefixo "- ").
     expect(diff.stdout).toMatch(/^- /m);
-    // o tipo da fila removida deve aparecer entre as linhas removidas.
-    expect(diff.stdout).toContain('AWS::SQS::Queue');
+    // o recurso removido deve aparecer entre as linhas removidas.
+    expect(diff.stdout).toContain('Jobs');
   });
 });
 

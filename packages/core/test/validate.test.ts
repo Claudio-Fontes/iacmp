@@ -1,4 +1,4 @@
-import { Stack, Network, Database, Fn, Policy, Storage, Compute, validateSemantics, cidrContains } from '../src';
+import { Stack, Network, Database, Fn, Policy, Storage, Compute, Secret, validateSemantics, cidrContains } from '../src';
 
 function vpcStack(maxAzs = 0): Stack {
   const s = new Stack('app-vpc');
@@ -205,6 +205,39 @@ describe('validateSemantics — Load Balancer', () => {
       listeners: [{ port: 443, protocol: 'HTTPS' }], targetGroups: [{ name: 'tg', port: 80, protocol: 'HTTP' }] });
     const errors = validateSemantics([s]);
     expect(errors.some(e => e.includes('AZ'))).toBe(true);
+  });
+});
+
+describe('validateSemantics — separação por camada', () => {
+  test('monolito com 3+ camadas (security+compute+network) é pego (caso openai28)', () => {
+    const s = new Stack('api-backend');
+    new Secret.Vault(s, 'JwtSecret', { description: 'jwt' });
+    new Fn.Lambda(s, 'AuthFn', { runtime: 'nodejs20', handler: 'h.handler', code: '.' });
+    new Fn.ApiGateway(s, 'Api', { name: 'API', routes: [{ method: 'GET', path: '/x', lambdaId: 'AuthFn' }] });
+    const errors = validateSemantics([s]);
+    expect(errors.some(e => e.includes('monolito') && e.includes('api-backend'))).toBe(true);
+  });
+
+  test('2 camadas (compute+database) é aceitável — não bloqueia', () => {
+    const s = new Stack('app');
+    new Fn.Lambda(s, 'Fn', { runtime: 'nodejs20', handler: 'h.handler', code: '.' });
+    new Database.DynamoDB(s, 'Table', { partitionKey: 'id' });
+    expect(validateSemantics([s]).filter(e => e.includes('monolito'))).toEqual([]);
+  });
+
+  test('uma camada (só network) não bloqueia mesmo com vários recursos', () => {
+    const s = new Stack('net');
+    new Network.VPC(s, 'Vpc', { cidr: '10.0.0.0/16', maxAzs: 0 });
+    new Network.Subnet(s, 'Sub', { vpcId: 'Vpc', cidr: '10.0.1.0/24', availabilityZone: 'us-east-1a' });
+    new Network.SecurityGroup(s, 'Sg', { vpcId: 'Vpc' });
+    expect(validateSemantics([s]).filter(e => e.includes('monolito'))).toEqual([]);
+  });
+
+  test('stacks separadas (cada camada num arquivo) passa', () => {
+    const net = new Stack('vpc'); new Network.VPC(net, 'Vpc', { cidr: '10.0.0.0/16', maxAzs: 0 });
+    const sec = new Stack('secret'); new Secret.Vault(sec, 'S', { description: 'x' });
+    const comp = new Stack('api'); new Fn.Lambda(comp, 'Fn', { runtime: 'nodejs20', handler: 'h.handler', code: '.' });
+    expect(validateSemantics([net, sec, comp]).filter(e => e.includes('monolito'))).toEqual([]);
   });
 });
 

@@ -595,6 +595,7 @@ new Secret.Vault(stack, 'LogicalId', {
 });
 export default stack;
 \`\`\`
+**REGRA ABSOLUTA — referenciar o ARN de um Secret.Vault:** \`Secret.Vault\` NÃO tem propriedade \`.secretArn\`/\`.secretId\` em código TypeScript — acessá-las gera \`undefined\` → \`null\` no template → deploy falha. Para passar o ARN do secret (na env var de uma Lambda OU no \`resources\` de uma Policy.IAM), use a STRING \`'<LogicalId>.SecretArn'\` (ex: \`'JwtSecret.SecretArn'\`) — o synth resolve automaticamente para o ARN real (Ref local ou Fn::ImportValue cross-stack). Exemplo: \`environment: { SECRET_ARN: 'JwtSecret.SecretArn' }\` e \`resources: ['JwtSecret.SecretArn']\`.
 
 ### Certificate.TLS — ACM / Key Vault Cert / Certificate Manager
 \`\`\`typescript

@@ -297,6 +297,38 @@ export function validateSemantics(stacks: Stack[], profile?: EnvironmentProfile)
     }
   }
 
+  // ── J) Separação por camada: uma stack não deve misturar 3+ camadas âncora ─
+  // Cada construct "âncora" pertence a uma camada. Uma única stack com âncoras
+  // de 3+ camadas distintas é um monolito (ex: VPC + RDS + Lambda + Secret) —
+  // dificulta deploy/destroy por camada. 1-2 camadas pode ser legítimo (ex:
+  // Lambda + DynamoDB), por isso o limiar é 3 — só pega o caso inequívoco.
+  const ANCHOR_LAYER: Record<string, string> = {
+    'Network.VPC': 'network', 'Network.LoadBalancer': 'network', 'Network.CDN': 'network', 'Function.ApiGateway': 'network',
+    'Database.SQL': 'database', 'Database.DocumentDB': 'database', 'Database.DynamoDB': 'database',
+    'Fn.Lambda': 'compute', 'Function.Lambda': 'compute', 'Compute.Container': 'compute', 'Compute.Instance': 'compute', 'Compute.Kubernetes': 'compute', 'Compute.AutoScaling': 'compute',
+    'Storage.Bucket': 'storage', 'Storage.FileSystem': 'storage', 'Storage.Archive': 'storage',
+    'Secret.Vault': 'security', 'Certificate.TLS': 'security',
+    'Cache.Redis': 'cache', 'Cache.Memcached': 'cache',
+    'Messaging.Queue': 'messaging', 'Messaging.Topic': 'messaging', 'Events.EventBridge': 'messaging',
+  };
+  for (const s of stacks) {
+    const layers = new Map<string, string[]>(); // camada → tipos encontrados
+    for (const c of s.constructs) {
+      const layer = ANCHOR_LAYER[c.type];
+      if (!layer) continue;
+      const list = layers.get(layer) ?? [];
+      list.push(c.type);
+      layers.set(layer, list);
+    }
+    if (layers.size >= 3) {
+      errors.push(
+        `Stack "${s.name}" mistura ${layers.size} camadas (${[...layers.keys()].join(', ')}) num único arquivo — é um monolito. ` +
+        `Separe em stacks distintas por camada (stacks/network/, stacks/database/, stacks/compute/, stacks/storage/, stacks/security/, ...). ` +
+        `Cada camada em seu próprio arquivo permite deploy/destroy independente.`,
+      );
+    }
+  }
+
   return errors;
 }
 
