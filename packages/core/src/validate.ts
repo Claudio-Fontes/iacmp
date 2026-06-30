@@ -188,6 +188,41 @@ export function validateSemantics(stacks: Stack[], profile?: EnvironmentProfile)
     }
   }
 
+  // ── H) Load Balancer 'application' (ALB) exige subnets em ≥2 AZs ───────────
+  for (const s of stacks) {
+    for (const c of s.constructs) {
+      if (c.type !== 'Network.LoadBalancer') continue;
+      const lp = c.props as Record<string, unknown>;
+      const type = (lp.type as string) ?? 'application';
+      if (type !== 'application') continue; // NLB tem regras diferentes — fora do escopo
+      const subnetIds = (lp.subnetIds as string[] | undefined) ?? [];
+
+      if (subnetIds.length === 0) {
+        errors.push(
+          `Network.LoadBalancer "${c.id}" (application/ALB) não tem subnetIds. ` +
+          `Um ALB exige subnets em ≥2 Availability Zones. Informe subnetIds com 2 subnets em AZs diferentes.`,
+        );
+        continue;
+      }
+      const managed = subnetIds
+        .map(sid => byId.get(sid))
+        .filter((x): x is { c: BaseConstruct; stack: string } => !!x && x.c.type === 'Network.Subnet');
+      if (managed.length > 0) {
+        const azs = new Set<string>();
+        for (const sub of managed) {
+          const az = (sub.c.props as Record<string, unknown>).availabilityZone as string | undefined;
+          if (az) azs.add(az);
+        }
+        if (azs.size < RDS_MIN_AZ_COUNT) {
+          errors.push(
+            `Network.LoadBalancer "${c.id}" (ALB) usa subnets que cobrem ${azs.size} AZ(s) distinta(s). ` +
+            `ALB exige ≥${RDS_MIN_AZ_COUNT}. Use subnets com availabilityZone diferente (ex: us-east-1a e us-east-1b).`,
+          );
+        }
+      }
+    }
+  }
+
   // ── F) Conta free tier: recursos/configs que a AWS rejeita no deploy ───────
   // Só valida quando o tier é explicitamente 'free' (ou ausente, que assume free).
   if (!profile || profile.accountTier === 'free') {

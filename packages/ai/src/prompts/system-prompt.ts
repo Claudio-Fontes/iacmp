@@ -426,6 +426,8 @@ export default stack;
 
 ### Function.ApiGateway — API Gateway V2 / API Management / Cloud Endpoints
 
+**REGRA ABSOLUTA — API REST/HTTP = Fn.ApiGateway, NUNCA Network.LoadBalancer.** Quando o usuário pede uma "API REST", "API HTTP", "endpoints", "rotas GET/POST/PUT/DELETE" servidas por Lambdas, o ponto de entrada é SEMPRE um \`Fn.ApiGateway\` com \`routes[]\` apontando para os \`lambdaId\`. NUNCA use \`Network.LoadBalancer\` (ALB) para expor Lambdas — ALB é para conteiners/EC2 (Compute.Container, Compute.Instance), não para Lambda CRUD. Confundir os dois deixa a API sem ponto de entrada HTTP funcional.
+
 O ApiGateway é um construct SEPARADO das Lambdas — um único gateway pode agregar rotas de múltiplas Lambdas. SEMPRE gere o Fn.ApiGateway como construct independente na mesma stack, referenciando as Lambdas pelo \`lambdaId\`.
 
 \`\`\`typescript

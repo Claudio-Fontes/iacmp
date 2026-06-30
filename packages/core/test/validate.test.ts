@@ -176,6 +176,38 @@ describe('validateSemantics — refs de env var', () => {
   });
 });
 
+describe('validateSemantics — Load Balancer', () => {
+  test('ALB sem subnetIds é pego (caso openai21)', () => {
+    const s = new Stack('app');
+    new Network.VPC(s, 'AppVpc', { cidr: '10.0.0.0/16', maxAzs: 0 });
+    new Network.LoadBalancer(s, 'AppLB', { vpcId: 'AppVpc', type: 'application',
+      listeners: [{ port: 443, protocol: 'HTTPS' }], targetGroups: [{ name: 'tg', port: 80, protocol: 'HTTP' }] });
+    const errors = validateSemantics([s]);
+    expect(errors.some(e => e.includes('AppLB') && e.includes('subnetIds'))).toBe(true);
+  });
+
+  test('ALB com subnets em 2 AZs passa', () => {
+    const s = new Stack('app');
+    new Network.VPC(s, 'AppVpc', { cidr: '10.0.0.0/16', maxAzs: 0 });
+    new Network.Subnet(s, 'Pub1', { vpcId: 'AppVpc', cidr: '10.0.1.0/24', public: true, availabilityZone: 'us-east-1a' });
+    new Network.Subnet(s, 'Pub2', { vpcId: 'AppVpc', cidr: '10.0.2.0/24', public: true, availabilityZone: 'us-east-1b' });
+    new Network.LoadBalancer(s, 'AppLB', { vpcId: 'AppVpc', type: 'application', subnetIds: ['Pub1', 'Pub2'],
+      listeners: [{ port: 443, protocol: 'HTTPS' }], targetGroups: [{ name: 'tg', port: 80, protocol: 'HTTP' }] });
+    expect(validateSemantics([s])).toEqual([]);
+  });
+
+  test('ALB com subnets na mesma AZ é pego', () => {
+    const s = new Stack('app');
+    new Network.VPC(s, 'AppVpc', { cidr: '10.0.0.0/16', maxAzs: 0 });
+    new Network.Subnet(s, 'Pub1', { vpcId: 'AppVpc', cidr: '10.0.1.0/24', public: true, availabilityZone: 'us-east-1a' });
+    new Network.Subnet(s, 'Pub2', { vpcId: 'AppVpc', cidr: '10.0.2.0/24', public: true, availabilityZone: 'us-east-1a' });
+    new Network.LoadBalancer(s, 'AppLB', { vpcId: 'AppVpc', type: 'application', subnetIds: ['Pub1', 'Pub2'],
+      listeners: [{ port: 443, protocol: 'HTTPS' }], targetGroups: [{ name: 'tg', port: 80, protocol: 'HTTP' }] });
+    const errors = validateSemantics([s]);
+    expect(errors.some(e => e.includes('AZ'))).toBe(true);
+  });
+});
+
 describe('validateSemantics — free tier', () => {
   function dbOnly(props: any): Stack[] {
     const net = new Stack('net');

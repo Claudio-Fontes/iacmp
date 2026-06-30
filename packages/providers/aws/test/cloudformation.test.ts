@@ -614,6 +614,7 @@ describe('AWSProvider', () => {
     test('Network.LoadBalancer target group → VpcId real (props.vpcId), não string vazia', () => {
       new Network.LoadBalancer(stack, 'Alb', {
         vpcId: 'vpc-real123',
+        subnetIds: ['subnet-a', 'subnet-b'],
         targetGroups: [{ name: 'api-tg', port: 80, protocol: 'HTTP' }],
       });
       const tpl = provider.synthesize(stack) as any;
