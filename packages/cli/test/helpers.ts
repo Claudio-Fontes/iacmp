@@ -54,6 +54,8 @@ export interface TempProjectOptions {
   noStacks?: boolean;
   /** Se true, NÃO cria iacmp.json (para testar "projeto não inicializado"). */
   noConfig?: boolean;
+  /** Arquivos arbitrários (path relativo à raiz -> conteúdo), ex: 'src/index.ts'. */
+  files?: Record<string, string>;
 }
 
 export function makeProject(opts: TempProjectOptions = {}): string {
@@ -74,6 +76,12 @@ export function makeProject(opts: TempProjectOptions = {}): string {
       fs.mkdirSync(path.dirname(p), { recursive: true });
       fs.writeFileSync(p, content);
     }
+  }
+
+  for (const [rel, content] of Object.entries(opts.files ?? {})) {
+    const p = path.join(dir, rel);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, content);
   }
 
   return dir;

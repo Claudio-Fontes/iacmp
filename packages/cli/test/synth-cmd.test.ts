@@ -220,6 +220,7 @@ new Fn.ApiGateway(stack, 'Api', {
 module.exports = stack;
 `,
         },
+        files: { 'src/index.ts': 'export const handler = async () => ({ statusCode: 200 });\n' },
       });
 
       // Sem --stack: sintetiza as duas juntas — exatamente o caso real do
@@ -253,6 +254,7 @@ new Fn.ApiGateway(stack, 'Api', {
 module.exports = stack;
 `,
         },
+        files: { 'src/index.ts': 'export const handler = async () => ({ statusCode: 200 });\n' },
       });
 
       const r = runCli(['synth', '--provider', 'aws', '--stack', 'network'], { cwd: dir });
@@ -283,6 +285,41 @@ module.exports = stack;
       const r = runCli(['synth', '--provider', 'aws'], { cwd: dir });
       expect(r.status).not.toBe(0);
       expect(r.all).toContain('NaoExiste');
+    });
+
+    test('Fn.Lambda com handler sem src/ correspondente → synth falha (não Cannot find module no deploy)', () => {
+      dir = makeProject({
+        provider: 'aws',
+        stacks: {
+          'compute.js': `const { Stack, Fn } = require('@iacmp/core');
+const stack = new Stack('proj-lambda');
+new Fn.Lambda(stack, 'WorkerFn', { runtime: 'nodejs20', handler: 'dist/worker.handler', code: '.' });
+module.exports = stack;
+`,
+        },
+        // NÃO cria src/worker.ts
+      });
+
+      const r = runCli(['synth', '--provider', 'aws'], { cwd: dir });
+      expect(r.status).not.toBe(0);
+      expect(r.all).toContain('src/worker.ts');
+    });
+
+    test('Fn.Lambda com handler e src/ presente → synth ok', () => {
+      dir = makeProject({
+        provider: 'aws',
+        stacks: {
+          'compute.js': `const { Stack, Fn } = require('@iacmp/core');
+const stack = new Stack('proj-lambda');
+new Fn.Lambda(stack, 'WorkerFn', { runtime: 'nodejs20', handler: 'dist/worker.handler', code: '.' });
+module.exports = stack;
+`,
+        },
+        files: { 'src/worker.ts': 'export const handler = async () => ({ statusCode: 200 });\n' },
+      });
+
+      const r = runCli(['synth', '--provider', 'aws'], { cwd: dir });
+      expect(r.status).toBe(0);
     });
   });
 

@@ -793,9 +793,9 @@ SQL parametrizado usa \`$1, $2\` (não \`?\`).
 
 **REGRA ABSOLUTA — code e handler**: Lambda com dependências npm → \`code: '.'\` (raiz do projeto, inclui node_modules). Handler com TypeScript compilado → prefixo \`dist/\`: ex. \`handler: 'dist/listItems.handler'\`.
 
-**REGRA ABSOLUTA — CREATE TABLE**: o handler \`listItems\` (ou equivalente de listagem) deve incluir:
-\`await db.query(\`CREATE TABLE IF NOT EXISTS items (id SERIAL PRIMARY KEY, name TEXT NOT NULL, created_at TIMESTAMP DEFAULT NOW())\`)\`
-para criar a tabela na primeira execução.
+**REGRA ABSOLUTA — CREATE TABLE com TODOS os campos da spec**: o handler de listagem deve criar a tabela na primeira execução com TODAS as colunas que o usuário pediu — não omita nenhuma. Se a spec diz "tabela items (campos: id, name, description, createdAt)", a tabela DEVE ter as 4 colunas:
+\`await db.query(\`CREATE TABLE IF NOT EXISTS items (id SERIAL PRIMARY KEY, name TEXT NOT NULL, description TEXT, created_at TIMESTAMP DEFAULT NOW())\`)\`
+E os handlers de create/update/get/list DEVEM ler e escrever TODAS essas colunas (ex: o INSERT inclui name E description; o SELECT retorna todas). Omitir um campo da spec é erro grave — o CRUD fica incompleto.
 
 ## Apps frontend (React, Vue, etc.)
 

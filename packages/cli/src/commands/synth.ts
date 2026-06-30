@@ -132,6 +132,18 @@ export default class Synth extends Command {
       this.error('Nenhuma stack encontrada em stacks/');
     }
 
+    // ── Validação handler ↔ arquivo de origem ───────────────────────────────
+    // Um Fn.Lambda com handler 'dist/listItems.handler' precisa de src/listItems.ts
+    // (que compila para dist/listItems.js). Sem isso, o deploy falha em runtime
+    // com "Cannot find module". Pega o descompasso aqui, em synth-time.
+    const handlerErrors = this.validateHandlerFiles(loadedStacks, cwd);
+    if (handlerErrors.length > 0) {
+      this.error(
+        `Handler(s) de Lambda sem arquivo de origem correspondente:\n\n` +
+        handlerErrors.map(e => `  • ${e}`).join('\n'),
+      );
+    }
+
     // ── Passada 2: sintetiza e grava só as stacks que o --stack pediu ───────
     const targetStacks = loadedStacks.filter(s => !flags.stack || s.stackName === flags.stack);
     if (targetStacks.length === 0) {
@@ -204,6 +216,51 @@ export default class Synth extends Command {
         this.error(`Falha ao sintetizar '${stackName}': ${(err as Error).message}`);
       }
     }
+  }
+
+  /**
+   * Para cada Fn.Lambda com runtime Node, confirma que existe um arquivo de
+   * origem correspondente ao `handler`. Convenção: `handler: '<dir>/<arquivo>.<export>'`
+   * (ou `'<arquivo>.<export>'`) → o código vem de `src/<arquivo>.ts`, que compila
+   * para `dist/<arquivo>.js`. Se nem o fonte nem o compilado existem, o deploy
+   * falharia em runtime com "Cannot find module".
+   */
+  private validateHandlerFiles(loaded: LoadedStack[], cwd: string): string[] {
+    const errors: string[] = [];
+    // code props que seguem a convenção src/→dist/ (raiz do projeto ou dist/).
+    const CONVENTION_CODE = new Set(['.', './', 'dist', 'dist/', './dist', './dist/', 'src', 'src/', './src', './src/']);
+
+    for (const { stack } of loaded) {
+      for (const c of stack.constructs) {
+        if (c.type !== 'Function.Lambda') continue;
+        const props = c.props as Record<string, unknown>;
+        const runtime = (props.runtime as string) ?? 'nodejs20';
+        if (!runtime.startsWith('nodejs')) continue; // só Node por ora
+        const handler = props.handler as string | undefined;
+        const code = props.code as string | undefined;
+        if (!handler || typeof code !== 'string') continue;
+        if (!CONVENTION_CODE.has(code)) continue; // code aponta pra outro lugar — não inferimos
+
+        // 'dist/listItems.handler' → módulo 'dist/listItems' → stem 'listItems'
+        const modulePath = handler.replace(/\.[^./]+$/, ''); // tira o .export final
+        const stem = modulePath.replace(/^(\.\/)?(dist|src)\//, '');
+
+        const candidates = [
+          path.join(cwd, 'src', `${stem}.ts`),
+          path.join(cwd, 'src', `${stem}.js`),
+          path.join(cwd, 'dist', `${stem}.js`),
+          path.join(cwd, `${modulePath}.js`),
+          path.join(cwd, `${modulePath}.ts`),
+        ];
+        if (!candidates.some(p => fs.existsSync(p))) {
+          errors.push(
+            `Fn.Lambda "${c.id}": handler '${handler}' não tem origem — esperado src/${stem}.ts. ` +
+            `Crie o arquivo do handler ou ajuste o campo handler.`,
+          );
+        }
+      }
+    }
+    return errors;
   }
 
   private resolveTsNode(projectDir: string): string | null {
