@@ -28,6 +28,28 @@ import { ensureProjectInitialized } from '../bootstrap';
 
 type AskFn = (question: string) => Promise<string>;
 
+// Arquivos gerenciados pelo projeto/bootstrap — a IA nunca deve gerá-los.
+const PROTECTED_FILES = new Set(['package.json', 'package-lock.json', 'tsconfig.json', 'iacmp.json', '.env', '.gitignore']);
+
+function stripProtectedFiles(parsed: AIGeneratedResponse): void {
+  const dropped = parsed.files.filter(f => PROTECTED_FILES.has(f.path.split('/').pop() ?? ''));
+  if (dropped.length > 0) {
+    parsed.files = parsed.files.filter(f => !PROTECTED_FILES.has(f.path.split('/').pop() ?? ''));
+    console.log(chalk.dim(`  (ignorando ${dropped.map(f => f.path).join(', ')} — gerenciados pelo projeto, não pela IA)`));
+  }
+}
+
+// Prompt de auto-revisão: a IA critica a própria resposta contra o pedido,
+// focando nos modos de falha que TS/synth NÃO pegam (erros de intenção).
+const REVIEW_PROMPT = (fileCount: number): string =>
+  `Antes de finalizar, revise sua resposta anterior como um engenheiro sênior revisando um Pull Request, comparando-a com o pedido ORIGINAL do usuário. Verifique CADA item:\n` +
+  `1. REQUISITOS: todo requisito explícito do pedido está implementado? Liste mentalmente o que faltou.\n` +
+  `2. PONTO DE ENTRADA HTTP (crítico): uma "API REST/HTTP" servida por Lambdas EXIGE um Fn.ApiGateway com routes[] apontando para cada lambdaId. Se NENHUM arquivo tiver Fn.ApiGateway, a API está INCOMPLETA — CRIE stacks/network/api-gateway-stack.ts com Fn.ApiGateway (type: 'HTTP', cors: true, e uma rota por método/Lambda). NUNCA use Network.LoadBalancer para isso (ALB é para containers/EC2).\n` +
+  `3. CRUD COMPLETO: todas as operações pedidas (listar, obter, criar, atualizar, deletar) existem e estão wireadas nas rotas.\n` +
+  `4. SCHEMA E SQL: a tabela tem TODOS os campos da spec; o handler de listagem cria a tabela (CREATE TABLE IF NOT EXISTS) com todos os campos; INSERT/UPDATE leem e escrevem todos os campos; a contagem de colunas BATE com a de valores ($1,$2,...); SQL parametrizado.\n` +
+  `5. REFERÊNCIAS: env vars de banco usam o id real do Database (ex: AppDB.Endpoint); rotas usam os lambdaId reais.\n\n` +
+  `Se encontrar QUALQUER defeito, retorne o JSON COMPLETO CORRIGIDO com os ${fileCount} arquivo(s) (todos, não só os corrigidos). Se estiver tudo perfeito, retorne exatamente o mesmo JSON. Responda APENAS com o JSON, sem texto antes ou depois.`;
+
 function resolveAIProvider(): AIProvider {
   const model = process.env['IACMP_MODEL'];
   const preferred = process.env['IACMP_PROVIDER_AI']?.toLowerCase();
@@ -176,11 +198,46 @@ async function runGeneration(
   // reescreve (ex: package.json), ela clobbera o link do @iacmp/core e remove
   // ts-node/typescript — e o synth para de carregar as stacks. Descarta esses
   // arquivos da resposta antes de escrever.
-  const PROTECTED = new Set(['package.json', 'package-lock.json', 'tsconfig.json', 'iacmp.json', '.env', '.gitignore']);
-  const droppedFiles = parsed.files.filter(f => PROTECTED.has(f.path.split('/').pop() ?? ''));
-  if (droppedFiles.length > 0) {
-    parsed.files = parsed.files.filter(f => !PROTECTED.has(f.path.split('/').pop() ?? ''));
-    console.log(chalk.dim(`  (ignorando ${droppedFiles.map(f => f.path).join(', ')} — gerenciados pelo projeto, não pela IA)`));
+  stripProtectedFiles(parsed);
+
+  // ── Auto-revisão semântica ────────────────────────────────────────────────
+  // O TS/synth pegam erros estruturais, mas NÃO erros de lógica/intenção
+  // (construct errado — ALB no lugar de ApiGateway, CRUD incompleto, schema
+  // faltando, SQL ruim). Aqui a IA revisa a própria resposta contra o pedido,
+  // como um sênior revisando PR, e devolve o JSON corrigido. Pula no cache
+  // (já revisado antes) e em resposta sem arquivos (conversacional).
+  if (!fromCache && parsed.files.length > 0) {
+    const spinner = ora({ text: 'Auto-revisão da geração...', spinner: 'dots', discardStdin: false }).start();
+    session.addUserMessage(REVIEW_PROMPT(parsed.files.length));
+    const reviewChunks: string[] = [];
+    try {
+      await provider.stream(session.getMessages(), chunk => reviewChunks.push(chunk));
+      const reviewRaw = reviewChunks.join('');
+      session.addAssistantMessage(reviewRaw);
+      try {
+        const reviewed = extractResponse(reviewRaw);
+        if (reviewed.files.length > 0) {
+          stripProtectedFiles(reviewed);
+          // MERGE por path: a revisão sobrescreve/adiciona, mas arquivos da
+          // geração original que a revisão NÃO mencionou são MANTIDOS — senão
+          // uma revisão que devolve menos arquivos apagaria stacks (ex: dropar
+          // a api-gateway-stack e deixar as Lambdas sem entrada HTTP).
+          const byPath = new Map(parsed.files.map(f => [f.path, f]));
+          for (const f of reviewed.files) byPath.set(f.path, f);
+          const merged = [...byPath.values()];
+          const changed = JSON.stringify(merged) !== JSON.stringify(parsed.files);
+          reviewed.files = merged;
+          parsed = reviewed;
+          spinner.succeed(changed ? 'Auto-revisão aplicou correções' : 'Auto-revisão: nada a corrigir');
+        } else {
+          spinner.stop();
+        }
+      } catch {
+        spinner.stop(); // revisão não retornou JSON — mantém o original
+      }
+    } catch (err) {
+      spinner.warn('Auto-revisão falhou (seguindo com a geração original): ' + (err as Error).message);
+    }
   }
 
   const tsFiles = parsed.files.filter(f => f.path.endsWith('.ts'));

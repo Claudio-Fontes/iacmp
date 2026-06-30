@@ -225,6 +225,42 @@ async function runGeneration(provider, session, lastPrompt, projectContext) {
     process.stderr.write(`  (ignorando ${dropped.map(f => f.path).join(', ')} — gerenciados pelo projeto, não pela IA)\n`);
   }
 
+  // ── Auto-revisão semântica ────────────────────────────────────────────────
+  // A IA revisa a própria resposta contra o pedido (construct certo, CRUD
+  // completo, schema/SQL), pegando erros de intenção que TS/synth não pegam.
+  if (!fromCache && parsed.files.length > 0) {
+    process.stderr.write('Auto-revisão da geração...\n');
+    const reviewPrompt =
+      `Antes de finalizar, revise sua resposta anterior como um engenheiro sênior revisando um Pull Request, comparando-a com o pedido ORIGINAL. Verifique CADA item:\n` +
+      `1. REQUISITOS: todo requisito explícito do pedido está implementado?\n` +
+      `2. PONTO DE ENTRADA HTTP (crítico): "API REST/HTTP" servida por Lambdas EXIGE um Fn.ApiGateway com routes[] apontando para cada lambdaId. Se NENHUM arquivo tiver Fn.ApiGateway, CRIE stacks/network/api-gateway-stack.ts com Fn.ApiGateway (type: 'HTTP', cors: true, uma rota por método). NUNCA use Network.LoadBalancer.\n` +
+      `3. CRUD COMPLETO: listar/obter/criar/atualizar/deletar existem e wireadas nas rotas.\n` +
+      `4. SCHEMA E SQL: tabela com TODOS os campos da spec; handler de listagem cria a tabela (CREATE TABLE IF NOT EXISTS) com todos os campos; INSERT/UPDATE leem/escrevem todos; contagem de colunas BATE com a de valores; SQL parametrizado.\n` +
+      `5. REFERÊNCIAS: env vars de banco usam o id real do Database (ex: AppDB.Endpoint); rotas usam lambdaId reais.\n\n` +
+      `Se houver QUALQUER defeito, retorne o JSON COMPLETO CORRIGIDO com os ${parsed.files.length} arquivo(s). Se estiver perfeito, retorne o mesmo JSON. Responda APENAS com o JSON.`;
+    session.addUserMessage(reviewPrompt);
+    const reviewChunks = [];
+    try {
+      await provider.stream(session.getMessages(), chunk => reviewChunks.push(chunk));
+      const reviewRaw = reviewChunks.join('');
+      session.addAssistantMessage(reviewRaw);
+      try {
+        const reviewed = extractResponse(reviewRaw);
+        if (reviewed.files && reviewed.files.length > 0) {
+          reviewed.files = reviewed.files.filter(f => !PROTECTED_FILES.has(f.path.split('/').pop()));
+          // MERGE por path — arquivos da geração original não citados pela
+          // revisão são mantidos (senão a revisão poderia dropar stacks).
+          const byPath = new Map(parsed.files.map(f => [f.path, f]));
+          for (const f of reviewed.files) byPath.set(f.path, f);
+          reviewed.files = [...byPath.values()];
+          parsed = reviewed;
+        }
+      } catch { /* revisão não retornou JSON — mantém o original */ }
+    } catch (err) {
+      process.stderr.write('  (auto-revisão falhou, seguindo com a geração original)\n');
+    }
+  }
+
   // Valida TypeScript
   const tsFiles = parsed.files.filter(f => f.path.endsWith('.ts'));
   if (tsFiles.length > 0) {
