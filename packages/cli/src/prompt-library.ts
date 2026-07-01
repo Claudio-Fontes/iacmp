@@ -108,14 +108,16 @@ Gere os handlers TypeScript com lógica real: DailyReportFn escaneia a tabela, a
     description: 'Hosting de site estático (React/Vue/HTML) no S3 com CloudFront e HTTPS.',
     prompt: `Crie uma infraestrutura para hospedar um site estático na AWS com:
 
-- S3 Bucket com websiteHosting habilitado
+- S3 Bucket PRIVADO (websiteHosting: false — o CloudFront serve o site via OAC, não via website hosting)
 - CloudFront Distribution com:
   - HTTPS obrigatório (redirect-to-https)
   - S3 como origin via OAC (bucket privado, acesso só pelo CloudFront)
   - Cache padrão de 86400s (1 dia)
   - defaultRootObject: index.html
   - priceClass PriceClass_100 (EUA + Europa)
-- S3 privado (sem acesso público direto)
+- S3 sem acesso público direto (só o CloudFront acessa via OAC)
+
+IMPORTANTE: o bucket e o CloudFront (com bucketRef) devem estar na MESMA stack. websiteHosting e OAC são mutuamente exclusivos — para acesso privado via OAC, use websiteHosting: false.
 
 Adicione um nextStep explicando como fazer o deploy do site: aws s3 sync build/ s3://BUCKET_NAME --delete seguido de aws cloudfront create-invalidation.`,
   },

@@ -263,6 +263,29 @@ describe('validateSemantics — Compute em VPC', () => {
   });
 });
 
+describe('validateSemantics — websiteHosting + OAC', () => {
+  test('bucket websiteHosting:true referenciado por CDN via bucketRef é pego (caso openai34)', () => {
+    const s = new Stack('site');
+    new Storage.Bucket(s, 'SiteBucket', { websiteHosting: true });
+    new Network.CDN(s, 'CDN', { origins: [{ id: 'o', domainName: 'x', bucketRef: 'SiteBucket' }] });
+    const errors = validateSemantics([s]);
+    expect(errors.some(e => e.includes('SiteBucket') && e.includes('websiteHosting'))).toBe(true);
+  });
+
+  test('bucket privado (websiteHosting:false) + CDN OAC passa', () => {
+    const s = new Stack('site');
+    new Storage.Bucket(s, 'SiteBucket', { websiteHosting: false });
+    new Network.CDN(s, 'CDN', { origins: [{ id: 'o', domainName: 'x', bucketRef: 'SiteBucket' }] });
+    expect(validateSemantics([s]).filter(e => e.includes('websiteHosting'))).toEqual([]);
+  });
+
+  test('websiteHosting:true SEM CDN (site direto) não bloqueia', () => {
+    const s = new Stack('site');
+    new Storage.Bucket(s, 'SiteBucket', { websiteHosting: true });
+    expect(validateSemantics([s]).filter(e => e.includes('websiteHosting'))).toEqual([]);
+  });
+});
+
 describe('validateSemantics — free tier', () => {
   function dbOnly(props: any): Stack[] {
     const net = new Stack('net');

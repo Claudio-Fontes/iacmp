@@ -788,7 +788,9 @@ describe('AWSProvider', () => {
   // ── Network.CDN com bucketRef ─────────────────────────────────────────────
 
   test('Network.CDN com bucketRef → OAC + BucketPolicy CloudFront + S3OriginConfig', () => {
-    new Storage.Bucket(stack, 'AppBucket', { websiteHosting: true });
+    // OAC exige bucket privado (websiteHosting:false) — websiteHosting:true seria
+    // bloqueado pela validação de conflito websiteHosting+OAC.
+    new Storage.Bucket(stack, 'AppBucket', { websiteHosting: false });
     new Network.CDN(stack, 'AppCDN', {
       origins: [{ id: 'app', domainName: '', bucketRef: 'AppBucket' }],
     });
@@ -919,6 +921,22 @@ describe('AWSProvider', () => {
     expect(esm.Properties.BatchSize).toBe(10);
     // BisectBatchOnFunctionError NÃO é suportado para SQS — não deve aparecer
     expect(esm.Properties.BisectBatchOnFunctionError).toBeUndefined();
+  });
+
+  test('SNS→SQS fan-out: Subscription com filterPolicy + QueuePolicy autorizando o SNS (caso openai35)', () => {
+    new Messaging.Queue(stack, 'EmailQueue', {});
+    new Messaging.Topic(stack, 'Topic', { subscriptions: [
+      { protocol: 'sqs', endpoint: 'EmailQueue', filterPolicy: { type: ['email'] } },
+    ] });
+    const tpl = provider.synthesize(stack) as any;
+    const sub = Object.values(tpl.Resources).find((r: any) => r.Type === 'AWS::SNS::Subscription') as any;
+    expect(sub.Properties.Protocol).toBe('sqs');
+    expect(sub.Properties.Endpoint).toEqual({ 'Fn::GetAtt': ['EmailQueue', 'Arn'] });
+    expect(sub.Properties.FilterPolicy).toEqual({ type: ['email'] });
+    // QueuePolicy autoriza o SNS a publicar na fila
+    const qp = Object.values(tpl.Resources).find((r: any) => r.Type === 'AWS::SQS::QueuePolicy') as any;
+    expect(qp.Properties.PolicyDocument.Statement[0].Principal).toEqual({ Service: 'sns.amazonaws.com' });
+    expect(qp.Properties.PolicyDocument.Statement[0].Action).toBe('sqs:SendMessage');
   });
 
   test('EventBridge cron/rate → ScheduleExpression + target Lambda + permissão (caso openai33)', () => {

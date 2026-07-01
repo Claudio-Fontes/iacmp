@@ -298,6 +298,34 @@ export function validateSemantics(stacks: Stack[], profile?: EnvironmentProfile)
     }
   }
 
+  // ── K) websiteHosting + OAC (bucket referenciado por CDN via bucketRef) ────
+  // websiteHosting exige bucket PÚBLICO; OAC exige PRIVADO. Um bucket com
+  // websiteHosting:true referenciado por um Network.CDN via bucketRef gera duas
+  // BucketPolicies contraditórias (Principal:* vs cloudfront) e um bucket público
+  // que contradiz o OAC. Para servir via CloudFront/OAC use websiteHosting:false.
+  const bucketRefsFromCdn = new Set<string>();
+  for (const s of stacks) {
+    for (const c of s.constructs) {
+      if (c.type !== 'Network.CDN') continue;
+      const origins = (c.props as Record<string, unknown>).origins as Array<Record<string, unknown>> | undefined;
+      for (const o of origins ?? []) {
+        if (typeof o.bucketRef === 'string') bucketRefsFromCdn.add(o.bucketRef);
+      }
+    }
+  }
+  for (const s of stacks) {
+    for (const c of s.constructs) {
+      if (c.type !== 'Storage.Bucket') continue;
+      if ((c.props as Record<string, unknown>).websiteHosting === true && bucketRefsFromCdn.has(c.id)) {
+        errors.push(
+          `Storage.Bucket "${c.id}" tem websiteHosting: true E é referenciado por um Network.CDN via bucketRef (OAC). ` +
+          `São mutuamente exclusivos — websiteHosting torna o bucket público, OAC exige privado, gerando policies conflitantes. ` +
+          `Para servir o site via CloudFront/OAC, use websiteHosting: false (o CDN serve o defaultRootObject).`,
+        );
+      }
+    }
+  }
+
   // ── J) Separação por camada: uma stack não deve misturar 3+ camadas âncora ─
   // Cada construct "âncora" pertence a uma camada. Uma única stack com âncoras
   // de 3+ camadas distintas é um monolito (ex: VPC + RDS + Lambda + Secret) —

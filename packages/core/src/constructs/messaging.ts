@@ -16,7 +16,11 @@ export interface MessagingTopicProps {
   encrypted?: boolean;
   subscriptions?: Array<{
     protocol: 'lambda' | 'sqs' | 'email' | 'http' | 'https';
+    /** Endpoint do subscriber. Para 'sqs'/'lambda', pode ser o id de um construct
+     *  (Messaging.Queue/Fn.Lambda) — o synth resolve o ARN. Para email/http, o valor literal. */
     endpoint: string;
+    /** Filtro de mensagens por atributo (SNS message filtering). */
+    filterPolicy?: Record<string, unknown>;
   }>;
 }
 

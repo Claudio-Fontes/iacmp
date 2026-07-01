@@ -44,6 +44,8 @@ export interface SynthContext {
   secretVaults: Set<string>;
   /** IDs de Storage.Bucket — para resolver ARN/nome em policies e env vars. */
   s3Buckets: Set<string>;
+  /** IDs de Fn.Lambda com eventSources SQS — a role precisa da SQSQueueExecutionRole. */
+  sqsEventSourceLambdas: Set<string>;
   /** IDs de Function.Lambda que têm vpcId definido — precisam de VPCAccessExecutionRole. */
   vpcLambdas: Set<string>;
   /** Perfil de ambiente (tier da conta, região) — fonte dos defaults derivados. */
@@ -112,6 +114,11 @@ function resolveLambdaRole(
   const managedPolicies = isVpc
     ? ['arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole']
     : ['arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'];
+  // Lambda acionada por SQS precisa de ReceiveMessage/DeleteMessage/GetQueueAttributes
+  // — a managed policy do serviço concede exatamente isso (exigido pelo EventSourceMapping).
+  if (ctx.sqsEventSourceLambdas.has(lambdaId)) {
+    managedPolicies.push('arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole');
+  }
   return {
     roleRef: { 'Fn::GetAtt': [defaultRoleLogicalId, 'Arn'] },
     extraResource: [defaultRoleLogicalId, {
@@ -238,11 +245,11 @@ function resolvePolicyResource(value: string, ctx: SynthContext): unknown {
       return { 'Fn::Sub': [`\${BArn}${suffix}`, { BArn: bucketArn }] };
     }
   }
-  // Padrão "<id>.SecretArn"/".Arn" (Secret.Vault, filas).
-  const match = /^([^.]+)\.(SecretArn|Arn)$/.exec(value);
+  // Padrão "<id>.SecretArn"/".Arn"/".QueueArn"/".TopicArn" (Secret.Vault, filas, tópicos).
+  const match = /^([^.]+)\.(SecretArn|Arn|QueueArn|TopicArn)$/.exec(value);
   if (match && ctx.registry.has(match[1])) {
     if (ctx.secretVaults.has(match[1])) return resolveEnvVarValue(`${match[1]}.SecretArn`, ctx);
-    return resolveQueueArn(match[1], ctx);
+    return resolveQueueArn(match[1], ctx); // GetAtt Arn / ImportValue-Arn (fila e tópico exportam "-Arn")
   }
   // Id de construct cru (ex: 'TaskQueue' em resources) → ARN.
   if (ctx.registry.has(value)) {
@@ -1609,6 +1616,11 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
         : attachType === 'compute'
         ? ['arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore']
         : [];
+      // Lambda acionada por SQS: garante as permissões do EventSourceMapping
+      // (ReceiveMessage/DeleteMessage/GetQueueAttributes) via managed policy.
+      if (attachType === 'lambda' && ctx.sqsEventSourceLambdas.has(props.attachTo as string)) {
+        managedPolicies.push('arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole');
+      }
 
       const roleLogicalId = `${logicalId}Role`;
       const roleResource: CloudFormationResource = {
@@ -1781,17 +1793,65 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
 
     case 'Messaging.Topic': {
       const fifo = (props.fifo as boolean) ?? false;
-      const subscriptions = (props.subscriptions as Array<Record<string, string>>) ?? [];
-      return [[logicalId, {
+      const subscriptions = (props.subscriptions as Array<Record<string, unknown>>) ?? [];
+      const topicEntries: Array<[string, CloudFormationResource]> = [[logicalId, {
         Type: 'AWS::SNS::Topic',
         Properties: {
           TopicName: fifo ? `${construct.id}.fifo` : construct.id,
           DisplayName: (props.displayName as string) ?? construct.id,
           ...(fifo ? { FifoTopic: true } : {}),
           ...(props.encrypted ? { KmsMasterKeyId: 'alias/aws/sns' } : {}),
-          Subscription: subscriptions.map(s => ({ Protocol: s.protocol, Endpoint: s.endpoint })),
         },
       }]];
+
+      // Cada subscription vira um AWS::SNS::Subscription. Para SQS, resolve o
+      // ARN da fila (por id de construct), aplica filterPolicy e cria a
+      // SQS::QueuePolicy que autoriza o SNS a publicar na fila (fan-out).
+      const subscribedQueues: string[] = [];
+      subscriptions.forEach((s, i) => {
+        const protocol = s.protocol as string;
+        const endpointRaw = s.endpoint as string;
+        // sqs/lambda: endpoint pode ser id de construct → resolve ARN.
+        const isConstructId = (protocol === 'sqs' || protocol === 'lambda') && ctx.registry.has(endpointRaw);
+        const endpoint = isConstructId
+          ? (protocol === 'sqs' ? resolveQueueArn(endpointRaw, ctx) : resolveLambdaArnRef(endpointRaw, ctx))
+          : endpointRaw;
+        const subId = `${logicalId}Sub${i + 1}`;
+        topicEntries.push([subId, {
+          Type: 'AWS::SNS::Subscription',
+          Properties: {
+            TopicArn: { Ref: logicalId },
+            Protocol: protocol,
+            Endpoint: endpoint,
+            ...(protocol === 'sqs' ? { RawMessageDelivery: true } : {}),
+            ...(s.filterPolicy ? { FilterPolicy: s.filterPolicy } : {}),
+          },
+        }]);
+        if (protocol === 'sqs' && isConstructId) subscribedQueues.push(endpointRaw);
+      });
+
+      // SQS::QueuePolicy: autoriza o SNS a enviar mensagens para cada fila inscrita.
+      subscribedQueues.forEach(qId => {
+        const qLogical = qId.replace(/[^a-zA-Z0-9]/g, '');
+        topicEntries.push([`${qLogical}SnsPolicy`, {
+          Type: 'AWS::SQS::QueuePolicy',
+          Properties: {
+            Queues: [{ Ref: qLogical }],
+            PolicyDocument: {
+              Version: '2012-10-17',
+              Statement: [{
+                Effect: 'Allow',
+                Principal: { Service: 'sns.amazonaws.com' },
+                Action: 'sqs:SendMessage',
+                Resource: resolveQueueArn(qId, ctx),
+                Condition: { ArnEquals: { 'aws:SourceArn': { Ref: logicalId } } },
+              }],
+            },
+          },
+        }]);
+      });
+
+      return topicEntries;
     }
 
     // ── Secret / Certificate ──────────────────────────────────────────────
@@ -2093,11 +2153,15 @@ export function synthesize(stack: Stack, allStacks?: Stack[], profile: Environme
   const dbSecretSuffix = new Map<string, string>();
   const secretVaults = new Set<string>();
   const s3Buckets = new Set<string>();
+  const sqsEventSourceLambdas = new Set<string>();
   for (const s of universe) {
     for (const c of s.constructs) {
       registry.set(c.id, s.name);
       if (c.type === 'Secret.Vault') secretVaults.add(c.id);
       if (c.type === 'Storage.Bucket') s3Buckets.add(c.id);
+      if (c.type === 'Function.Lambda' && Array.isArray((c.props as Record<string, unknown>).eventSources)) {
+        sqsEventSourceLambdas.add(c.id);
+      }
       if (c.type === 'Policy.IAM') {
         const p = c.props as Record<string, unknown>;
         if (p.attachType === 'lambda' && typeof p.attachTo === 'string') {
@@ -2122,7 +2186,7 @@ export function synthesize(stack: Stack, allStacks?: Stack[], profile: Environme
       }
     }
   }
-  const ctx: SynthContext = { currentStackName: stack.name, registry, lambdaRoles, vpcLambdas, dbSecretSuffix, secretVaults, s3Buckets, profile };
+  const ctx: SynthContext = { currentStackName: stack.name, registry, lambdaRoles, vpcLambdas, dbSecretSuffix, secretVaults, s3Buckets, sqsEventSourceLambdas, profile };
 
   for (const construct of stack.constructs) {
     const entries = synthesizeConstruct(construct, ctx);
@@ -2174,6 +2238,20 @@ export function synthesize(stack: Stack, allStacks?: Stack[], profile: Environme
         Value: { 'Fn::GetAtt': [logicalId, 'Arn'] },
         Export: { Name: `${stack.name}-${construct.id}-Arn` },
       };
+    }
+    if (construct.type === 'Messaging.Queue' || construct.type === 'Messaging.Topic') {
+      // ARN (+ URL para fila) — para cross-stack (eventSources, subscriptions, policies).
+      const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
+      outputs[`${logicalId}Arn`] = {
+        Value: { 'Fn::GetAtt': [logicalId, construct.type === 'Messaging.Topic' ? 'TopicArn' : 'Arn'] },
+        Export: { Name: `${stack.name}-${construct.id}-Arn` },
+      };
+      if (construct.type === 'Messaging.Queue') {
+        outputs[`${logicalId}QueueUrl`] = {
+          Value: { Ref: logicalId },
+          Export: { Name: `${stack.name}-${construct.id}-QueueUrl` },
+        };
+      }
     }
     if (construct.type === 'Function.Lambda') {
       // Exporta sempre — custo zero, e é o que permite Function.ApiGateway em
