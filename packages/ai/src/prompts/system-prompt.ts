@@ -794,6 +794,8 @@ export async function handler(event: any) {
 \`\`\`
 SQL parametrizado usa \`$1, $2\` (não \`?\`).
 
+**REGRA ABSOLUTA — NUNCA busque o secret via SDK no handler.** A senha JÁ vem resolvida na env \`process.env.DB_PASSWORD\` (o synth injeta via \`{{resolve:secretsmanager}}\` em deploy-time). NUNCA importe \`aws-sdk\`/\`@aws-sdk/client-secrets-manager\` nem chame \`getSecretValue\` no handler — a Lambda roda em subnet privada SEM NAT e não alcança o Secrets Manager, causando timeout de 30s (Service Unavailable) no deploy. Use \`process.env.DB_PASSWORD\` direto, como no exemplo acima.
+
 **REGRA ABSOLUTA — code e handler**: Lambda com dependências npm → \`code: '.'\` (raiz do projeto, inclui node_modules). Handler com TypeScript compilado → prefixo \`dist/\`: ex. \`handler: 'dist/listItems.handler'\`.
 
 **REGRA ABSOLUTA — CREATE TABLE com TODOS os campos da spec**: o handler de listagem deve criar a tabela na primeira execução com TODAS as colunas que o usuário pediu — não omita nenhuma. Se a spec diz "tabela items (campos: id, name, description, createdAt)", a tabela DEVE ter as 4 colunas:

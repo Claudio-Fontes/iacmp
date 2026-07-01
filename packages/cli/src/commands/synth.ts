@@ -154,6 +154,18 @@ export default class Synth extends Command {
       );
     }
 
+    // ── Handler de Lambda-em-VPC usando Secrets Manager em runtime ──────────
+    // Lambda em subnet privada não alcança o Secrets Manager (serviço fora da
+    // VPC) sem NAT/VPC endpoint — o SDK pendura e a função dá timeout de 30s
+    // (Service Unavailable). A senha do banco já vem resolvida na env DB_PASSWORD.
+    const vpcSecretErrors = this.validateHandlerVpcSecrets(loadedStacks, cwd);
+    if (vpcSecretErrors.length > 0) {
+      this.error(
+        `Handler de Lambda em VPC acessa Secrets Manager em runtime (vai dar timeout no deploy):\n\n` +
+        vpcSecretErrors.map(e => `  • ${e}`).join('\n'),
+      );
+    }
+
     // ── Passada 2: sintetiza e grava só as stacks que o --stack pediu ───────
     const targetStacks = loadedStacks.filter(s => !flags.stack || s.stackName === flags.stack);
     if (targetStacks.length === 0) {
@@ -309,6 +321,40 @@ export default class Synth extends Command {
           errors.push(
             `${path.relative(cwd, file)}: INSERT com ${cols.length} coluna(s) (${cols.join(', ')}) ` +
             `mas ${vals.length} valor(es) (${vals.join(', ')}). A contagem deve bater.`,
+          );
+        }
+      }
+    }
+    return errors;
+  }
+
+  /**
+   * Bloqueia handler de Lambda-em-VPC que acessa Secrets Manager em runtime.
+   * Cruza cada Fn.Lambda com vpcId ao seu arquivo de handler (src/<stem>.ts) e
+   * detecta uso de SecretsManager/getSecretValue/@aws-sdk/client-secrets-manager.
+   * No iacmp (sem NAT gerado), isso trava a função — a senha do banco já é
+   * injetada resolvida na env DB_PASSWORD (via {{resolve:secretsmanager}}).
+   */
+  private validateHandlerVpcSecrets(loaded: LoadedStack[], cwd: string): string[] {
+    const errors: string[] = [];
+    const SECRET_USE = /SecretsManager|getSecretValue|@aws-sdk\/client-secrets-manager|from ['"]aws-sdk['"]/;
+
+    for (const { stack } of loaded) {
+      for (const c of stack.constructs) {
+        if (c.type !== 'Function.Lambda') continue;
+        const props = c.props as Record<string, unknown>;
+        if (!props.vpcId) continue; // só Lambda em VPC
+        const handler = props.handler as string | undefined;
+        if (!handler) continue;
+        const stem = handler.replace(/\.[^./]+$/, '').replace(/^(\.\/)?(dist|src)\//, '');
+        const srcFile = [path.join(cwd, 'src', `${stem}.ts`), path.join(cwd, 'src', `${stem}.js`)]
+          .find(p => fs.existsSync(p));
+        if (!srcFile) continue;
+        const content = fs.readFileSync(srcFile, 'utf-8');
+        if (SECRET_USE.test(content)) {
+          errors.push(
+            `Fn.Lambda "${c.id}" (em VPC) → ${path.relative(cwd, srcFile)} usa Secrets Manager em runtime. ` +
+            `A senha já vem resolvida na env: use process.env.DB_PASSWORD direto (padrão iacmp), sem @aws-sdk/client-secrets-manager.`,
           );
         }
       }

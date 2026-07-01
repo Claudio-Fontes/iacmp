@@ -363,6 +363,52 @@ module.exports = stack;
       const r = runCli(['synth', '--provider', 'aws'], { cwd: dir });
       expect(r.status).toBe(0);
     });
+
+    test('handler de Lambda-em-VPC usando Secrets Manager → synth falha (timeout openai29)', () => {
+      dir = makeProject({
+        provider: 'aws',
+        stacks: {
+          'compute.js': `const { Stack, Fn } = require('@iacmp/core');
+const stack = new Stack('proj-lambda');
+new Fn.Lambda(stack, 'ListFn', { runtime: 'nodejs20', handler: 'dist/list.handler', code: '.', vpcId: 'vpc-1', subnetIds: ['subnet-a','subnet-b'], securityGroupIds: ['sg-1'] });
+module.exports = stack;
+`,
+        },
+        files: { 'src/list.ts': `import { SecretsManager } from 'aws-sdk';
+const s = new SecretsManager();
+export async function handler() {
+  const secret = await s.getSecretValue({ SecretId: process.env.DB_PASSWORD }).promise();
+  return { statusCode: 200 };
+}
+` },
+      });
+
+      const r = runCli(['synth', '--provider', 'aws'], { cwd: dir });
+      expect(r.status).not.toBe(0);
+      expect(r.all).toContain('Secrets Manager em runtime');
+    });
+
+    test('handler de Lambda-em-VPC com senha via env → synth ok (padrão correto)', () => {
+      dir = makeProject({
+        provider: 'aws',
+        stacks: {
+          'compute.js': `const { Stack, Fn } = require('@iacmp/core');
+const stack = new Stack('proj-lambda');
+new Fn.Lambda(stack, 'ListFn', { runtime: 'nodejs20', handler: 'dist/list.handler', code: '.', vpcId: 'vpc-1', subnetIds: ['subnet-a','subnet-b'], securityGroupIds: ['sg-1'] });
+module.exports = stack;
+`,
+        },
+        files: { 'src/list.ts': `import { Client } from 'pg';
+export async function handler() {
+  const db = new Client({ host: process.env.DB_HOST, password: process.env.DB_PASSWORD });
+  return { statusCode: 200 };
+}
+` },
+      });
+
+      const r = runCli(['synth', '--provider', 'aws'], { cwd: dir });
+      expect(r.status).toBe(0);
+    });
   });
 
   describe('idempotência / re-synth', () => {
