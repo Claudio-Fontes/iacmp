@@ -5,6 +5,12 @@ export interface WorkflowStep {
   type?: 'Task' | 'Choice' | 'Wait' | 'Parallel' | 'Map' | 'Pass' | 'Succeed' | 'Fail';
   resource?: string;
   description?: string;
+  /** Task com callback: invoca a Lambda passando o task token e PAUSA a execução
+   *  até alguém chamar SendTaskSuccess/SendTaskFailure com esse token (padrão de
+   *  aprovação humana). O handler recebe `event.taskToken`. */
+  waitForToken?: boolean;
+  /** Wait: segundos a esperar (default 30 quando type='Wait' sem seconds). */
+  seconds?: number;
 }
 
 export interface StepFunctionsProps {

@@ -1992,15 +1992,44 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
     // ── Workflow ──────────────────────────────────────────────────────────
     case 'Workflow.StepFunctions': {
       const steps = (props.steps as Array<Record<string, unknown>>) ?? [];
+      // Um Task cujo `resource` é o id de uma Fn.Lambda precisa do ARN real no
+      // Resource (Step Functions rejeita um id cru). Como a DefinitionString usa
+      // Fn::Sub, cada ARN vira uma variável ${...} resolvida no 2º arg do Sub.
+      const subVars: Record<string, unknown> = {};
       const definition = {
         Comment: (props.description as string) ?? `Workflow ${construct.id}`,
         StartAt: (steps[0]?.name as string) ?? 'Start',
         States: Object.fromEntries(steps.map((s, i) => {
           const stateType = (s.type as string) ?? 'Task';
           const isTask = stateType === 'Task';
+          const isWait = stateType === 'Wait';
+          const rawResource = (s.resource as string) ?? '';
+          // Resolve o id de uma Fn.Lambda pro ARN via variável do Fn::Sub.
+          let arnRef = rawResource;
+          if (isTask && rawResource && !rawResource.startsWith('arn:') && ctx.lambdaConstructs.has(rawResource)) {
+            const varName = `${(s.name as string).replace(/[^a-zA-Z0-9]/g, '')}Arn`;
+            subVars[varName] = resolveLambdaArnRef(rawResource, ctx);
+            arnRef = `\${${varName}}`;
+          }
+          // waitForToken: Task de callback — invoca a Lambda passando o task token
+          // e PAUSA até SendTaskSuccess/Failure. Usa a integração otimizada
+          // lambda:invoke.waitForTaskToken.
+          const taskProps = isTask
+            ? (s.waitForToken
+                ? {
+                    Resource: 'arn:aws:states:::lambda:invoke.waitForTaskToken',
+                    Parameters: {
+                      FunctionName: arnRef,
+                      'Payload': { 'taskToken.$': '$$.Task.Token', 'input.$': '$' },
+                    },
+                  }
+                : { Resource: arnRef })
+            : {};
           return [s.name as string, {
             Type: stateType,
-            ...(isTask ? { Resource: (s.resource as string) ?? '' } : {}),
+            ...taskProps,
+            // Wait exige Seconds/Timestamp — sem isso a definição é inválida.
+            ...(isWait ? { Seconds: (s.seconds as number) ?? 30 } : {}),
             ...(s.description ? { Comment: s.description } : {}),
             ...(i < steps.length - 1 ? { Next: steps[i + 1].name as string } : { End: true }),
           }];
@@ -2033,7 +2062,9 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
           Properties: {
             StateMachineName: construct.id,
             StateMachineType: (props.type as string) ?? 'STANDARD',
-            DefinitionString: { 'Fn::Sub': JSON.stringify(definition) },
+            DefinitionString: Object.keys(subVars).length > 0
+              ? { 'Fn::Sub': [JSON.stringify(definition), subVars] }
+              : { 'Fn::Sub': JSON.stringify(definition) },
             RoleArn: { 'Fn::GetAtt': [roleLogicalId, 'Arn'] },
           },
         }],
