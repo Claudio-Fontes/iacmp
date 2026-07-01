@@ -38,6 +38,8 @@ export interface WAFRule {
   managedGroup?: string;
   sourceIps?: string[];
   matchValues?: string[];
+  /** Rate-based: máximo de requisições por IP numa janela de 5 min (ex: 100). */
+  rateLimit?: number;
   description?: string;
 }
 

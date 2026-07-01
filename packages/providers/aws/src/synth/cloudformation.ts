@@ -951,26 +951,36 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
           Scope: (props.scope as string) ?? 'REGIONAL',
           DefaultAction: { [defaultAction === 'block' ? 'Block' : 'Allow']: {} },
           Description: (props.description as string) ?? `WAF ${logicalId}`,
-          Rules: rules.map((r, i) => ({
-            Name: (r.name as string) ?? `rule-${i}`,
-            Priority: (r.priority as number) ?? (i + 1),
-            Action: { [(r.action as string) === 'block' ? 'Block' : (r.action as string) === 'count' ? 'Count' : 'Allow']: {} },
-            VisibilityConfig: {
-              SampledRequestsEnabled: true,
-              CloudWatchMetricsEnabled: true,
-              MetricName: ((r.name as string) ?? `rule${i}`).replace(/[^a-zA-Z0-9]/g, ''),
-            },
-            Statement: r.managedGroup
+          Rules: rules.map((r, i) => {
+            const actionKey = (r.action as string) === 'block' ? 'Block' : (r.action as string) === 'count' ? 'Count' : 'Allow';
+            // Managed rule group → OverrideAction (NÃO Action; o WAFv2 rejeita Action
+            // num ManagedRuleGroupStatement). Rate-based/ByteMatch → Action normal.
+            const statement = r.managedGroup
               ? { ManagedRuleGroupStatement: { VendorName: 'AWS', Name: r.managedGroup as string } }
-              : {
-                  ByteMatchStatement: {
-                    SearchString: ((r.matchValues as string[]) ?? ['BadBot'])[0],
-                    FieldToMatch: { SingleHeader: { Name: 'user-agent' } },
-                    TextTransformations: [{ Priority: 0, Type: 'NONE' }],
-                    PositionalConstraint: 'CONTAINS',
-                  },
-                },
-          })),
+              : r.rateLimit
+                ? { RateBasedStatement: { Limit: r.rateLimit as number, AggregateKeyType: 'IP' } }
+                : {
+                    ByteMatchStatement: {
+                      SearchString: ((r.matchValues as string[]) ?? ['BadBot'])[0],
+                      FieldToMatch: { SingleHeader: { Name: 'user-agent' } },
+                      TextTransformations: [{ Priority: 0, Type: 'NONE' }],
+                      PositionalConstraint: 'CONTAINS',
+                    },
+                  };
+            return {
+              Name: (r.name as string) ?? `rule-${i}`,
+              Priority: (r.priority as number) ?? (i + 1),
+              ...(r.managedGroup
+                ? { OverrideAction: { None: {} } }
+                : { Action: { [r.rateLimit ? (actionKey === 'Allow' ? 'Block' : actionKey) : actionKey]: {} } }),
+              VisibilityConfig: {
+                SampledRequestsEnabled: true,
+                CloudWatchMetricsEnabled: true,
+                MetricName: ((r.name as string) ?? `rule${i}`).replace(/[^a-zA-Z0-9]/g, ''),
+              },
+              Statement: statement,
+            };
+          }),
           VisibilityConfig: {
             SampledRequestsEnabled: true,
             CloudWatchMetricsEnabled: true,
@@ -1603,7 +1613,9 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
     case 'Function.ApiGateway': {
       const apigwType = (props.type as string) ?? 'HTTP';
       const routes = (props.routes as Array<Record<string, unknown>>) ?? [];
-      const stageName = (props.stageName as string) ?? '$default';
+      // REST (v1) só aceita nome de stage [a-zA-Z0-9_] — '$default' é exclusivo do
+      // HTTP API (v2). Default por tipo pra não quebrar o deploy do REST.
+      const stageName = (props.stageName as string) ?? (apigwType === 'REST' ? 'prod' : '$default');
       const authorizerLambdaId = props.authorizerLambdaId as string | undefined;
       const authorizerId = authorizerLambdaId ? `${logicalId}Authorizer` : undefined;
       // Authorizer por rota (route.authorizerLambdaId) — cada Lambda authorizer
@@ -1786,6 +1798,26 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
             } : {}),
           },
         }]);
+
+        // Associa um Network.WAF (REGIONAL) ao stage do REST API via WAFv2
+        // WebACLAssociation (o WAF não é uma prop do stage; é um recurso à parte).
+        if (props.wafAclId) {
+          const wafId = props.wafAclId as string;
+          const wafStack = ctx.registry.get(wafId);
+          const wafArn = wafStack
+            ? (wafStack === ctx.currentStackName
+                ? { 'Fn::GetAtt': [wafId.replace(/[^a-zA-Z0-9]/g, ''), 'Arn'] }
+                : { 'Fn::ImportValue': `${wafStack}-${wafId}-Arn` })
+            : wafId; // ARN literal
+          entries.push([`${logicalId}WafAssociation`, {
+            Type: 'AWS::WAFv2::WebACLAssociation',
+            DependsOn: [`${logicalId}Stage`],
+            Properties: {
+              ResourceArn: { 'Fn::Sub': [`arn:aws:apigateway:\${AWS::Region}::/restapis/\${ApiId}/stages/${stageName}`, { ApiId: { Ref: logicalId } }] },
+              WebACLArn: wafArn,
+            },
+          }]);
+        }
       } else {
         // ── HTTP/WEBSOCKET (API Gateway v2) — comportamento existente. ──────
         entries.push([`${logicalId}Stage`, {
@@ -2655,6 +2687,14 @@ export function synthesize(stack: Stack, allStacks?: Stack[], profile: Environme
       outputs[`${logicalId}Port`] = {
         Value: { 'Fn::GetAtt': [logicalId, 'PrimaryEndPoint.Port'] },
         Export: { Name: `${stack.name}-${construct.id}-Port` },
+      };
+    }
+    if (construct.type === 'Network.WAF') {
+      // Exporta o ARN do WebACL pra um Fn.ApiGateway em OUTRA stack associar (wafAclId).
+      const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
+      outputs[`${logicalId}Arn`] = {
+        Value: { 'Fn::GetAtt': [logicalId, 'Arn'] },
+        Export: { Name: `${stack.name}-${construct.id}-Arn` },
       };
     }
     if (construct.type === 'Network.LoadBalancer') {

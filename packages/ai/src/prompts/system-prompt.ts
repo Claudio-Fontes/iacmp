@@ -236,7 +236,8 @@ new Network.WAF(stack, 'LogicalId', {
       name: string,
       priority?: number,
       action?: 'allow' | 'block' | 'count',
-      managedGroup?: string,   // ex: 'AWSManagedRulesCommonRuleSet'
+      managedGroup?: string,   // regra gerenciada AWS, ex: 'AWSManagedRulesCommonRuleSet' (usa OverrideAction — NÃO precisa de action)
+      rateLimit?: number,      // rate-based: máx requisições por IP em 5 min (ex: 100) — vira RateBasedStatement
       matchValues?: string[],
       sourceIps?: string[],
       description?: string,
@@ -244,6 +245,8 @@ new Network.WAF(stack, 'LogicalId', {
   ],
 });
 \`\`\`
+**REGRA — rate limiting no WAF:** para "máximo N requisições por IP", use \`rateLimit: N\` no rule (o synth gera um \`RateBasedStatement\` e bloqueia por padrão) — NUNCA \`matchValues\`/\`sourceIps\` (isso é match de string/IP, não rate limit).
+**REGRA — associar WAF ao API Gateway:** para "API protegida pelo WAF", ponha \`wafAclId: '<idDoNetwork.WAF>'\` no \`Fn.ApiGateway\` (REST) — o synth cria a \`WebACLAssociation\` ligando o WAF ao stage. O WAF precisa ser \`scope: 'REGIONAL'\`. Só declarar o \`Network.WAF\` NÃO protege nada sem essa associação.
 
 ### Network.LoadBalancer — ALB / NLB / Application Gateway / Cloud LB
 \`\`\`typescript

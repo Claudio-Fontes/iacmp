@@ -32,6 +32,8 @@ export interface FunctionApiGatewayProps {
   authorizerLambdaId?: string;
   throttlingBurstLimit?: number;
   throttlingRateLimit?: number;
+  /** Associa um Network.WAF (REGIONAL) a este API Gateway REST — id do construct Network.WAF. */
+  wafAclId?: string;
   routes?: Array<{
     method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'OPTIONS' | 'ANY';
     path: string;
