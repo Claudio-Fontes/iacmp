@@ -46,6 +46,8 @@ export interface SynthContext {
   s3Buckets: Set<string>;
   /** IDs de Fn.Lambda com eventSources SQS — a role precisa da SQSQueueExecutionRole. */
   sqsEventSourceLambdas: Set<string>;
+  /** IDs de Fn.Lambda com eventSources Kinesis — a role precisa da KinesisExecutionRole. */
+  kinesisEventSourceLambdas: Set<string>;
   /** IDs de Function.Lambda que têm vpcId definido — precisam de VPCAccessExecutionRole. */
   vpcLambdas: Set<string>;
   /** constructId de Network.LoadBalancer → target group default (1º) para registro de tasks ECS. */
@@ -130,6 +132,9 @@ function resolveLambdaRole(
   // — a managed policy do serviço concede exatamente isso (exigido pelo EventSourceMapping).
   if (ctx.sqsEventSourceLambdas.has(lambdaId)) {
     managedPolicies.push('arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole');
+  }
+  if (ctx.kinesisEventSourceLambdas.has(lambdaId)) {
+    managedPolicies.push('arn:aws:iam::aws:policy/service-role/AWSLambdaKinesisExecutionRole');
   }
   return {
     roleRef: { 'Fn::GetAtt': [defaultRoleLogicalId, 'Arn'] },
@@ -1590,15 +1595,30 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
         },
       }]);
 
-      // Event source mappings: aciona a Lambda a partir de filas SQS.
+      // Event source mappings: aciona a Lambda a partir de filas SQS ou streams Kinesis.
       const eventSources = (props.eventSources as Array<Record<string, unknown>> | undefined) ?? [];
       eventSources.forEach((es, i) => {
-        const queueId = es.queueId as string;
         const esmId = `${logicalId}EventSource${i + 1}`;
+        if (es.streamId) {
+          // Kinesis: exige StartingPosition; suporta BisectBatchOnFunctionError e
+          // batchSize maior (até 10000). O ARN do stream resolve como os demais (-Arn).
+          entries.push([esmId, {
+            Type: 'AWS::Lambda::EventSourceMapping',
+            Properties: {
+              EventSourceArn: resolveQueueArn(es.streamId as string, ctx),
+              FunctionName: { Ref: logicalId },
+              BatchSize: (es.batchSize as number) ?? 100,
+              StartingPosition: (es.startingPosition as string) ?? 'LATEST',
+              ...(es.bisectBatchOnFunctionError !== undefined ? { BisectBatchOnFunctionError: es.bisectBatchOnFunctionError } : {}),
+              ...(es.maxBatchingWindowSeconds !== undefined ? { MaximumBatchingWindowInSeconds: es.maxBatchingWindowSeconds } : {}),
+            },
+          }]);
+          return;
+        }
         entries.push([esmId, {
           Type: 'AWS::Lambda::EventSourceMapping',
           Properties: {
-            EventSourceArn: resolveQueueArn(queueId, ctx),
+            EventSourceArn: resolveQueueArn(es.queueId as string, ctx),
             FunctionName: { Ref: logicalId },
             BatchSize: (es.batchSize as number) ?? 10,
             // BisectBatchOnFunctionError NÃO é suportado para SQS (só Kinesis/DynamoDB
@@ -1919,6 +1939,9 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
       if (attachType === 'lambda' && ctx.sqsEventSourceLambdas.has(props.attachTo as string)) {
         managedPolicies.push('arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole');
       }
+      if (attachType === 'lambda' && ctx.kinesisEventSourceLambdas.has(props.attachTo as string)) {
+        managedPolicies.push('arn:aws:iam::aws:policy/service-role/AWSLambdaKinesisExecutionRole');
+      }
 
       const roleLogicalId = `${logicalId}Role`;
       const roleResource: CloudFormationResource = {
@@ -2104,6 +2127,18 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
     }
 
     // ── Messaging ─────────────────────────────────────────────────────────
+    case 'Messaging.Stream': {
+      return [[logicalId, {
+        Type: 'AWS::Kinesis::Stream',
+        Properties: {
+          Name: construct.id,
+          ShardCount: (props.shards as number) ?? 1,
+          RetentionPeriodHours: (props.retentionHours as number) ?? 24,
+          ...(props.encrypted ? { StreamEncryption: { EncryptionType: 'KMS', KeyId: 'alias/aws/kinesis' } } : {}),
+        },
+      }]];
+    }
+
     case 'Messaging.Queue': {
       const fifo = (props.fifo as boolean) ?? false;
       return [[logicalId, {
@@ -2502,6 +2537,7 @@ export function synthesize(stack: Stack, allStacks?: Stack[], profile: Environme
   const secretVaults = new Set<string>();
   const s3Buckets = new Set<string>();
   const sqsEventSourceLambdas = new Set<string>();
+  const kinesisEventSourceLambdas = new Set<string>();
   const albDefaultTg = new Map<string, { stackName: string; tgLogicalId: string }>();
   const lambdaConstructs = new Set<string>();
   const publicSubnetsByVpc = new Map<string, Array<{ id: string; stackName: string }>>();
@@ -2527,7 +2563,9 @@ export function synthesize(stack: Stack, allStacks?: Stack[], profile: Environme
         }
       }
       if (c.type === 'Function.Lambda' && Array.isArray((c.props as Record<string, unknown>).eventSources)) {
-        sqsEventSourceLambdas.add(c.id);
+        const es = (c.props as Record<string, unknown>).eventSources as Array<Record<string, unknown>>;
+        if (es.some(e => e.queueId)) sqsEventSourceLambdas.add(c.id);
+        if (es.some(e => e.streamId)) kinesisEventSourceLambdas.add(c.id);
       }
       if (c.type === 'Policy.IAM') {
         const p = c.props as Record<string, unknown>;
@@ -2553,7 +2591,7 @@ export function synthesize(stack: Stack, allStacks?: Stack[], profile: Environme
       }
     }
   }
-  const ctx: SynthContext = { currentStackName: stack.name, registry, lambdaRoles, vpcLambdas, dbSecretSuffix, secretVaults, s3Buckets, sqsEventSourceLambdas, albDefaultTg, lambdaConstructs, publicSubnetsByVpc, profile };
+  const ctx: SynthContext = { currentStackName: stack.name, registry, lambdaRoles, vpcLambdas, dbSecretSuffix, secretVaults, s3Buckets, sqsEventSourceLambdas, kinesisEventSourceLambdas, albDefaultTg, lambdaConstructs, publicSubnetsByVpc, profile };
 
   for (const construct of stack.constructs) {
     const entries = synthesizeConstruct(construct, ctx);
@@ -2619,6 +2657,14 @@ export function synthesize(stack: Stack, allStacks?: Stack[], profile: Environme
           Export: { Name: `${stack.name}-${construct.id}-QueueUrl` },
         };
       }
+    }
+    if (construct.type === 'Messaging.Stream') {
+      // ARN do Kinesis stream — para eventSources e policies (kinesis:PutRecord) cross-stack.
+      const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
+      outputs[`${logicalId}Arn`] = {
+        Value: { 'Fn::GetAtt': [logicalId, 'Arn'] },
+        Export: { Name: `${stack.name}-${construct.id}-Arn` },
+      };
     }
     if (construct.type === 'Function.Lambda') {
       // Exporta sempre — custo zero, e é o que permite Function.ApiGateway em

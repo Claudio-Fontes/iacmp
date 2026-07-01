@@ -639,6 +639,16 @@ new Messaging.Queue(stack, 'LogicalId', {
 export default stack;
 \`\`\`
 
+### Messaging.Stream — Kinesis Data Stream (ingestão em tempo real)
+\`\`\`typescript
+new Messaging.Stream(stack, 'LogicalId', {
+  shards?: number,          // default 1
+  retentionHours?: number,  // 24–8760, default 24
+  encrypted?: boolean,
+});
+\`\`\`
+**REGRA — pipeline de eventos em tempo real / "stream":** para ingestão de logs/eventos em tempo real com shards, use \`Messaging.Stream\` (Kinesis), NÃO \`Messaging.Queue\` (SQS não é stream, não tem shards e o batchSize máx é 10). O produtor (ingestor) escreve com \`@aws-sdk/client-kinesis\` (\`PutRecordCommand\`: \`{ StreamName: process.env.STREAM_NAME, Data: Buffer.from(JSON.stringify(evt)), PartitionKey: evt.eventType }\`) e precisa de \`kinesis:PutRecord\` no IAM (\`resources: ['<StreamId>']\`). O consumidor é acionado pelo stream via \`eventSources: [{ streamId: '<StreamId>', batchSize: 100, startingPosition: 'LATEST' }]\` no \`Fn.Lambda\` (o synth cria o EventSourceMapping + a role de leitura Kinesis) — o handler recebe \`event.Records[].kinesis.data\` (base64: \`Buffer.from(r.kinesis.data,'base64').toString()\`). Passe o nome do stream como env var (\`STREAM_NAME: '<StreamId>'\`).
+
 ### Messaging.Topic — SNS / Service Bus Topic / Pub/Sub Topic
 \`\`\`typescript
 import { Stack, Messaging } from '@iacmp/core';
