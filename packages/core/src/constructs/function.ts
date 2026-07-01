@@ -29,6 +29,9 @@ export interface FunctionApiGatewayProps {
     path: string;
     lambdaId?: string;
     description?: string;
+    /** Autorização por rota. authType 'NONE' = pública; authorizerLambdaId = protegida por um Lambda authorizer específico. Sobrepõem o nível do gateway. */
+    authType?: 'NONE' | 'JWT' | 'AWS_IAM' | 'COGNITO';
+    authorizerLambdaId?: string;
   }>;
 }
 

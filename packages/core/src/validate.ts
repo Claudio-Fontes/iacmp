@@ -46,10 +46,11 @@ export function validateSemantics(stacks: Stack[], profile?: EnvironmentProfile)
           for (const v of props[k] as unknown[]) if (typeof v === 'string') refs.push([v, k]);
         }
       }
-      // routes[].lambdaId (Function.ApiGateway)
+      // routes[].lambdaId e routes[].authorizerLambdaId (Function.ApiGateway)
       if (Array.isArray(props.routes)) {
         for (const r of props.routes as Array<Record<string, unknown>>) {
           if (typeof r?.lambdaId === 'string') refs.push([r.lambdaId, 'routes[].lambdaId']);
+          if (typeof r?.authorizerLambdaId === 'string') refs.push([r.authorizerLambdaId, 'routes[].authorizerLambdaId']);
         }
       }
       // origins[].bucketRef (Network.CDN)

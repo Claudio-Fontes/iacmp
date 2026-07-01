@@ -1240,12 +1240,21 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
       const stageName = (props.stageName as string) ?? '$default';
       const authorizerLambdaId = props.authorizerLambdaId as string | undefined;
       const authorizerId = authorizerLambdaId ? `${logicalId}Authorizer` : undefined;
-      // Toda Lambda referenciada (rotas + authorizer) precisa de uma
-      // AWS::Lambda::Permission liberando o API Gateway a invocá-la —
-      // dedupe por par (api, lambda): uma Permission serve pra todas as rotas
-      // que chamam a mesma função nesta API.
+      // Authorizer por rota (route.authorizerLambdaId) — cada Lambda authorizer
+      // distinta vira um AWS::Gateway::Authorizer. Combinado com o do gateway.
+      // Uma rota com authType 'NONE' fica pública mesmo se o gateway tem authorizer.
+      const routeAuthorizerIds = new Map<string, string>(); // lambdaId → authorizerLogicalId
+      if (authorizerLambdaId) routeAuthorizerIds.set(authorizerLambdaId, authorizerId!);
+      for (const r of routes) {
+        const ra = r.authorizerLambdaId as string | undefined;
+        if (ra && !routeAuthorizerIds.has(ra)) {
+          routeAuthorizerIds.set(ra, `${logicalId}${ra.replace(/[^a-zA-Z0-9]/g, '')}Authorizer`);
+        }
+      }
+      // Toda Lambda referenciada (rotas + authorizers) precisa de uma
+      // AWS::Lambda::Permission liberando o API Gateway a invocá-la.
       const lambdaIdsNeedingPermission = new Set<string>();
-      if (authorizerLambdaId) lambdaIdsNeedingPermission.add(authorizerLambdaId);
+      for (const la of routeAuthorizerIds.keys()) lambdaIdsNeedingPermission.add(la);
       for (const r of routes) {
         if (r.lambdaId) lambdaIdsNeedingPermission.add(r.lambdaId as string);
       }
@@ -1292,14 +1301,15 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
           return { Ref: resourceIdByPath.get(cumulative)! };
         };
 
-        if (authorizerLambdaId) {
-          entries.push([authorizerId!, {
+        // Um AWS::ApiGateway::Authorizer por Lambda authorizer distinta.
+        for (const [la, authLogicalId] of routeAuthorizerIds) {
+          entries.push([authLogicalId, {
             Type: 'AWS::ApiGateway::Authorizer',
             Properties: {
               RestApiId: { Ref: logicalId },
               Type: 'REQUEST',
-              Name: `${props.name as string}-authorizer`,
-              AuthorizerUri: buildInvocationUri(authorizerLambdaId, ctx),
+              Name: `${props.name as string}-${la}`,
+              AuthorizerUri: buildInvocationUri(la, ctx),
               IdentitySource: 'method.request.header.Authorization',
               AuthorizerResultTtlInSeconds: 0,
             },
@@ -1311,6 +1321,11 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
           const method = r.method as string;
           const resourceRef = resolveResourceRef(path);
           const methodLogicalId = `${logicalId}${method}${path.replace(/[^a-zA-Z0-9]/g, '')}Method`;
+          // Auth por rota (mesma lógica do HTTP): 'NONE' força pública.
+          const routeAuthLambda = (r.authType === 'NONE')
+            ? undefined
+            : (r.authorizerLambdaId as string | undefined) ?? authorizerLambdaId;
+          const routeAuthId = routeAuthLambda ? routeAuthorizerIds.get(routeAuthLambda) : undefined;
 
           entries.push([methodLogicalId, {
             Type: 'AWS::ApiGateway::Method',
@@ -1318,8 +1333,8 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
               RestApiId: { Ref: logicalId },
               ResourceId: resourceRef,
               HttpMethod: method,
-              AuthorizationType: authorizerId ? 'CUSTOM' : 'NONE',
-              ...(authorizerId ? { AuthorizerId: { Ref: authorizerId } } : {}),
+              AuthorizationType: routeAuthId ? 'CUSTOM' : 'NONE',
+              ...(routeAuthId ? { AuthorizerId: { Ref: routeAuthId } } : {}),
               ...(r.lambdaId ? {
                 Integration: {
                   Type: 'AWS_PROXY',
@@ -1422,29 +1437,37 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
           },
         }]);
 
-        if (authorizerLambdaId) {
-          entries.push([authorizerId!, {
+        // Um AWS::ApiGatewayV2::Authorizer por Lambda authorizer distinta.
+        for (const [la, authLogicalId] of routeAuthorizerIds) {
+          entries.push([authLogicalId, {
             Type: 'AWS::ApiGatewayV2::Authorizer',
             Properties: {
               ApiId: { Ref: logicalId },
               AuthorizerType: 'REQUEST',
-              Name: `${props.name as string}-authorizer`,
-              AuthorizerUri: buildInvocationUri(authorizerLambdaId, ctx),
+              Name: `${props.name as string}-${la}`,
+              AuthorizerUri: buildInvocationUri(la, ctx),
               AuthorizerPayloadFormatVersion: '2.0',
               IdentitySource: ['$request.header.Authorization'],
+              EnableSimpleResponses: true,
             },
           }]);
         }
 
         for (const r of routes) {
           const routeId = `${logicalId}${(r.method as string)}${(r.path as string).replace(/[^a-zA-Z0-9]/g, '')}Route`;
+          // Auth por rota: authType 'NONE' força pública; senão usa o authorizer
+          // da rota (route.authorizerLambdaId) ou o do gateway como fallback.
+          const routeAuthLambda = (r.authType === 'NONE')
+            ? undefined
+            : (r.authorizerLambdaId as string | undefined) ?? authorizerLambdaId;
+          const routeAuthId = routeAuthLambda ? routeAuthorizerIds.get(routeAuthLambda) : undefined;
           entries.push([routeId, {
             Type: 'AWS::ApiGatewayV2::Route',
             Properties: {
               ApiId: { Ref: logicalId },
               RouteKey: `${r.method} ${r.path}`,
               ...(r.lambdaId ? { Target: { 'Fn::Sub': `integrations/\${${routeId}Integration}` } } : {}),
-              ...(authorizerId ? { AuthorizationType: 'CUSTOM', AuthorizerId: { Ref: authorizerId } } : {}),
+              ...(routeAuthId ? { AuthorizationType: 'CUSTOM', AuthorizerId: { Ref: routeAuthId } } : {}),
             },
           }]);
 

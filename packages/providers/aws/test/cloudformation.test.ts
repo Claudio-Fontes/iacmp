@@ -888,4 +888,22 @@ describe('AWSProvider', () => {
       Export: { Name: 'test-stack-JwtSecret-SecretArn' },
     });
   });
+
+  test('ApiGateway com authorizerLambdaId POR ROTA → rota protegida CUSTOM, pública NONE (caso openai28)', () => {
+    new Fn.Lambda(stack, 'AuthFn', { runtime: 'nodejs20', handler: 'a.handler', code: '.' });
+    new Fn.Lambda(stack, 'HealthFn', { runtime: 'nodejs20', handler: 'h.handler', code: '.' });
+    new Fn.Lambda(stack, 'ProfileFn', { runtime: 'nodejs20', handler: 'p.handler', code: '.' });
+    new Fn.ApiGateway(stack, 'Api', { name: 'API', type: 'HTTP', routes: [
+      { method: 'GET', path: '/health', lambdaId: 'HealthFn', authType: 'NONE' },
+      { method: 'GET', path: '/profile', lambdaId: 'ProfileFn', authorizerLambdaId: 'AuthFn' },
+    ] });
+    const tpl = provider.synthesize(stack) as any;
+    const routes = Object.values(tpl.Resources).filter((r: any) => r.Type === 'AWS::ApiGatewayV2::Route') as any[];
+    const health = routes.find(r => r.Properties.RouteKey === 'GET /health');
+    const profile = routes.find(r => r.Properties.RouteKey === 'GET /profile');
+    expect(health.Properties.AuthorizationType).toBeUndefined(); // pública
+    expect(profile.Properties.AuthorizationType).toBe('CUSTOM'); // protegida
+    // authorizer da rota foi criado
+    expect(Object.values(tpl.Resources).some((r: any) => r.Type === 'AWS::ApiGatewayV2::Authorizer')).toBe(true);
+  });
 });
