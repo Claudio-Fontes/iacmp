@@ -524,6 +524,7 @@ new Fn.ApiGateway(stack, 'Api', {
 });
 export default stack;
 \`\`\`
+**REGRA — API WebSocket (\`type: 'WEBSOCKET'\`):** as rotas são as rotas especiais do WebSocket, e o \`path\` é a própria RouteKey (\`$connect\`, \`$disconnect\`, \`$default\`, ou o nome da action) — o \`method\` é irrelevante (use \`'ANY'\`). Ex: \`routes: [{ method: 'ANY', path: '$connect', lambdaId: 'ConnectFn' }, { method: 'ANY', path: '$disconnect', lambdaId: 'DisconnectFn' }, { method: 'ANY', path: '$default', lambdaId: 'MessageFn' }]\`. O synth já configura \`RouteSelectionExpression\`, \`IntegrationMethod\` e a Route-key corretos. **IAM dos handlers WebSocket:** a Policy.IAM de cada Lambda precisa das actions do DATASTORE que ela usa (ex: \`dynamodb:PutItem\`/\`DeleteItem\`/\`Scan\` na ConnectionsTable) ALÉM de \`execute-api:ManageConnections\` (para enviar mensagens de volta) — só \`execute-api\` não basta e a conexão falha com AccessDenied. **Handler:** salve/leia a conexão via DocumentClient com JSON simples (\`new PutCommand({ TableName, Item: { connectionId, expiresAt } })\` com \`DynamoDBDocumentClient.from(...)\` — NUNCA o formato tipado \`{ connectionId: { S: id } }\`). Para responder/broadcast use \`@aws-sdk/client-apigatewaymanagementapi\` com \`endpoint\` montado de \`event.requestContext.domainName\`/\`stage\`.
 
 \`authType\` não cria nenhum provedor de identidade — apenas diz ao gateway qual mecanismo de autenticação validar:
 - \`NONE\`: rota pública, sem autenticação

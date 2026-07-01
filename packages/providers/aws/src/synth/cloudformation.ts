@@ -1666,6 +1666,8 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
           // descrição, em vez de mandar string vazia como default.
           ...(props.description ? { Description: props.description as string } : {}),
           ...(apigwType !== 'REST' ? { ProtocolType: apigwType } : {}),
+          // WEBSOCKET exige RouteSelectionExpression (qual campo do payload escolhe a rota).
+          ...(apigwType === 'WEBSOCKET' ? { RouteSelectionExpression: '$request.body.action' } : {}),
           ...(apigwType !== 'REST' && props.cors ? { CorsConfiguration: { AllowOrigins: ['*'], AllowMethods: ['*'], AllowHeaders: ['*'] } } : {}),
         },
       }]];
@@ -1883,7 +1885,9 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
             Type: 'AWS::ApiGatewayV2::Route',
             Properties: {
               ApiId: { Ref: logicalId },
-              RouteKey: `${r.method} ${r.path}`,
+              // WEBSOCKET: a RouteKey é só o nome da rota ($connect/$disconnect/$default
+              // ou a action). HTTP: '<método> <path>' (ex: 'GET /items').
+              RouteKey: apigwType === 'WEBSOCKET' ? (r.path as string) : `${r.method} ${r.path}`,
               ...(r.lambdaId ? { Target: { 'Fn::Sub': `integrations/\${${routeId}Integration}` } } : {}),
               ...(routeAuthId ? { AuthorizationType: 'CUSTOM', AuthorizerId: { Ref: routeAuthId } } : {}),
             },
@@ -1896,7 +1900,11 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
                 ApiId: { Ref: logicalId },
                 IntegrationType: 'AWS_PROXY',
                 IntegrationUri: buildInvocationUri(r.lambdaId as string, ctx),
-                PayloadFormatVersion: '2.0',
+                // WEBSOCKET exige IntegrationMethod POST e NÃO aceita
+                // PayloadFormatVersion (essa prop é exclusiva do HTTP API).
+                ...(apigwType === 'WEBSOCKET'
+                  ? { IntegrationMethod: 'POST' }
+                  : { PayloadFormatVersion: '2.0' }),
               },
             }]);
           }
