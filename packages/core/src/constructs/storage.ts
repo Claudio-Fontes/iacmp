@@ -11,6 +11,13 @@ export interface StorageBucketProps {
     expireAfterDays?: number;
     transitionToGlacierDays?: number;
   }>;
+  /** Regras CORS — necessário para upload/download direto do browser (ex: presigned URL). */
+  cors?: Array<{
+    allowedMethods: Array<'GET' | 'PUT' | 'POST' | 'DELETE' | 'HEAD'>;
+    allowedOrigins?: string[];
+    allowedHeaders?: string[];
+    maxAgeSeconds?: number;
+  }>;
 }
 
 export interface StorageFileSystemProps {

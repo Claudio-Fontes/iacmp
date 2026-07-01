@@ -42,6 +42,8 @@ export interface SynthContext {
   dbSecretSuffix: Map<string, string>;
   /** IDs de Secret.Vault — o próprio logicalId É o secret (Ref retorna o ARN). */
   secretVaults: Set<string>;
+  /** IDs de Storage.Bucket — para resolver ARN/nome em policies e env vars. */
+  s3Buckets: Set<string>;
   /** IDs de Function.Lambda que têm vpcId definido — precisam de VPCAccessExecutionRole. */
   vpcLambdas: Set<string>;
   /** Perfil de ambiente (tier da conta, região) — fonte dos defaults derivados. */
@@ -199,6 +201,16 @@ function resolveSecurityGroupId(id: string, ctx: SynthContext): unknown {
  * Resolve o ARN de uma fila SQS referenciada por id de construct (Messaging.Queue)
  * → Fn::GetAtt local / Fn::ImportValue cross-stack. ARN literal passa inalterado.
  */
+/** Normaliza o valor de um rate() do EventBridge: '1 hours'→'1 hour', '5 minute'→'5 minutes'.
+ *  A AWS exige singular quando o valor é 1 e plural caso contrário. */
+function normalizeRate(rate: string): string {
+  const m = /^(\d+)\s+(minute|minutes|hour|hours|day|days)$/i.exec(rate.trim());
+  if (!m) return rate;
+  const n = parseInt(m[1], 10);
+  const unit = m[2].toLowerCase().replace(/s$/, '');
+  return `${n} ${unit}${n === 1 ? '' : 's'}`;
+}
+
 function resolveQueueArn(value: string, ctx: SynthContext): unknown {
   if (value.startsWith('arn:')) return value;
   const ownerStack = ctx.registry.get(value);
@@ -209,13 +221,30 @@ function resolveQueueArn(value: string, ctx: SynthContext): unknown {
 }
 
 function resolvePolicyResource(value: string, ctx: SynthContext): unknown {
-  // Padrão "<id>.SecretArn"/".Arn" (Secret.Vault etc).
+  // Referência a ARN de bucket S3, aceitando sufixo de path e ".arn" opcional:
+  // "UploadsBucket.arn/*", "UploadsBucket/*", "UploadsBucket.arn", "UploadsBucket".
+  const s3Match = /^([^./]+)(?:\.arn)?(\/.*)?$/i.exec(value);
+  if (s3Match) {
+    const id = s3Match[1];
+    const suffix = s3Match[2] ?? '';
+    const reg = ctx.registry.get(id);
+    if (reg && ctx.s3Buckets.has(id)) {
+      const logicalId = id.replace(/[^a-zA-Z0-9]/g, '');
+      const bucketArn = reg === ctx.currentStackName
+        ? { 'Fn::GetAtt': [logicalId, 'Arn'] }
+        : { 'Fn::ImportValue': `${reg}-${id}-Arn` };
+      // Sem sufixo → o próprio ARN; com sufixo (ex: /*) → Fn::Sub concatenando.
+      if (!suffix) return bucketArn;
+      return { 'Fn::Sub': [`\${BArn}${suffix}`, { BArn: bucketArn }] };
+    }
+  }
+  // Padrão "<id>.SecretArn"/".Arn" (Secret.Vault, filas).
   const match = /^([^.]+)\.(SecretArn|Arn)$/.exec(value);
   if (match && ctx.registry.has(match[1])) {
     if (ctx.secretVaults.has(match[1])) return resolveEnvVarValue(`${match[1]}.SecretArn`, ctx);
-    return resolveQueueArn(match[1], ctx); // GetAtt Arn genérico
+    return resolveQueueArn(match[1], ctx);
   }
-  // Id de construct cru (ex: 'TaskQueue' passado como taskQueue.id em resources) → ARN.
+  // Id de construct cru (ex: 'TaskQueue' em resources) → ARN.
   if (ctx.registry.has(value)) {
     if (ctx.secretVaults.has(value)) return resolveEnvVarValue(`${value}.SecretArn`, ctx);
     return resolveQueueArn(value, ctx);
@@ -224,12 +253,19 @@ function resolvePolicyResource(value: string, ctx: SynthContext): unknown {
 }
 
 function resolveEnvVarValue(value: string, ctx: SynthContext): unknown {
-  const match = /^([^.]+)\.(Endpoint|Port|SecretArn|Username|Password|QueueUrl|QueueArn|Arn|TopicArn)$/.exec(value);
+  const match = /^([^.]+)\.(Endpoint|Port|SecretArn|Username|Password|QueueUrl|QueueArn|Arn|arn|TopicArn|BucketName|Name|name)$/.exec(value);
   if (!match) return value;
-  const [, constructId, field] = match;
+  const [, constructId, fieldRaw] = match;
+  const field = fieldRaw === 'arn' ? 'Arn' : fieldRaw === 'name' ? 'Name' : fieldRaw;
   const ownerStack = ctx.registry.get(constructId);
   if (!ownerStack) return value;
   const logicalId = constructId.replace(/[^a-zA-Z0-9]/g, '');
+
+  // BucketName/Name: Ref de AWS::S3::Bucket retorna o nome real (com sufixo CFN).
+  if (field === 'BucketName' || field === 'Name') {
+    if (ownerStack === ctx.currentStackName) return { Ref: logicalId };
+    return { 'Fn::ImportValue': `${ownerStack}-${constructId}-Name` };
+  }
 
   // SQS/SNS: QueueUrl = Ref (a URL da fila); QueueArn/Arn/TopicArn = GetAtt Arn.
   if (field === 'QueueUrl') {
@@ -523,6 +559,16 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
                 ...(r.transitionToGlacierDays ? {
                   Transitions: [{ TransitionInDays: r.transitionToGlacierDays, StorageClass: 'GLACIER' }],
                 } : {}),
+              })),
+            },
+          } : {}),
+          ...((props.cors as Array<Record<string, unknown>> | undefined)?.length ? {
+            CorsConfiguration: {
+              CorsRules: (props.cors as Array<Record<string, unknown>>).map(c => ({
+                AllowedMethods: c.allowedMethods,
+                AllowedOrigins: (c.allowedOrigins as string[]) ?? ['*'],
+                AllowedHeaders: (c.allowedHeaders as string[]) ?? ['*'],
+                ...(c.maxAgeSeconds !== undefined ? { MaxAge: c.maxAgeSeconds } : {}),
               })),
             },
           } : {}),
@@ -1615,24 +1661,51 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
 
       for (const r of rules) {
         const ruleName = ((r.name as string) ?? 'rule').replace(/[^a-zA-Z0-9]/g, '');
+        const ruleLogicalId = `${logicalId}${ruleName}Rule`;
         const pattern: Record<string, unknown> = {};
         if (r.source) pattern['source'] = r.source;
         if (r.detailTypes) pattern['detail-type'] = r.detailTypes;
 
-        // Ref ao bus quando customizado — CloudFormation infere a dependência
-        // e garante que o bus existe antes de criar a rule.
+        // Agendamento: cron('...') ou rate('...'). CloudFormation exige o wrapper.
+        const scheduleExpression = r.cron
+          ? `cron(${r.cron})`
+          : r.rate
+          ? `rate(${normalizeRate(r.rate as string)})`
+          : undefined;
+
+        // Target: resolve targetLambdaId (ou targetArn com id) → ARN da Lambda.
+        const targetLambdaId = (r.targetLambdaId as string | undefined)
+          ?? (typeof r.targetArn === 'string' && ctx.registry.has(r.targetArn) ? (r.targetArn as string) : undefined);
+        const targetArnValue = targetLambdaId
+          ? resolveLambdaArnRef(targetLambdaId, ctx)
+          : (r.targetArn as string | undefined);
+
         const eventBusName = busName !== 'default' ? { Ref: `${logicalId}Bus` } : 'default';
 
-        entries.push([`${logicalId}${ruleName}Rule`, {
+        entries.push([ruleLogicalId, {
           Type: 'AWS::Events::Rule',
           Properties: {
             Name: r.name as string,
-            EventBusName: eventBusName,
-            EventPattern: pattern,
+            // ScheduleExpression e EventBusName custom são mutuamente exclusivos
+            // com EventPattern só quando faz sentido: agendada não usa pattern.
+            ...(scheduleExpression ? { ScheduleExpression: scheduleExpression } : { EventBusName: eventBusName, EventPattern: pattern }),
             State: 'ENABLED',
-            ...(r.targetArn ? { Targets: [{ Id: `${ruleName}Target`, Arn: r.targetArn as string }] } : {}),
+            ...(targetArnValue ? { Targets: [{ Id: `${ruleName}Target`, Arn: targetArnValue }] } : {}),
           },
         }]);
+
+        // Permissão para o EventBridge invocar a Lambda alvo.
+        if (targetLambdaId) {
+          entries.push([`${ruleLogicalId}Permission`, {
+            Type: 'AWS::Lambda::Permission',
+            Properties: {
+              Action: 'lambda:InvokeFunction',
+              FunctionName: resolveLambdaArnRef(targetLambdaId, ctx),
+              Principal: 'events.amazonaws.com',
+              SourceArn: { 'Fn::GetAtt': [ruleLogicalId, 'Arn'] },
+            },
+          }]);
+        }
       }
 
       return entries;
@@ -2019,10 +2092,12 @@ export function synthesize(stack: Stack, allStacks?: Stack[], profile: Environme
   const vpcLambdas = new Set<string>();
   const dbSecretSuffix = new Map<string, string>();
   const secretVaults = new Set<string>();
+  const s3Buckets = new Set<string>();
   for (const s of universe) {
     for (const c of s.constructs) {
       registry.set(c.id, s.name);
       if (c.type === 'Secret.Vault') secretVaults.add(c.id);
+      if (c.type === 'Storage.Bucket') s3Buckets.add(c.id);
       if (c.type === 'Policy.IAM') {
         const p = c.props as Record<string, unknown>;
         if (p.attachType === 'lambda' && typeof p.attachTo === 'string') {
@@ -2047,7 +2122,7 @@ export function synthesize(stack: Stack, allStacks?: Stack[], profile: Environme
       }
     }
   }
-  const ctx: SynthContext = { currentStackName: stack.name, registry, lambdaRoles, vpcLambdas, dbSecretSuffix, secretVaults, profile };
+  const ctx: SynthContext = { currentStackName: stack.name, registry, lambdaRoles, vpcLambdas, dbSecretSuffix, secretVaults, s3Buckets, profile };
 
   for (const construct of stack.constructs) {
     const entries = synthesizeConstruct(construct, ctx);
@@ -2086,6 +2161,18 @@ export function synthesize(stack: Stack, allStacks?: Stack[], profile: Environme
       outputs[`${logicalId}SecretArn`] = {
         Value: { Ref: logicalId },
         Export: { Name: `${stack.name}-${construct.id}-SecretArn` },
+      };
+    }
+    if (construct.type === 'Storage.Bucket') {
+      // Nome (Ref) e ARN — para cross-stack (env var BUCKET, policy resources).
+      const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
+      outputs[`${logicalId}Name`] = {
+        Value: { Ref: logicalId },
+        Export: { Name: `${stack.name}-${construct.id}-Name` },
+      };
+      outputs[`${logicalId}Arn`] = {
+        Value: { 'Fn::GetAtt': [logicalId, 'Arn'] },
+        Export: { Name: `${stack.name}-${construct.id}-Arn` },
       };
     }
     if (construct.type === 'Function.Lambda') {

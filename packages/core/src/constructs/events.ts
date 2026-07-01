@@ -4,6 +4,11 @@ export interface EventBridgeRule {
   name: string;
   source?: string[];
   detailTypes?: string[];
+  /** Agendamento cron (ex: '0 8 * * ? *') OU rate (ex: '1 hour', '5 minutes'). Um dos dois para rule agendada. */
+  cron?: string;
+  rate?: string;
+  /** Alvo da rule: id de um Fn.Lambda (o synth resolve o ARN e cria a permissão) ou ARN literal. */
+  targetLambdaId?: string;
   targetArn?: string;
   description?: string;
 }

@@ -1,4 +1,4 @@
-import { Stack, Compute, Storage, Network, Database, Fn, Cache, Messaging, Secret, Custom, Policy, Workflow } from '@iacmp/core';
+import { Stack, Compute, Storage, Network, Database, Fn, Cache, Messaging, Secret, Custom, Policy, Workflow, Events } from '@iacmp/core';
 import { AWSProvider } from '../src';
 
 describe('AWSProvider', () => {
@@ -919,6 +919,56 @@ describe('AWSProvider', () => {
     expect(esm.Properties.BatchSize).toBe(10);
     // BisectBatchOnFunctionError NÃO é suportado para SQS — não deve aparecer
     expect(esm.Properties.BisectBatchOnFunctionError).toBeUndefined();
+  });
+
+  test('EventBridge cron/rate → ScheduleExpression + target Lambda + permissão (caso openai33)', () => {
+    new Fn.Lambda(stack, 'ReportFn', { runtime: 'nodejs20', handler: 'r.handler', code: '.' });
+    new Events.EventBridge(stack, 'Sched', { rules: [
+      { name: 'Daily', cron: '0 8 * * ? *', targetLambdaId: 'ReportFn' },
+      { name: 'Hourly', rate: '1 hour', targetLambdaId: 'ReportFn' },
+    ] });
+    const tpl = provider.synthesize(stack) as any;
+    const rules = Object.values(tpl.Resources).filter((r: any) => r.Type === 'AWS::Events::Rule') as any[];
+    const daily = rules.find(r => r.Properties.Name === 'Daily');
+    const hourly = rules.find(r => r.Properties.Name === 'Hourly');
+    expect(daily.Properties.ScheduleExpression).toBe('cron(0 8 * * ? *)');
+    expect(hourly.Properties.ScheduleExpression).toBe('rate(1 hour)');
+    expect(daily.Properties.Targets[0].Arn).toEqual({ 'Fn::GetAtt': ['ReportFn', 'Arn'] });
+    const perms = Object.values(tpl.Resources).filter((r: any) => r.Type === 'AWS::Lambda::Permission') as any[];
+    expect(perms.some(p => p.Properties.Principal === 'events.amazonaws.com')).toBe(true);
+  });
+
+  test('EventBridge rate normaliza singular/plural', () => {
+    new Fn.Lambda(stack, 'F', { runtime: 'nodejs20', handler: 'f.handler', code: '.' });
+    new Events.EventBridge(stack, 'S', { rules: [
+      { name: 'R1', rate: '1 hours', targetLambdaId: 'F' },
+      { name: 'R5', rate: '5 minute', targetLambdaId: 'F' },
+    ] });
+    const tpl = provider.synthesize(stack) as any;
+    const rules = Object.values(tpl.Resources).filter((r: any) => r.Type === 'AWS::Events::Rule') as any[];
+    expect(rules.find(r => r.Properties.Name === 'R1').Properties.ScheduleExpression).toBe('rate(1 hour)');
+    expect(rules.find(r => r.Properties.Name === 'R5').Properties.ScheduleExpression).toBe('rate(5 minutes)');
+  });
+
+  test('Storage.Bucket cors → CorsConfiguration (caso openai32 upload)', () => {
+    new Storage.Bucket(stack, 'Uploads', { versioning: true,
+      cors: [{ allowedMethods: ['PUT', 'GET'], allowedOrigins: ['*'], maxAgeSeconds: 3000 }] });
+    const tpl = provider.synthesize(stack) as any;
+    const cors = tpl.Resources.Uploads.Properties.CorsConfiguration;
+    expect(cors.CorsRules[0].AllowedMethods).toEqual(['PUT', 'GET']);
+    expect(cors.CorsRules[0].MaxAge).toBe(3000);
+  });
+
+  test('bucket .name em env var e .arn/* em policy → refs reais (caso openai32)', () => {
+    new Storage.Bucket(stack, 'Uploads', { versioning: false });
+    new Fn.Lambda(stack, 'UpFn', { runtime: 'nodejs20', handler: 'u.handler', code: '.',
+      environment: { BUCKET: 'Uploads.name' } });
+    new Policy.IAM(stack, 'UpPolicy', { attachTo: 'UpFn', attachType: 'lambda',
+      statements: [{ effect: 'Allow', actions: ['s3:PutObject'], resources: ['Uploads.arn/*'] }] });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.UpFn.Properties.Environment.Variables.BUCKET).toEqual({ Ref: 'Uploads' });
+    const res = tpl.Resources.UpPolicyRole.Properties.Policies[0].PolicyDocument.Statement[0].Resource[0];
+    expect(res).toEqual({ 'Fn::Sub': ['${BArn}/*', { BArn: { 'Fn::GetAtt': ['Uploads', 'Arn'] } }] });
   });
 
   test('Messaging.Queue dlqArn por id de construct → RedrivePolicy com ARN resolvido', () => {
