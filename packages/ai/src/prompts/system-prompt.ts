@@ -386,6 +386,16 @@ new Database.DocumentDB(stack, 'LogicalId', {
   securityGroupIds?: string[],
 });
 \`\`\`
+**REGRA — handler que conecta no DocumentDB (driver \`mongodb\`):** o handler NÃO pode ter connection string hardcoded nem placeholder — monte a URI a partir das env vars. Passe nas env vars da Lambda: \`DB_HOST: '<DbId>.Endpoint'\`, \`DB_PORT: '<DbId>.Port'\`, \`DB_PASSWORD: '<DbId>.Password'\` (dynamic-ref resolvido no deploy — NÃO buscar do Secrets Manager em runtime, que uma Lambda em subnet privada sem NAT não alcança), \`DB_USER: 'docdbadmin'\`, \`DB_NAME: 'documents'\`. DocumentDB EXIGE TLS e NÃO suporta retryable writes. Padrão (o cliente fora do handler, reusa conexão):
+\`\`\`typescript
+import { MongoClient } from 'mongodb';
+import * as fs from 'fs';
+// DocumentDB exige o CA bundle da Amazon RDS — baixe global-bundle.pem e inclua no deploy (ver nextSteps).
+const uri = \`mongodb://\${process.env.DB_USER}:\${encodeURIComponent(process.env.DB_PASSWORD!)}@\${process.env.DB_HOST}:\${process.env.DB_PORT}/?tls=true&tlsCAFile=global-bundle.pem&replicaSet=rs0&readPreference=secondaryPreferred&retryWrites=false\`;
+let client: MongoClient;
+async function db() { if (!client) client = await MongoClient.connect(uri); return client.db(process.env.DB_NAME); }
+\`\`\`
+Em \`nextSteps\`: avisar que o \`global-bundle.pem\` (CA da RDS) precisa ser baixado (\`curl -o global-bundle.pem https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem\`) e empacotado junto ao handler. (DocumentDB fica DENTRO da VPC — não precisa de VpcEndpoint; a Lambda alcança pela subnet privada + SG na porta 27017.)
 
 ### Database.DynamoDB — DynamoDB / Cosmos DB / Bigtable
 \`\`\`typescript
