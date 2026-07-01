@@ -59,11 +59,16 @@ export async function renderAndConfirm(
   if (newCount > 0) parts.push(t.newCount(newCount));
   console.log(chalk.dim('\n  ' + parts.join(' · ') + '\n'));
 
+  // Sem TTY (stdin de /dev/null, pipe, CI): não dá pra perguntar — o readline
+  // já está fechado e chamar ask() lançaria ERR_USE_AFTER_CLOSE. Nesse modo
+  // não-interativo, auto-aplica a geração (é o comportamento esperado de
+  // `iacmp ai "..." < /dev/null` em script). Interativo faz a pergunta normal.
   const isTTY = process.stdin.isTTY;
+  if (!isTTY) return true;
   while (true) {
     const answer = await ask(t.applyPrompt);
     const normalized = answer.toLowerCase().trim();
     if (normalized === 'y') return true;
-    if (normalized === 'n' || normalized === '' || !isTTY) return false;
+    if (normalized === 'n' || normalized === '') return false;
   }
 }

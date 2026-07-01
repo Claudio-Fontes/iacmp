@@ -42,6 +42,68 @@ function resolveLambdaCodePaths(ctx: DeployContext): string {
 }
 
 /**
+ * Compila E EMPACOTA (bundle) os handlers TypeScript antes do
+ * `cloudformation package`. O synth aponta o `Code` da Lambda para o diretório
+ * de saída (ex: `dist/`), mas o deploy não roda build — e, mesmo compilando com
+ * `tsc`, o pacote conteria só o JS do handler SEM as dependências de terceiros
+ * (ex: `ioredis`), fazendo a Lambda falhar em runtime com `Cannot find module`.
+ * Usamos esbuild para gerar um bundle self-contained (deps inlinadas), marcando
+ * `@aws-sdk/*` como external (o runtime Node da Lambda já provê o SDK v3).
+ */
+export function ensureLambdaCodeBuilt(ctx: DeployContext): void {
+  if (ctx.dryRun || !ctx.templatePath) return; // dry-run não executa efeitos locais
+  const raw = fs.readFileSync(ctx.templatePath, 'utf-8');
+  const template = JSON.parse(raw) as { Resources?: Record<string, { Type?: string; Properties?: Record<string, unknown> }> };
+
+  // Coleta (arquivo de saída .js → fonte .ts/.js do handler) por Lambda.
+  const jobs = new Map<string, string>();
+  for (const resource of Object.values(template.Resources ?? {})) {
+    if (resource.Type !== 'AWS::Lambda::Function') continue;
+    const code = resource.Properties?.Code;
+    const handler = resource.Properties?.Handler;
+    if (typeof code !== 'string' || typeof handler !== 'string') continue;
+
+    const handlerModule = handler.replace(/\.[^./]+$/, ''); // tira o .export final
+    const stem = handlerModule.replace(/^(\.\/)?(dist|src)\//, '');
+    const entry = [
+      path.join(ctx.cwd, 'src', `${stem}.ts`),
+      path.join(ctx.cwd, 'src', `${stem}.js`),
+    ].find(p => fs.existsSync(p));
+    if (!entry) continue; // sem fonte — nada a bundlar (handler pré-compilado à parte)
+
+    const outfile = path.resolve(ctx.cwd, code, `${handlerModule}.js`);
+    jobs.set(outfile, entry);
+  }
+  if (jobs.size === 0) return;
+
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  let esbuild: { buildSync: (opts: Record<string, unknown>) => unknown };
+  try {
+    esbuild = require('esbuild');
+  } catch {
+    throw new Error('esbuild não encontrado — não foi possível empacotar os handlers da Lambda. Rode `npm install` no iacmp.');
+  }
+
+  for (const [outfile, entry] of jobs) {
+    fs.mkdirSync(path.dirname(outfile), { recursive: true });
+    try {
+      esbuild.buildSync({
+        entryPoints: [entry],
+        outfile,
+        bundle: true,
+        platform: 'node',
+        target: 'node20',
+        format: 'cjs',
+        external: ['@aws-sdk/*'], // provido pelo runtime da Lambda
+        logLevel: 'silent',
+      });
+    } catch (err) {
+      throw new Error(`Falha ao empacotar o handler ${path.relative(ctx.cwd, entry)} com esbuild:\n${(err as Error).message}`);
+    }
+  }
+}
+
+/**
  * `aws cloudformation package`/`deploy` não têm um equivalente ao
  * `--resolve-s3` do SAM CLI — exigem `--s3-bucket` explícito sempre. Resolve
  * um nome determinístico (por conta+região) para não precisar pedir esse
@@ -190,6 +252,9 @@ export const awsExecutor: DeployExecutor = {
     // `aws cloudformation package` não cria o diretório de destino — garante
     // que existe antes (operação local, sem efeito na nuvem, segura em --dry-run).
     fs.mkdirSync(path.dirname(packaged), { recursive: true });
+    // Compila os handlers TS (dist/) antes de empacotar — o synth referencia a
+    // saída do build, que o deploy precisa gerar.
+    ensureLambdaCodeBuilt(ctx);
     const inputTemplate = resolveLambdaCodePaths(ctx);
 
     const accountId = getAccountId();

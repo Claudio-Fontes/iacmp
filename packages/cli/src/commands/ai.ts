@@ -34,6 +34,18 @@ type AskFn = (question: string) => Promise<string>;
 // Arquivos gerenciados pelo projeto/bootstrap — a IA nunca deve gerá-los.
 const PROTECTED_FILES = new Set(['package.json', 'package-lock.json', 'tsconfig.json', 'iacmp.json', '.env', '.gitignore']);
 
+// Um pacote traz tipos próprios quando declara "types"/"typings" no package.json
+// ou expõe um index.d.ts na raiz. Se não, o handler que o importa precisa do
+// @types/<pkg> pra passar no tsc do projeto (noImplicitAny).
+function hasBundledTypes(cwd: string, mod: string): boolean {
+  const modDir = path.join(cwd, 'node_modules', mod);
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(modDir, 'package.json'), 'utf-8'));
+    if (pkg.types || pkg.typings) return true;
+  } catch { /* sem package.json legível */ }
+  return fs.existsSync(path.join(modDir, 'index.d.ts'));
+}
+
 function stripProtectedFiles(parsed: AIGeneratedResponse): void {
   const dropped = parsed.files.filter(f => PROTECTED_FILES.has(f.path.split('/').pop() ?? ''));
   if (dropped.length > 0) {
@@ -280,7 +292,19 @@ async function runGeneration(
         const installSpinner = ora({ text: `Instalando dependências: ${missingModules.join(', ')}...`, spinner: 'dots', discardStdin: false }).start();
         try {
           cp.execSync(`npm install ${missingModules.join(' ')}`, { cwd, stdio: 'pipe' });
-          installSpinner.succeed(`Instalado: ${missingModules.join(', ')}`);
+          // Alguns pacotes (ex: pg) não trazem tipos embutidos. Sem o @types/*
+          // correspondente, o `npm run build` (tsc com noImplicitAny) do projeto
+          // do usuário quebra com TS7016 — mesmo a validação interna (lenient)
+          // passando. Instala o @types de cada módulo sem tipos próprios,
+          // best-effort (pacote @types inexistente é ignorado).
+          const typesPkgs = missingModules
+            .filter(m => !m.startsWith('@')) // scoped (@aws-sdk/*) trazem tipos próprios
+            .filter(m => !hasBundledTypes(cwd, m))
+            .map(m => `@types/${m}`);
+          for (const t of typesPkgs) {
+            try { cp.execSync(`npm install -D ${t}`, { cwd, stdio: 'pipe' }); } catch { /* sem pacote @types — ignora */ }
+          }
+          installSpinner.succeed(`Instalado: ${[...missingModules, ...typesPkgs].join(', ')}`);
           result = validateTypeScript(tsFiles, cwd);
         } catch (installErr) {
           installSpinner.fail(`Falha ao instalar ${missingModules.join(', ')}`);
@@ -332,18 +356,31 @@ async function runGeneration(
     for (let attempt = 1; attempt <= MAX_SYNTH_RETRIES; attempt++) {
       const spinner = ora({ text: `Validando com iacmp synth (tentativa ${attempt}/${MAX_SYNTH_RETRIES})...`, spinner: 'dots', discardStdin: false }).start();
       const { success, output } = runSynthCapture(cwd, iacProvider);
-      if (success) {
-        spinner.succeed('Synth validado');
-        synthOk = true;
-        break;
+      let correctionMsg: string | null = null;
+      if (!success) {
+        spinner.fail(`Synth falhou — corrigindo automaticamente...`);
+        correctionMsg =
+          `O comando "iacmp synth" falhou com o seguinte erro:\n\n${output}\n\n` +
+          `Corrija os arquivos e retorne o JSON completo com TODOS os ${parsed.files.length} arquivo(s) da resposta anterior.`;
+      } else {
+        // Synth passou, mas o loop pode ter reescrito handlers (src/*.ts) sem
+        // revalidar TypeScript — um import quebrado (ex: DynamoDBClient vindo de
+        // @aws-sdk/lib-dynamodb) só apareceria no build do deploy. Revalida aqui.
+        const currentTs = parsed.files.filter(f => f.path.endsWith('.ts'));
+        const tsResult = currentTs.length > 0 ? validateTypeScript(currentTs, cwd) : { valid: true, errors: [] };
+        if (tsResult.valid) {
+          spinner.succeed('Synth validado');
+          synthOk = true;
+          break;
+        }
+        spinner.fail('Handler com erro de TypeScript — corrigindo automaticamente...');
+        correctionMsg =
+          `O synth passou, mas os handlers têm erros de TypeScript (o build do deploy vai falhar):\n\n${tsResult.errors.join('\n')}\n\n` +
+          `Corrija e retorne o JSON completo com TODOS os ${parsed.files.length} arquivo(s) da resposta anterior. ` +
+          `Lembre: DynamoDBClient vem de '@aws-sdk/client-dynamodb'; GetCommand/PutCommand/QueryCommand/ScanCommand vêm de '@aws-sdk/lib-dynamodb' e exigem DynamoDBDocumentClient.from(new DynamoDBClient({})).`;
       }
-      spinner.fail(`Synth falhou — corrigindo automaticamente...`);
-      if (attempt === MAX_SYNTH_RETRIES) break;
-      const originalFileCount = parsed.files.length;
-      session.addUserMessage(
-        `O comando "iacmp synth" falhou com o seguinte erro:\n\n${output}\n\n` +
-        `Corrija os arquivos e retorne o JSON completo com TODOS os ${originalFileCount} arquivo(s) da resposta anterior.`
-      );
+      if (attempt === MAX_SYNTH_RETRIES || !correctionMsg) break;
+      session.addUserMessage(correctionMsg);
       const retryChunks: string[] = [];
       const retrySpinner = ora({ text: 'Aguardando correção da IA...', spinner: 'dots', discardStdin: false }).start();
       try {

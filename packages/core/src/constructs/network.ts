@@ -17,6 +17,10 @@ export interface SecurityGroupRule {
   fromPort: number;
   toPort: number;
   cidr?: string;
+  /** Ingress: libera acesso a partir de OUTRO security group (id lógico). Tem precedência sobre cidr. */
+  sourceSecurityGroupId?: string;
+  /** Egress: libera saída para OUTRO security group (id lógico). */
+  destinationSecurityGroupId?: string;
   description?: string;
 }
 
@@ -88,6 +92,14 @@ export interface NetworkCDNProps {
   }>;
 }
 
+export interface NetworkVpcEndpointProps {
+  vpcId: string;
+  /** Serviços AWS acessados via Gateway Endpoint (grátis). */
+  services: Array<'dynamodb' | 's3'>;
+  /** Subnets privadas cujo tráfego deve rotear pelo endpoint (o synth cria a route table e associa). */
+  subnetIds: string[];
+}
+
 export interface NetworkDnsProps {
   zoneName: string;
   records: Array<{
@@ -155,6 +167,20 @@ export namespace Network {
     constructor(stack: Stack, readonly id: string, props: NetworkCDNProps) {
       if (!props.origins || props.origins.length === 0)
         throw new Error(`Network.CDN "${id}": origins não pode ser vazio`);
+      this.props = props as unknown as Record<string, unknown>;
+      stack.addConstruct(this);
+    }
+  }
+
+  export class VpcEndpoint implements BaseConstruct {
+    readonly type = 'Network.VpcEndpoint';
+    readonly props: Record<string, unknown>;
+    constructor(stack: Stack, readonly id: string, props: NetworkVpcEndpointProps) {
+      if (!props.vpcId) throw new Error(`Network.VpcEndpoint "${id}": vpcId é obrigatório`);
+      if (!props.services || props.services.length === 0)
+        throw new Error(`Network.VpcEndpoint "${id}": services não pode ser vazio`);
+      if (!props.subnetIds || props.subnetIds.length === 0)
+        throw new Error(`Network.VpcEndpoint "${id}": subnetIds não pode ser vazio`);
       this.props = props as unknown as Record<string, unknown>;
       stack.addConstruct(this);
     }

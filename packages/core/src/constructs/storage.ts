@@ -18,6 +18,15 @@ export interface StorageBucketProps {
     allowedHeaders?: string[];
     maxAgeSeconds?: number;
   }>;
+  /** Dispara uma Lambda quando um objeto é criado/removido no bucket (S3 → Lambda).
+   *  lambdaId = id de uma Fn.Lambda. O synth cria a NotificationConfiguration e a
+   *  Lambda::Permission necessárias. */
+  eventNotifications?: Array<{
+    lambdaId: string;
+    events?: string[];   // ex: ['s3:ObjectCreated:*'] (padrão)
+    prefix?: string;
+    suffix?: string;
+  }>;
 }
 
 export interface StorageFileSystemProps {

@@ -13,6 +13,8 @@ export interface DeployContext {
   region: string;
   resourceGroup?: string;
   projectId?: string;
+  /** true em --dry-run: planDeploy não deve executar efeitos locais (ex: build). */
+  dryRun?: boolean;
 }
 
 export interface DestroyContext {

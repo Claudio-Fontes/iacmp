@@ -198,6 +198,132 @@ describe('synth — comando (black-box)', () => {
       // nada gravado para o provider inválido
       expect(exists(dir, 'synth-out/foobar')).toBe(false);
     });
+
+    test('handler usa pg/SQL contra projeto DynamoDB-only: bloqueia em synth', () => {
+      dir = makeProject({
+        provider: 'aws',
+        stacks: {
+          'main-stack.js': `const { Stack, Fn, Database } = require('@iacmp/core');
+const stack = new Stack('main-stack');
+new Database.DynamoDB(stack, 'ProductsTable', { partitionKey: 'productId', partitionKeyType: 'S' });
+new Fn.Lambda(stack, 'GetProductsFn', { runtime: 'nodejs20', handler: 'dist/getProducts.handler', code: '.' });
+module.exports = stack;
+`,
+        },
+        files: {
+          'src/getProducts.ts': `import { Client } from 'pg';
+const db = new Client({ host: 'dynamodb.us-east-1.amazonaws.com' });
+export async function handler() {
+  await db.connect();
+  const r = await db.query('SELECT * FROM ProductsTable');
+  return { statusCode: 200, body: JSON.stringify(r.rows) };
+}
+`,
+        },
+      });
+      const r = runCli(['synth', '--provider', 'aws'], { cwd: dir });
+
+      expect(r.status).not.toBe(0);
+      expect(r.all).toMatch(/DynamoDB como banco SQL|driver SQL/i);
+      expect(r.all).toContain('getProducts.ts');
+    });
+
+    test('Lambda em VPC acessa DynamoDB sem Gateway VpcEndpoint: bloqueia em synth', () => {
+      dir = makeProject({
+        provider: 'aws',
+        stacks: {
+          'main-stack.js': `const { Stack, Fn, Network, Database } = require('@iacmp/core');
+const stack = new Stack('main-stack');
+new Network.VPC(stack, 'AppVpc', { cidr: '10.0.0.0/16' });
+new Network.Subnet(stack, 'PrivateSubnet1', { vpcId: 'AppVpc', cidr: '10.0.1.0/24' });
+new Database.DynamoDB(stack, 'ProductsTable', { partitionKey: 'productId', partitionKeyType: 'S' });
+new Fn.Lambda(stack, 'GetProductsFn', { runtime: 'nodejs20', handler: 'dist/getProducts.handler', code: '.', vpcId: 'AppVpc', subnetIds: ['PrivateSubnet1'], securityGroupIds: ['sg'] });
+module.exports = stack;
+`,
+        },
+        files: {
+          'src/getProducts.ts': `import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, GetCommand } from '@aws-sdk/lib-dynamodb';
+const doc = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+export async function handler() {
+  const r = await doc.send(new GetCommand({ TableName: 'ProductsTable', Key: { productId: '1' } }));
+  return { statusCode: 200, body: JSON.stringify(r.Item) };
+}
+`,
+        },
+      });
+      const r = runCli(['synth', '--provider', 'aws'], { cwd: dir });
+
+      expect(r.status).not.toBe(0);
+      expect(r.all).toMatch(/Gateway VPC Endpoint|VpcEndpoint/i);
+      expect(r.all).toContain('dynamodb');
+    });
+
+    test('Lambda em VPC acessa DynamoDB COM Gateway VpcEndpoint: passa', () => {
+      dir = makeProject({
+        provider: 'aws',
+        stacks: {
+          'vpc.js': `const { Stack, Network } = require('@iacmp/core');
+const stack = new Stack('vpc');
+new Network.VPC(stack, 'AppVpc', { cidr: '10.0.0.0/16' });
+new Network.Subnet(stack, 'PrivateSubnet1', { vpcId: 'AppVpc', cidr: '10.0.1.0/24' });
+new Network.SecurityGroup(stack, 'LambdaSG', { vpcId: 'AppVpc', description: 'lambda' });
+new Network.VpcEndpoint(stack, 'Gw', { vpcId: 'AppVpc', services: ['dynamodb'], subnetIds: ['PrivateSubnet1'] });
+module.exports = stack;
+`,
+          'db.js': `const { Stack, Database } = require('@iacmp/core');
+const stack = new Stack('db');
+new Database.DynamoDB(stack, 'ProductsTable', { partitionKey: 'productId', partitionKeyType: 'S' });
+module.exports = stack;
+`,
+          'api.js': `const { Stack, Fn } = require('@iacmp/core');
+const stack = new Stack('api');
+new Fn.Lambda(stack, 'GetProductsFn', { runtime: 'nodejs20', handler: 'dist/getProducts.handler', code: '.', vpcId: 'AppVpc', subnetIds: ['PrivateSubnet1'], securityGroupIds: ['LambdaSG'] });
+module.exports = stack;
+`,
+        },
+        files: {
+          'src/getProducts.ts': `import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, GetCommand } from '@aws-sdk/lib-dynamodb';
+const doc = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+export async function handler() {
+  const r = await doc.send(new GetCommand({ TableName: 'ProductsTable', Key: { productId: '1' } }));
+  return { statusCode: 200, body: JSON.stringify(r.Item) };
+}
+`,
+        },
+      });
+      const r = runCli(['synth', '--provider', 'aws'], { cwd: dir });
+
+      expect(r.status).toBe(0);
+    });
+
+    test('handler com DocumentClient contra DynamoDB: passa (não é falso positivo)', () => {
+      dir = makeProject({
+        provider: 'aws',
+        stacks: {
+          'main-stack.js': `const { Stack, Fn, Database } = require('@iacmp/core');
+const stack = new Stack('main-stack');
+new Database.DynamoDB(stack, 'ProductsTable', { partitionKey: 'productId', partitionKeyType: 'S' });
+new Fn.Lambda(stack, 'GetProductsFn', { runtime: 'nodejs20', handler: 'dist/getProducts.handler', code: '.' });
+module.exports = stack;
+`,
+        },
+        files: {
+          'src/getProducts.ts': `import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, GetCommand } from '@aws-sdk/lib-dynamodb';
+const doc = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+export async function handler() {
+  const r = await doc.send(new GetCommand({ TableName: 'ProductsTable', Key: { productId: '1' } }));
+  return { statusCode: 200, body: JSON.stringify(r.Item) };
+}
+`,
+        },
+      });
+      const r = runCli(['synth', '--provider', 'aws'], { cwd: dir });
+
+      expect(r.status).toBe(0);
+    });
   });
 
   describe('aws — referência entre stacks (Function.ApiGateway → Function.Lambda em outra stack)', () => {

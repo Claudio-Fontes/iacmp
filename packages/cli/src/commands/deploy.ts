@@ -118,6 +118,7 @@ export default class Deploy extends Command {
       region,
       resourceGroup: config.resourceGroup,
       projectId: config.projectId,
+      dryRun,
     };
 
     if (provider === 'terraform') {

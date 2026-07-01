@@ -71,6 +71,27 @@ new Compute.Container(stack, 'LogicalId', {
   environment?: Record<string, string>,
   subnetIds?: string[],          // AWS (Fargate) — sem isso o ECS não consegue rodar (precisa de pelo menos 1 subnet real)
   securityGroupIds?: string[],
+  minCapacity?: number,          // autoscaling de TASKS Fargate (mín) — gera ApplicationAutoScaling
+  maxCapacity?: number,          // autoscaling de TASKS Fargate (máx)
+  cpuTargetPercent?: number,     // alvo de CPU% do target-tracking (padrão 50)
+  targetGroupArn?: string,       // registra as tasks no ALB: '<LoadBalancerId>.TargetGroupArn'
+});
+\`\`\`
+**REGRA — autoscaling de tasks Fargate:** para "auto-scaling de N a M tasks" use \`minCapacity\`/\`maxCapacity\` (e opcional \`cpuTargetPercent\`) NO PRÓPRIO \`Compute.Container\` — o synth gera \`AWS::ApplicationAutoScaling::ScalableTarget\`+\`ScalingPolicy\`. NUNCA use \`Compute.AutoScaling\` para escalar tasks de container: \`Compute.AutoScaling\` é Auto Scaling Group de **EC2** (VMs), não tem a ver com ECS/Fargate.
+**REGRA — Container atrás de ALB:** um \`Compute.Container\` exposto por um \`Network.LoadBalancer\` (ALB) precisa de DOIS lados ligados: (1) no LoadBalancer, declare \`targetGroups: [{ name, port: <containerPort>, protocol: 'HTTP', healthCheckPath: '/' }]\` (o synth já faz o listener HTTP dar \`forward\` pro 1º target group); (2) no Container, aponte \`targetGroupArn: '<LoadBalancerId>.TargetGroupArn'\` e informe \`port\` — o synth registra as tasks no target group. Sem isso o ALB responde 404 e nunca alcança o container. Container NÃO fica atrás de \`Fn.ApiGateway\` (API Gateway é só para Lambda) — nunca coloque um container como \`lambdaId\` de uma rota de ApiGateway. NUM CENÁRIO SÓ DE CONTAINER (ECS/Fargate) NÃO GERE NENHUM \`Fn.ApiGateway\`.
+**Exemplo completo — Fargate atrás de ALB com autoscaling** (ALB + Container na MESMA stack; só listener HTTP:80, sem 443 sem certificado):
+\`\`\`typescript
+new Network.LoadBalancer(stack, 'AppAlb', {
+  vpcId: 'AppVpc', type: 'application', scheme: 'internet-facing',
+  subnetIds: ['PublicSubnet1', 'PublicSubnet2'], securityGroupIds: ['AlbSG'],
+  targetGroups: [{ name: 'app-tg', port: 3000, protocol: 'HTTP', healthCheckPath: '/' }],
+  listeners: [{ port: 80, protocol: 'HTTP' }],
+});
+new Compute.Container(stack, 'ApiService', {
+  image: 'minha-api:latest', cpu: 256, memory: 512, port: 3000, desiredCount: 2,
+  subnetIds: ['PrivateSubnet1', 'PrivateSubnet2'], securityGroupIds: ['EcsSG'],
+  minCapacity: 2, maxCapacity: 10,
+  targetGroupArn: 'AppAlb.TargetGroupArn',   // ← LIGA as tasks ao target group do ALB
 });
 \`\`\`
 
@@ -107,9 +128,18 @@ new Storage.Bucket(stack, 'LogicalId', {
       transitionToGlacierDays?: number,
     }
   ],
+  eventNotifications?: [      // dispara uma Lambda quando um objeto é criado no bucket (S3 → Lambda)
+    {
+      lambdaId: string,      // id de uma Fn.Lambda
+      events?: string[],     // padrão ['s3:ObjectCreated:*']
+      prefix?: string,       // filtra por prefixo da key (ex: 'incoming/')
+      suffix?: string,       // filtra por sufixo (ex: '.json')
+    }
+  ],
 });
 export default stack;
 \`\`\`
+**REGRA — pipeline "S3 dispara Lambda" (ObjectCreated):** quando uma Lambda deve ser ACIONADA por upload de arquivo no S3, declare o trigger em \`Storage.Bucket.eventNotifications: [{ lambdaId: 'MinhaFn', events: ['s3:ObjectCreated:*'] }]\` — o synth gera a NotificationConfiguration e a Lambda::Permission. NUNCA exponha essa Lambda por \`Fn.ApiGateway\` (o pipeline dispara sozinho no upload, não por HTTP) e NÃO invente rotas HTTP. O handler recebe o evento S3 (\`event.Records[].s3.object.key\`), não um request HTTP.
 
 ### Storage.FileSystem — EFS, Azure Files, Filestore
 \`\`\`typescript
@@ -163,6 +193,16 @@ new Network.Subnet(stack, 'LogicalId', {
 });
 \`\`\`
 
+### Network.VpcEndpoint — Gateway VPC Endpoint (DynamoDB / S3)
+\`\`\`typescript
+new Network.VpcEndpoint(stack, 'LogicalId', {
+  vpcId: string,                        // obrigatório
+  services: ['dynamodb' | 's3'],        // um ou ambos
+  subnetIds: ['PrivateSubnet1', ...],   // as subnets privadas cujo tráfego roteia pelo endpoint
+});
+\`\`\`
+**REGRA — Lambda em VPC que acessa DynamoDB ou S3:** uma Lambda em subnet privada NÃO alcança serviços da AWS fora da VPC (DynamoDB, S3) sem NAT. Como o iacmp não gera NAT, SEMPRE que uma \`Fn.Lambda\` estiver numa VPC (\`vpcId\` + \`subnetIds\`) e o handler acessar DynamoDB (\`@aws-sdk/lib-dynamodb\`) ou S3 (\`@aws-sdk/client-s3\`), adicione um \`Network.VpcEndpoint\` (Gateway, grátis) com o(s) \`services\` correspondente(s) e os mesmos \`subnetIds\` privados — na mesma stack da VPC/subnets. Sem isso a Lambda dá timeout. (Redis/RDS ficam DENTRO da VPC, então não precisam de endpoint.)
+
 ### Network.SecurityGroup — Security Group / NSG / Firewall Rules
 \`\`\`typescript
 new Network.SecurityGroup(stack, 'LogicalId', {
@@ -173,13 +213,16 @@ new Network.SecurityGroup(stack, 'LogicalId', {
       protocol: 'tcp' | 'udp' | 'icmp' | '-1',
       fromPort: number,
       toPort: number,
-      cidr?: string,
+      cidr?: string,                    // libera por faixa de IP
+      sourceSecurityGroupId?: string,   // OU libera acesso só a partir de OUTRO SG (id lógico)
       description?: string,
     }
   ],
-  egressRules?: [...],   // mesma estrutura; padrão: allow all egress
+  egressRules?: [...],   // mesma estrutura (use destinationSecurityGroupId p/ saída a outro SG); padrão: allow all egress
 });
 \`\`\`
+**REGRA — "acesso só do SG X":** quando o pedido é "libere a porta N apenas do SG da Lambda/app" (ex: Redis 6379, RDS 5432 só do SG da Lambda), use \`sourceSecurityGroupId: 'LambdaSG'\` no \`ingressRules\` — NUNCA \`cidr\` nem campos inexistentes como \`securityGroupIds\`. É o padrão de segurança correto e o único que o synth entende para fonte-SG.
+**REGRA — "egress liberado/aberto":** quando o SG deve ter saída livre (ex: "Security Group para Lambda com egress liberado"), NÃO declare \`egressRules\` — o synth já gera egress allow-all (\`-1\` para 0.0.0.0/0, todos os protocolos). NUNCA restrinja o egress a \`protocol: 'tcp'\` faixa 0-65535: isso bloqueia DNS (UDP 53) e a Lambda não resolve o hostname do Redis/serviço, dando timeout. Só declare \`egressRules\` quando o usuário pedir uma saída ESPECÍFICA e restrita.
 
 ### Network.WAF — Web Application Firewall
 \`\`\`typescript
@@ -221,13 +264,15 @@ new Network.LoadBalancer(stack, 'LogicalId', {
   targetGroups?: [
     {
       name: string,
-      port: number,
+      port: number,                 // = a porta do container (ex: 3000)
       protocol: 'HTTP' | 'HTTPS' | 'TCP',
       healthCheckPath?: string,
     }
   ],
 });
 \`\`\`
+**REGRA — ALB para Compute.Container:** declare \`targetGroups\` (o synth faz o listener HTTP dar \`forward\` pro 1º) e ligue o container com \`targetGroupArn: '<LoadBalancerId>.TargetGroupArn'\` (ver Compute.Container). O synth exporta \`<LoadBalancerId>.TargetGroupArn\` para uso cross-stack.
+**REGRA — HTTPS exige certificado:** um listener \`protocol: 'HTTPS'\` SÓ sobe com \`certificateArn\` (um certificado ACM). Sem domínio/certificado real (ex: teste, free tier), declare APENAS o listener HTTP:80 — o synth ignora um HTTPS sem \`certificateArn\` (a porta 443 simplesmente não existiria). Não gere listener 443 quando não houver certificado.
 
 ### Network.CDN — CloudFront, Azure CDN, Cloud CDN
 \`\`\`typescript
@@ -374,11 +419,13 @@ new Cache.Redis(stack, 'LogicalId', {
   automaticFailoverEnabled?: boolean,
   atRestEncryptionEnabled?: boolean,
   transitEncryptionEnabled?: boolean,
-  subnetGroupName?: string,
+  subnetIds?: string[],                 // AWS — 2 subnets privadas em AZs diferentes; o synth gera o CacheSubnetGroup real
   securityGroupIds?: string[],
 });
 export default stack;
 \`\`\`
+**REGRA Redis em VPC**: para Redis numa VPC, SEMPRE informe \`subnetIds\` (os IDs lógicos das subnets, ex: \`['PrivateSubnet1', 'PrivateSubnet2']\`) e \`securityGroupIds\` — NUNCA use \`subnetGroupName\` com um id de subnet cru (ElastiCache exige um SubnetGroup, não uma subnet; o synth cria o \`AWS::ElastiCache::SubnetGroup\` a partir de \`subnetIds\`). O synth exporta o endpoint como \`<LogicalId>.Endpoint\` e a porta como \`<LogicalId>.Port\` — use esses valores nas env vars da Lambda que conecta ao cache (ex: \`REDIS_HOST: 'ProductsCache.Endpoint'\`, \`REDIS_PORT: 'ProductsCache.Port'\`).
+**REGRA TLS no cliente Redis (CRÍTICO):** o synth liga \`transitEncryptionEnabled\` por padrão (\`true\`) — o ElastiCache passa a EXIGIR TLS. Um cliente ioredis que conecta em texto puro (\`new Redis({ host, port })\`) fica pendurado no handshake e a Lambda dá TIMEOUT (não erro claro). SEMPRE conecte com TLS: \`new Redis({ host: process.env.CACHE_HOST, port: Number(process.env.CACHE_PORT), tls: {} })\`. (Só omita \`tls: {}\` se você tiver explicitamente setado \`transitEncryptionEnabled: false\` no construct.) Como \`AuthToken\` fica desabilitado por padrão, não é preciso \`password\`.
 
 ### Cache.Memcached — ElastiCache Memcached
 \`\`\`typescript
@@ -420,14 +467,23 @@ export default stack;
 - **Priorize lógica real**: se o pedido do usuário descreve o que a função faz (ex: "salva a mensagem no DynamoDB", "chama a API da Anthropic e retorna a resposta"), implemente essa lógica de verdade.
   - Para serviços com API HTTP simples (ex: Anthropic, OpenAI, qualquer REST externo), use \`fetch\` nativo (disponível sem instalar nada no runtime \`nodejs18\`/\`nodejs20\`) em vez de instalar o SDK oficial do serviço — evita dependência extra que o iacmp não gerencia.
   - Para serviços da própria cloud que exigem assinatura de requisição (ex: DynamoDB, S3), use o SDK correspondente (\`@aws-sdk/client-dynamodb\`, etc.) — não dá pra assinar SigV4 só com \`fetch\`.
-  - **DynamoDB — use SEMPRE o DocumentClient** (\`@aws-sdk/lib-dynamodb\`: \`DynamoDBDocumentClient\`, \`PutCommand\`, \`GetCommand\`, \`ScanCommand\`, \`DeleteCommand\`), que aceita JSON simples (\`{ id: '1', name: 'x' }\`). NUNCA use o client low-level (\`PutItemCommand\` de \`@aws-sdk/client-dynamodb\`) com \`Item\` no formato tipado \`{ id: { S: '1' } }\` — misturar os dois formatos causa \`SerializationException: Unexpected value type\` em runtime.
+  - **Use SEMPRE o AWS SDK v3 (\`@aws-sdk/*\`), NUNCA o v2 (\`aws-sdk\`).** O runtime \`nodejs20\` provê o v3 embutido (imports \`@aws-sdk/*\` são externalizados no bundle); o pacote \`aws-sdk\` (v2) NÃO vem no runtime e ainda incha o bundle. Para S3 use \`@aws-sdk/client-s3\` com comandos: \`import { S3Client, GetObjectCommand, PutObjectCommand, CopyObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3'\`. NUNCA \`import { S3 } from 'aws-sdk'\` nem \`.promise()\` (padrão v2). Para ler o corpo de um objeto no v3: \`const r = await s3.send(new GetObjectCommand({...})); const body = await r.Body.transformToString();\`.
+  - **DynamoDB — use SEMPRE o DocumentClient** (\`@aws-sdk/lib-dynamodb\`: \`DynamoDBDocumentClient\`, \`PutCommand\`, \`GetCommand\`, \`ScanCommand\`, \`DeleteCommand\`, \`QueryCommand\`), que aceita JSON simples (\`{ id: '1', name: 'x' }\`). Os imports EXATOS (o \`DynamoDBClient\` vem de OUTRO pacote — nunca de \`lib-dynamodb\`):
+\`\`\`typescript
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
+const doc = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+\`\`\`
+    NUNCA importe \`DynamoDBClient\`/\`GetItemCommand\` de \`@aws-sdk/lib-dynamodb\` (não existem lá → erro TS2305 e o build do deploy quebra), e NUNCA use o client low-level (\`PutItemCommand\` de \`@aws-sdk/client-dynamodb\`) com \`Item\` no formato tipado \`{ id: { S: '1' } }\` — misturar os dois formatos causa \`SerializationException: Unexpected value type\` em runtime.
+  - **DynamoDB NÃO é um banco SQL.** NUNCA importe \`pg\`, \`mysql\`, \`mysql2\`, \`knex\` nem faça \`SELECT/INSERT/UPDATE/DELETE ... FROM <tabela>\` para acessar uma \`Database.DynamoDB\` — não existe conexão \`pg.Client\` nem SQL em DynamoDB; isso trava/falha em runtime. Acesse EXCLUSIVAMENTE via DocumentClient (\`GetCommand\` por chave, \`QueryCommand\` por partition key, \`ScanCommand\` para varredura). Só use um driver SQL (\`pg\`/\`mysql2\`) quando o projeto realmente tem um \`Database.SQL\`.
+  - **ioredis — import nomeado.** Use SEMPRE \`import { Redis } from 'ioredis';\` e \`new Redis({ host, port })\`. NUNCA \`import Redis from 'ioredis'\` (default) nem \`import * as Redis from 'ioredis'\` — com os tipos do ioredis v5 isso dá \`TS2351: This expression is not constructable\` e o build do deploy quebra.
   - Avise em \`nextSteps\` quando alguma dependência precisar ser instalada via \`npm install\` e, se aplicável, quais variáveis de ambiente (ex: \`ANTHROPIC_API_KEY\`) precisam ser configuradas na Lambda após o deploy.
 - **Nome físico dos recursos = construct ID**: o \`TableName\` de \`Database.DynamoDB(stack, 'MessagesTable', ...)\` na AWS será \`MessagesTable\` (igual ao construct ID). O mesmo vale para outros recursos com nome explícito no synth (SQS, SNS, etc.). Portanto, ao passar o nome do recurso como variável de ambiente da Lambda, use o mesmo string do construct ID — ex: \`environment: { TABLE_NAME: 'MessagesTable' }\` — nunca invente um nome diferente. Quando possível, prefira \`{ Ref: 'MessagesTable' } as any\` para garantir que o CloudFormation resolva o nome real em vez de depender de convenção.
 - Só gere um placeholder mínimo (\`return { statusCode: 200, body: JSON.stringify({...}) }\`) quando o pedido for puramente sobre infraestrutura, sem descrever a lógica de negócio — e avise no \`explanation\` que é um placeholder a ser substituído.
 
 ### Function.ApiGateway — API Gateway V2 / API Management / Cloud Endpoints
 
-**REGRA ABSOLUTA — API REST/HTTP = Fn.ApiGateway, NUNCA Network.LoadBalancer.** Quando o usuário pede uma "API REST", "API HTTP", "endpoints", "rotas GET/POST/PUT/DELETE" servidas por Lambdas, o ponto de entrada é SEMPRE um \`Fn.ApiGateway\` com \`routes[]\` apontando para os \`lambdaId\`. NUNCA use \`Network.LoadBalancer\` (ALB) para expor Lambdas — ALB é para conteiners/EC2 (Compute.Container, Compute.Instance), não para Lambda CRUD. Confundir os dois deixa a API sem ponto de entrada HTTP funcional.
+**REGRA ABSOLUTA — API REST/HTTP = Fn.ApiGateway, NUNCA Network.LoadBalancer.** Quando o usuário pede uma "API REST", "API HTTP", "endpoints", "rotas GET/POST/PUT/DELETE" servidas por Lambdas, o ponto de entrada é SEMPRE um \`Fn.ApiGateway\` com \`routes[]\` apontando para os \`lambdaId\`. NUNCA use \`Network.LoadBalancer\` (ALB) para expor Lambdas — ALB é para conteiners/EC2 (Compute.Container, Compute.Instance), não para Lambda CRUD. Confundir os dois deixa a API sem ponto de entrada HTTP funcional. E a recíproca: um \`Compute.Container\`/ECS é exposto por \`Network.LoadBalancer\` (ALB), NUNCA por \`Fn.ApiGateway\` — todo \`lambdaId\` de uma rota de ApiGateway TEM que ser o id de uma \`Fn.Lambda\` real; apontar uma rota para um container é inválido (não gere ApiGateway num cenário só de container).
 
 O ApiGateway é um construct SEPARADO das Lambdas — um único gateway pode agregar rotas de múltiplas Lambdas. SEMPRE gere o Fn.ApiGateway como construct independente na mesma stack, referenciando as Lambdas pelo \`lambdaId\`.
 
@@ -627,12 +683,14 @@ new Monitoring.Alarm(stack, 'LogicalId', {
   comparisonOperator?: 'GreaterThanThreshold' | 'LessThanThreshold' | 'GreaterThanOrEqualToThreshold' | 'LessThanOrEqualToThreshold',
   statistic?: 'Average' | 'Sum' | 'Minimum' | 'Maximum' | 'SampleCount',
   treatMissingData?: 'notBreaching' | 'breaching' | 'ignore' | 'missing',
-  alarmActions?: string[],
+  alarmActions?: string[],    // ids de Messaging.Topic (ex: ['AlertsTopic']) — o synth resolve pro ARN
   okActions?: string[],
   dimensions?: Record<string, string>,
 });
 export default stack;
 \`\`\`
+**REGRA — referências são STRINGS, nunca \`.arn\`/\`.attr\` do objeto JS.** Os constructs NÃO expõem \`.arn\`, \`.url\`, etc. em runtime — \`const t = new Messaging.Topic(...); t.arn\` é \`undefined\` e vira \`null\` no template (o synth rejeita). Para referenciar um recurso (ex: o SNS topic num \`alarmActions\` ou num \`resources\` de Policy.IAM), passe o ID do construct como STRING: \`alarmActions: ['AlertsTopic']\`, \`resources: ['AlertsTopic']\`. O synth resolve o ARN. Vale para TODOS os constructs.
+**REGRA — Lambda subscrita a um SNS topic:** para "Lambda X subscrita ao Topic Y", declare a subscription NO PRÓPRIO \`Messaging.Topic\`: \`subscriptions: [{ protocol: 'lambda', endpoint: 'AlertHandlerFn' }]\` (o campo é \`endpoint\` = id da Fn.Lambda) — o synth cria a Subscription + a Lambda::Permission que autoriza o SNS. Não é preciso (nem existe) API Gateway para isso: um cenário de monitoramento (alarmes/dashboard/SNS/Lambda-de-alerta) NÃO tem HTTP — NÃO gere \`Fn.ApiGateway\`.
 
 ### Monitoring.Dashboard — CloudWatch Dashboard
 \`\`\`typescript

@@ -166,6 +166,28 @@ export default class Synth extends Command {
       );
     }
 
+    // ── Handler acessando DynamoDB como SQL ─────────────────────────────────
+    // A IA às vezes gera pg/mysql + SELECT/INSERT para um projeto que só tem
+    // DynamoDB. DynamoDB não é SQL — trava em runtime. Bloqueia em synth-time.
+    const dynamoSqlErrors = this.validateHandlerDynamoNoSql(loadedStacks, cwd);
+    if (dynamoSqlErrors.length > 0) {
+      this.error(
+        `Handler acessa DynamoDB como banco SQL (vai falhar em runtime):\n\n` +
+        dynamoSqlErrors.map(e => `  • ${e}`).join('\n'),
+      );
+    }
+
+    // ── Lambda-em-VPC acessando DynamoDB/S3 sem Gateway VPC Endpoint ─────────
+    // Subnet privada sem NAT não alcança serviços da AWS fora da VPC; o SDK
+    // pendura e a Lambda dá timeout. Gateway Endpoint (grátis) resolve.
+    const gatewayEndpointErrors = this.validateLambdaVpcGatewayEndpoint(loadedStacks, cwd);
+    if (gatewayEndpointErrors.length > 0) {
+      this.error(
+        `Lambda em VPC acessa serviço AWS sem Gateway VPC Endpoint (vai dar timeout no deploy):\n\n` +
+        gatewayEndpointErrors.map(e => `  • ${e}`).join('\n'),
+      );
+    }
+
     // ── Passada 2: sintetiza e grava só as stacks que o --stack pediu ───────
     const targetStacks = loadedStacks.filter(s => !flags.stack || s.stackName === flags.stack);
     if (targetStacks.length === 0) {
@@ -356,6 +378,102 @@ export default class Synth extends Command {
             `Fn.Lambda "${c.id}" (em VPC) → ${path.relative(cwd, srcFile)} usa Secrets Manager em runtime. ` +
             `A senha já vem resolvida na env: use process.env.DB_PASSWORD direto (padrão iacmp), sem @aws-sdk/client-secrets-manager.`,
           );
+        }
+      }
+    }
+    return errors;
+  }
+
+  /**
+   * Bloqueia handler que acessa DynamoDB como se fosse um banco SQL. A IA
+   * recorrentemente gera `pg`/`mysql` + `SELECT/INSERT ... FROM <tabela>` para
+   * um projeto cujo único datastore é Database.DynamoDB — DynamoDB não fala SQL,
+   * então `pg.Client.connect()` num host de DynamoDB trava e a query falha em
+   * runtime. Só dispara quando NÃO há nenhum Database.SQL/DocumentDB no projeto
+   * (aí o driver SQL não faz sentido) e há ao menos um Database.DynamoDB.
+   */
+  private validateHandlerDynamoNoSql(loaded: LoadedStack[], cwd: string): string[] {
+    const errors: string[] = [];
+    let hasDynamo = false;
+    let hasSql = false;
+    for (const { stack } of loaded) {
+      for (const c of stack.constructs) {
+        if (c.type === 'Database.DynamoDB') hasDynamo = true;
+        if (c.type === 'Database.SQL' || c.type === 'Database.DocumentDB') hasSql = true;
+      }
+    }
+    if (!hasDynamo || hasSql) return errors;
+
+    const srcDir = path.join(cwd, 'src');
+    if (!fs.existsSync(srcDir)) return errors;
+    const tsFiles: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) walk(full);
+        else if (e.name.endsWith('.ts') || e.name.endsWith('.js')) tsFiles.push(full);
+      }
+    };
+    walk(srcDir);
+
+    const SQL_DRIVER = /from\s+['"](pg|mysql|mysql2|pg-promise|knex|sqlite3|better-sqlite3)['"]|require\(\s*['"](pg|mysql|mysql2|pg-promise|knex|sqlite3|better-sqlite3)['"]\s*\)/;
+    for (const file of tsFiles) {
+      const content = fs.readFileSync(file, 'utf-8');
+      if (SQL_DRIVER.test(content)) {
+        errors.push(
+          `${path.relative(cwd, file)}: importa um driver SQL (pg/mysql/...) mas o projeto usa DynamoDB, que NÃO é SQL. ` +
+          `Use o DocumentClient (@aws-sdk/lib-dynamodb: DynamoDBDocumentClient + GetCommand/PutCommand/QueryCommand/ScanCommand) — sem SELECT/INSERT nem pg.Client.`,
+        );
+      }
+    }
+    return errors;
+  }
+
+  /**
+   * Bloqueia Lambda-em-VPC (subnet privada) que acessa DynamoDB/S3 sem um
+   * Gateway VPC Endpoint do serviço. Sem NAT nem endpoint, a subnet privada não
+   * alcança serviços da AWS fora da VPC — o SDK pendura e a Lambda dá timeout.
+   * Gateway Endpoints (dynamodb/s3) são grátis e resolvem isso. Cruza cada
+   * Fn.Lambda com vpcId ao seu handler; se usa o SDK do serviço, exige um
+   * Network.VpcEndpoint com aquele serviço em alguma das stacks carregadas.
+   */
+  private validateLambdaVpcGatewayEndpoint(loaded: LoadedStack[], cwd: string): string[] {
+    const errors: string[] = [];
+    const endpointServices = new Set<string>();
+    for (const { stack } of loaded) {
+      for (const c of stack.constructs) {
+        if (c.type !== 'Network.VpcEndpoint') continue;
+        for (const s of ((c.props as Record<string, unknown>).services as string[]) ?? []) {
+          endpointServices.add(s);
+        }
+      }
+    }
+
+    const SDK_BY_SERVICE: Array<{ service: string; re: RegExp }> = [
+      { service: 'dynamodb', re: /@aws-sdk\/(client|lib)-dynamodb/ },
+      { service: 's3', re: /@aws-sdk\/client-s3/ },
+    ];
+
+    for (const { stack } of loaded) {
+      for (const c of stack.constructs) {
+        if (c.type !== 'Function.Lambda') continue;
+        const props = c.props as Record<string, unknown>;
+        if (!props.vpcId) continue; // só Lambda em VPC
+        const handler = props.handler as string | undefined;
+        if (!handler) continue;
+        const stem = handler.replace(/\.[^./]+$/, '').replace(/^(\.\/)?(dist|src)\//, '');
+        const srcFile = [path.join(cwd, 'src', `${stem}.ts`), path.join(cwd, 'src', `${stem}.js`)]
+          .find(p => fs.existsSync(p));
+        if (!srcFile) continue;
+        const content = fs.readFileSync(srcFile, 'utf-8');
+        for (const { service, re } of SDK_BY_SERVICE) {
+          if (re.test(content) && !endpointServices.has(service)) {
+            errors.push(
+              `Fn.Lambda "${c.id}" (em VPC) → ${path.relative(cwd, srcFile)} acessa ${service.toUpperCase()}, ` +
+              `mas não há Gateway VPC Endpoint para '${service}'. Sem NAT, a Lambda em subnet privada não alcança o serviço e dá timeout. ` +
+              `Adicione um Network.VpcEndpoint com services: ['${service}'] e os subnetIds das subnets privadas, na mesma stack da VPC.`,
+            );
+          }
         }
       }
     }

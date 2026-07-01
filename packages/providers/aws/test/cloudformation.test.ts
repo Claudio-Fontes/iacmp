@@ -43,6 +43,27 @@ describe('AWSProvider', () => {
     expect(tpl.Resources.Rede.Properties.CidrBlock).toBe('192.168.0.0/16');
   });
 
+  test('Network.VpcEndpoint (dynamodb) → route table, associação das subnets e Gateway endpoint', () => {
+    new Network.VPC(stack, 'AppVpc', { cidr: '10.0.0.0/16' });
+    new Network.Subnet(stack, 'PrivateSubnet1', { vpcId: 'AppVpc', cidr: '10.0.1.0/24', public: false });
+    new Network.Subnet(stack, 'PrivateSubnet2', { vpcId: 'AppVpc', cidr: '10.0.2.0/24', public: false });
+    new Network.VpcEndpoint(stack, 'Gw', {
+      vpcId: 'AppVpc',
+      services: ['dynamodb'],
+      subnetIds: ['PrivateSubnet1', 'PrivateSubnet2'],
+    });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.GwRouteTable.Type).toBe('AWS::EC2::RouteTable');
+    expect(tpl.Resources.GwRTAssoc0.Type).toBe('AWS::EC2::SubnetRouteTableAssociation');
+    expect(tpl.Resources.GwRTAssoc0.Properties.SubnetId).toEqual({ Ref: 'PrivateSubnet1' });
+    expect(tpl.Resources.GwRTAssoc1.Properties.SubnetId).toEqual({ Ref: 'PrivateSubnet2' });
+    expect(tpl.Resources.GwRTAssoc0.Properties.RouteTableId).toEqual({ Ref: 'GwRouteTable' });
+    expect(tpl.Resources.GwDynamodbEndpoint.Type).toBe('AWS::EC2::VPCEndpoint');
+    expect(tpl.Resources.GwDynamodbEndpoint.Properties.VpcEndpointType).toBe('Gateway');
+    expect(tpl.Resources.GwDynamodbEndpoint.Properties.ServiceName).toEqual({ 'Fn::Sub': 'com.amazonaws.${AWS::Region}.dynamodb' });
+    expect(tpl.Resources.GwDynamodbEndpoint.Properties.RouteTableIds).toEqual([{ Ref: 'GwRouteTable' }]);
+  });
+
   test('Database.SQL mysql → AWS::RDS::DBInstance', () => {
     new Database.SQL(stack, 'DB', { engine: 'mysql' });
     const tpl = provider.synthesize(stack) as any;
@@ -113,6 +134,17 @@ describe('AWSProvider', () => {
     new Cache.Redis(stack, 'RedisCache', { nodeType: 'small' });
     const tpl = provider.synthesize(stack) as any;
     expect(tpl.Resources.RedisCache.Type).toBe('AWS::ElastiCache::ReplicationGroup');
+  });
+
+  test('Cache.Redis com subnetIds → gera ElastiCache::SubnetGroup e exporta Endpoint/Port', () => {
+    new Cache.Redis(stack, 'ProductsCache', { nodeType: 'small', subnetIds: ['subnet-a', 'subnet-b'] });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.ProductsCacheSubnetGroup.Type).toBe('AWS::ElastiCache::SubnetGroup');
+    expect(tpl.Resources.ProductsCacheSubnetGroup.Properties.SubnetIds).toEqual(['subnet-a', 'subnet-b']);
+    expect(tpl.Resources.ProductsCache.Properties.CacheSubnetGroupName).toEqual({ Ref: 'ProductsCacheSubnetGroup' });
+    expect(tpl.Outputs.ProductsCacheEndpoint.Value).toEqual({ 'Fn::GetAtt': ['ProductsCache', 'PrimaryEndPoint.Address'] });
+    expect(tpl.Outputs.ProductsCacheEndpoint.Export.Name).toBe('test-stack-ProductsCache-Endpoint');
+    expect(tpl.Outputs.ProductsCachePort.Value).toEqual({ 'Fn::GetAtt': ['ProductsCache', 'PrimaryEndPoint.Port'] });
   });
 
   test('Messaging.Queue → AWS::SQS::Queue', () => {
@@ -266,6 +298,21 @@ describe('AWSProvider', () => {
     expect(tpl.Resources.SG.Properties.SecurityGroupIngress[0].CidrIp).toBe('0.0.0.0/0');
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('sem CIDR'));
     warnSpy.mockRestore();
+  });
+
+  test('SG ingress com sourceSecurityGroupId → SourceSecurityGroupId (não CidrIp)', () => {
+    new Network.VPC(stack, 'Vpc', { cidr: '10.0.0.0/16' });
+    new Network.SecurityGroup(stack, 'LambdaSG', { vpcId: 'Vpc', description: 'lambda' });
+    new Network.SecurityGroup(stack, 'RedisSG', {
+      vpcId: 'Vpc',
+      description: 'redis',
+      ingressRules: [{ protocol: 'tcp', fromPort: 6379, toPort: 6379, sourceSecurityGroupId: 'LambdaSG' }],
+    });
+    const tpl = provider.synthesize(stack) as any;
+    const rule = tpl.Resources.RedisSG.Properties.SecurityGroupIngress[0];
+    expect(rule.SourceSecurityGroupId).toEqual({ 'Fn::GetAtt': ['LambdaSG', 'GroupId'] });
+    expect(rule.CidrIp).toBeUndefined();
+    expect(rule.FromPort).toBe(6379);
   });
 
   test('ARCH-06: construct desconhecido emite warn e nao adiciona recurso', () => {

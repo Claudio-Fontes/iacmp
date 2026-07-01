@@ -7,6 +7,8 @@ export interface CacheRedisProps {
   atRestEncryptionEnabled?: boolean;
   transitEncryptionEnabled?: boolean;
   version?: string;
+  /** Subnets (ids de Network.Subnet ou literais) — o synth cria o CacheSubnetGroup. Preferível a subnetGroupName. */
+  subnetIds?: string[];
   subnetGroupName?: string;
   securityGroupIds?: string[];
 }

@@ -31,6 +31,13 @@ export interface ComputeContainerProps {
   publicIp?: boolean;
   subnetIds?: string[];
   securityGroupIds?: string[];
+  /** Autoscaling de tasks Fargate (ApplicationAutoScaling). Informe minCapacity+maxCapacity. */
+  minCapacity?: number;
+  maxCapacity?: number;
+  /** Alvo de utilização de CPU (%) para o target-tracking scaling. Default 50. */
+  cpuTargetPercent?: number;
+  /** Target group do ALB onde registrar as tasks — ex: 'MyLoadBalancer.TargetGroupArn'. */
+  targetGroupArn?: string;
 }
 
 export interface ComputeKubernetesProps {

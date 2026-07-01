@@ -48,6 +48,12 @@ export interface SynthContext {
   sqsEventSourceLambdas: Set<string>;
   /** IDs de Function.Lambda que têm vpcId definido — precisam de VPCAccessExecutionRole. */
   vpcLambdas: Set<string>;
+  /** constructId de Network.LoadBalancer → target group default (1º) para registro de tasks ECS. */
+  albDefaultTg: Map<string, { stackName: string; tgLogicalId: string }>;
+  /** IDs de Function.Lambda — alvos válidos de rotas de Function.ApiGateway. */
+  lambdaConstructs: Set<string>;
+  /** vpcId (construct id) → Network.Subnet com public:true que o referenciam (para IGW + rota pública). */
+  publicSubnetsByVpc: Map<string, Array<{ id: string; stackName: string }>>;
   /** Perfil de ambiente (tier da conta, região) — fonte dos defaults derivados. */
   profile: EnvironmentProfile;
 }
@@ -61,6 +67,12 @@ function resolveLambdaArnRef(lambdaId: string, ctx: SynthContext): unknown {
   const ownerStack = ctx.registry.get(lambdaId);
   if (!ownerStack) {
     throw new Error(`Lambda "${lambdaId}" referenciada em Function.ApiGateway não foi encontrada em nenhuma stack do projeto.`);
+  }
+  // O alvo de uma rota TEM que ser uma Function.Lambda. Apontar para um
+  // Compute.Container/ECS (ou outro construct) é inválido — API Gateway só
+  // integra com Lambda; um container é exposto por Network.LoadBalancer (ALB).
+  if (!ctx.lambdaConstructs.has(lambdaId)) {
+    throw new Error(`Function.ApiGateway: a rota aponta lambdaId "${lambdaId}", que não é uma Fn.Lambda. API Gateway só integra com Lambda — um Compute.Container/ECS deve ser exposto por um Network.LoadBalancer (ALB), não por API Gateway.`);
   }
   if (ownerStack === ctx.currentStackName) return { 'Fn::GetAtt': [lambdaId, 'Arn'] };
   return { 'Fn::ImportValue': `${ownerStack}-${lambdaId}-Arn` };
@@ -248,7 +260,10 @@ function resolvePolicyResource(value: string, ctx: SynthContext): unknown {
   // Padrão "<id>.SecretArn"/".Arn"/".QueueArn"/".TopicArn" (Secret.Vault, filas, tópicos).
   const match = /^([^.]+)\.(SecretArn|Arn|QueueArn|TopicArn)$/.exec(value);
   if (match && ctx.registry.has(match[1])) {
-    if (ctx.secretVaults.has(match[1])) return resolveEnvVarValue(`${match[1]}.SecretArn`, ctx);
+    // SecretArn resolve pelo mesmo caminho das env vars — cobre tanto Secret.Vault
+    // (o recurso É o secret) quanto Database.SQL (sub-recurso `${id}Secret`, export
+    // `-SecretArn`). resolveQueueArn produziria `-Arn`, que não existe para o DB.
+    if (match[2] === 'SecretArn') return resolveEnvVarValue(`${match[1]}.SecretArn`, ctx);
     return resolveQueueArn(match[1], ctx); // GetAtt Arn / ImportValue-Arn (fila e tópico exportam "-Arn")
   }
   // Id de construct cru (ex: 'TaskQueue' em resources) → ARN.
@@ -305,6 +320,40 @@ function resolveEnvVarValue(value: string, ctx: SynthContext): unknown {
     return value;
   }
   return { 'Fn::ImportValue': `${ownerStack}-${constructId}-${field}` };
+}
+
+/**
+ * Resolve o ARN do target group default de um Network.LoadBalancer para registrar
+ * tasks de um Compute.Container (ECS Service LoadBalancers). Aceita
+ * "<lbId>.TargetGroupArn" ou "<lbId>" cru. Mesma stack → Fn::GetAtt do TG;
+ * cross-stack → Fn::ImportValue do export "<stack>-<lbId>-TargetGroupArn".
+ * ARN literal passa inalterado.
+ */
+/**
+ * Resolve uma ação de alarme (AlarmActions/OKActions) que referencia um
+ * Messaging.Topic: aceita o id ('AlertsTopic'), 'AlertsTopic.TopicArn'/'.arn'
+ * ou um ARN literal. Same-stack → { Ref } (SNS Ref retorna o ARN); cross-stack
+ * → ImportValue do export '-Arn'. Entradas não-string (ex: `.arn` undefined que
+ * a IA às vezes gera) são descartadas para não virarem null no template.
+ */
+function resolveAlarmAction(value: unknown, ctx: SynthContext): unknown | undefined {
+  if (typeof value !== 'string' || value.length === 0) return undefined;
+  if (value.startsWith('arn:')) return value;
+  const id = value.replace(/\.(TopicArn|arn|Arn)$/, '');
+  const ownerStack = ctx.registry.get(id);
+  if (!ownerStack) return value; // ref desconhecida — deixa como veio (visível no deploy)
+  const logicalId = id.replace(/[^a-zA-Z0-9]/g, '');
+  if (ownerStack === ctx.currentStackName) return { Ref: logicalId };
+  return { 'Fn::ImportValue': `${ownerStack}-${id}-Arn` };
+}
+
+function resolveTargetGroupArn(value: string, ctx: SynthContext): unknown {
+  if (value.startsWith('arn:')) return value;
+  const lbId = value.replace(/\.TargetGroupArn$/, '');
+  const tg = ctx.albDefaultTg.get(lbId);
+  if (!tg) return value; // LB sem target group declarado — deixa como veio (erro visível no synth/deploy)
+  if (tg.stackName === ctx.currentStackName) return { 'Fn::GetAtt': [tg.tgLogicalId, 'TargetGroupArn'] };
+  return { 'Fn::ImportValue': `${tg.stackName}-${lbId}-TargetGroupArn` };
 }
 
 const INSTANCE_TYPE_MAP: Record<string, string> = {
@@ -412,10 +461,18 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
       const tdLogicalId = `${logicalId}TaskDef`;
       const svcLogicalId = `${logicalId}Service`;
       const executionRoleLogicalId = `${logicalId}ExecutionRole`;
+      const logGroupLogicalId = `${logicalId}LogGroup`;
       const environment = props.environment as Record<string, string> | undefined;
       const subnetIds = (props.subnetIds as string[]) ?? [];
 
       const entries: Array<[string, CloudFormationResource]> = [
+        // Log group do awslogs: o driver do Fargate NÃO cria o grupo (a execution
+        // role padrão só tem CreateLogStream/PutLogEvents, não CreateLogGroup) — sem
+        // ele a task falha em "log group does not exist" e o serviço nunca estabiliza.
+        [logGroupLogicalId, {
+          Type: 'AWS::Logs::LogGroup',
+          Properties: { LogGroupName: `/ecs/${construct.id}`, RetentionInDays: 7 },
+        }],
         [clusterLogicalId, {
           Type: 'AWS::ECS::Cluster',
           Properties: { ClusterName: construct.id },
@@ -457,22 +514,76 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
       // Só cria o Service se subnets foram fornecidas — sem subnets o Fargate
       // falha com "subnets can not be empty" no CloudFormation.
       if (subnetIds.length > 0) {
-        entries.push([svcLogicalId, {
-          Type: 'AWS::ECS::Service',
-          Properties: {
-            Cluster: { Ref: clusterLogicalId },
-            TaskDefinition: { Ref: tdLogicalId },
-            DesiredCount: props.desiredCount ?? 1,
-            LaunchType: 'FARGATE',
-            NetworkConfiguration: {
-              AwsvpcConfiguration: {
-                AssignPublicIp: (props.publicIp as boolean) ? 'ENABLED' : 'DISABLED',
-                Subnets: subnetIds.map(id => resolveSubnetId(id, ctx)),
-                ...(props.securityGroupIds ? { SecurityGroups: (props.securityGroupIds as string[]).map(id => resolveSecurityGroupId(id, ctx)) } : {}),
-              },
+        const hasLb = typeof props.targetGroupArn === 'string';
+        const serviceProps: Record<string, unknown> = {
+          ServiceName: construct.id,
+          Cluster: { Ref: clusterLogicalId },
+          TaskDefinition: { Ref: tdLogicalId },
+          DesiredCount: props.desiredCount ?? 1,
+          LaunchType: 'FARGATE',
+          NetworkConfiguration: {
+            AwsvpcConfiguration: {
+              AssignPublicIp: (props.publicIp as boolean) ? 'ENABLED' : 'DISABLED',
+              Subnets: subnetIds.map(id => resolveSubnetId(id, ctx)),
+              ...(props.securityGroupIds ? { SecurityGroups: (props.securityGroupIds as string[]).map(id => resolveSecurityGroupId(id, ctx)) } : {}),
             },
           },
+        };
+        // O Service depende do log group existir antes de iniciar as tasks.
+        const serviceDependsOn: string[] = [logGroupLogicalId];
+        // Registra as tasks no target group do ALB (só faz sentido com um container port).
+        if (hasLb && props.port) {
+          const lbId = (props.targetGroupArn as string).replace(/\.TargetGroupArn$/, '');
+          serviceProps.LoadBalancers = [{
+            TargetGroupArn: resolveTargetGroupArn(props.targetGroupArn as string, ctx),
+            ContainerName: construct.id,
+            ContainerPort: props.port,
+          }];
+          // Dá tempo do container passar no health check do ALB antes do ECS matar a task.
+          serviceProps.HealthCheckGracePeriodSeconds = 60;
+          // O ECS exige o target group JÁ associado a um listener do ALB. Same-stack,
+          // força a ordem: o Service depende do 1º listener do LB (cross-stack o
+          // ImportValue do TG já garante que a stack do ALB subiu antes).
+          const tg = ctx.albDefaultTg.get(lbId);
+          if (tg && tg.stackName === ctx.currentStackName) {
+            serviceDependsOn.push(`${lbId.replace(/[^a-zA-Z0-9]/g, '')}Listener1`);
+          }
+        }
+        entries.push([svcLogicalId, {
+          Type: 'AWS::ECS::Service',
+          DependsOn: serviceDependsOn,
+          Properties: serviceProps,
         }]);
+
+        // Autoscaling de tasks Fargate (ApplicationAutoScaling) — min/maxCapacity.
+        if (typeof props.minCapacity === 'number' && typeof props.maxCapacity === 'number') {
+          const targetLogicalId = `${logicalId}ScalableTarget`;
+          entries.push([targetLogicalId, {
+            Type: 'AWS::ApplicationAutoScaling::ScalableTarget',
+            DependsOn: [svcLogicalId],
+            Properties: {
+              MinCapacity: props.minCapacity as number,
+              MaxCapacity: props.maxCapacity as number,
+              // ResourceId = service/<clusterName>/<serviceName>; ambos = construct.id.
+              ResourceId: `service/${construct.id}/${construct.id}`,
+              ScalableDimension: 'ecs:service:DesiredCount',
+              ServiceNamespace: 'ecs',
+              RoleARN: { 'Fn::Sub': 'arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService' },
+            },
+          }]);
+          entries.push([`${logicalId}ScalingPolicy`, {
+            Type: 'AWS::ApplicationAutoScaling::ScalingPolicy',
+            Properties: {
+              PolicyName: `${construct.id}-cpu-scaling`,
+              PolicyType: 'TargetTrackingScaling',
+              ScalingTargetId: { Ref: targetLogicalId },
+              TargetTrackingScalingPolicyConfiguration: {
+                PredefinedMetricSpecification: { PredefinedMetricType: 'ECSServiceAverageCPUUtilization' },
+                TargetValue: (props.cpuTargetPercent as number) ?? 50,
+              },
+            },
+          }]);
+        }
       }
 
       return entries;
@@ -582,6 +693,45 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
         },
       }]];
 
+      // Notificações S3 → Lambda (ObjectCreated etc). Gera a NotificationConfiguration
+      // no bucket + uma Lambda::Permission por Lambda. Usa SourceAccount (não SourceArn)
+      // na permission pra NÃO referenciar o bucket e evitar a dependência circular
+      // clássica do S3; o bucket faz DependsOn das permissions pra S3 aceitar a config.
+      const notifications = (props.eventNotifications as Array<Record<string, unknown>> | undefined) ?? [];
+      if (notifications.length > 0) {
+        const lambdaConfigs: Array<Record<string, unknown>> = [];
+        const dependsOn: string[] = [];
+        notifications.forEach((n, ni) => {
+          const lambdaId = n.lambdaId as string;
+          const fnArn = resolveLambdaArnRef(lambdaId, ctx);
+          const events = (n.events as string[] | undefined) ?? ['s3:ObjectCreated:*'];
+          const filterRules: Array<Record<string, string>> = [];
+          if (n.prefix) filterRules.push({ Name: 'prefix', Value: n.prefix as string });
+          if (n.suffix) filterRules.push({ Name: 'suffix', Value: n.suffix as string });
+          for (const ev of events) {
+            lambdaConfigs.push({
+              Event: ev,
+              Function: fnArn,
+              ...(filterRules.length > 0 ? { Filter: { S3Key: { Rules: filterRules } } } : {}),
+            });
+          }
+          const permId = `${logicalId}InvokePermission${ni}`;
+          entries.push([permId, {
+            Type: 'AWS::Lambda::Permission',
+            Properties: {
+              Action: 'lambda:InvokeFunction',
+              FunctionName: fnArn,
+              Principal: 's3.amazonaws.com',
+              SourceAccount: { Ref: 'AWS::AccountId' },
+            },
+          }]);
+          dependsOn.push(permId);
+        });
+        const bucketRes = entries[0][1];
+        (bucketRes.Properties as Record<string, unknown>).NotificationConfiguration = { LambdaConfigurations: lambdaConfigs };
+        bucketRes.DependsOn = dependsOn;
+      }
+
       // BucketPolicy de leitura pública para website hosting
       if (isWebsite) {
         entries.push([`${logicalId}Policy`, {
@@ -653,8 +803,8 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
     }
 
     // ── Network ───────────────────────────────────────────────────────────
-    case 'Network.VPC':
-      return [[logicalId, {
+    case 'Network.VPC': {
+      const vpcEntries: Array<[string, CloudFormationResource]> = [[logicalId, {
         Type: 'AWS::EC2::VPC',
         Properties: {
           CidrBlock: (props.cidr as string) ?? '10.0.0.0/16',
@@ -663,6 +813,36 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
           Tags: [{ Key: 'Name', Value: logicalId }],
         },
       }]];
+
+      // Subnets públicas explícitas (Network.Subnet public:true) na MESMA stack
+      // precisam de Internet Gateway + route table pública com rota 0.0.0.0/0,
+      // senão não têm saída pra internet (ALB internet-facing falha com "VPC has
+      // no internet gateway" e tasks/instâncias com IP público não alcançam nada).
+      const publicSubnets = (ctx.publicSubnetsByVpc.get(construct.id) ?? [])
+        .filter(s => s.stackName === ctx.currentStackName);
+      if (publicSubnets.length > 0) {
+        const igwId = `${logicalId}IGW`;
+        vpcEntries.push([igwId, { Type: 'AWS::EC2::InternetGateway', Properties: { Tags: [{ Key: 'Name', Value: igwId }] } }]);
+        vpcEntries.push([`${igwId}Attachment`, {
+          Type: 'AWS::EC2::VPCGatewayAttachment',
+          Properties: { VpcId: { Ref: logicalId }, InternetGatewayId: { Ref: igwId } },
+        }]);
+        const pubRTId = `${logicalId}PublicRT`;
+        vpcEntries.push([pubRTId, { Type: 'AWS::EC2::RouteTable', Properties: { VpcId: { Ref: logicalId }, Tags: [{ Key: 'Name', Value: pubRTId }] } }]);
+        vpcEntries.push([`${pubRTId}DefaultRoute`, {
+          Type: 'AWS::EC2::Route',
+          DependsOn: [`${igwId}Attachment`],
+          Properties: { RouteTableId: { Ref: pubRTId }, DestinationCidrBlock: '0.0.0.0/0', GatewayId: { Ref: igwId } },
+        }]);
+        publicSubnets.forEach((s, i) => {
+          vpcEntries.push([`${logicalId}PublicRTAssoc${i}`, {
+            Type: 'AWS::EC2::SubnetRouteTableAssociation',
+            Properties: { SubnetId: { Ref: s.id.replace(/[^a-zA-Z0-9]/g, '') }, RouteTableId: { Ref: pubRTId } },
+          }]);
+        });
+      }
+      return vpcEntries;
+    }
 
     case 'Network.Subnet': {
       const isPublic = (props.public as boolean) ?? false;
@@ -678,6 +858,45 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
       }]];
     }
 
+    case 'Network.VpcEndpoint': {
+      // Gateway VPC Endpoint (DynamoDB/S3): dá a uma Lambda em subnet privada
+      // acesso ao serviço SEM NAT (grátis). Cria uma route table, associa as
+      // subnets privadas a ela e pendura um endpoint Gateway por serviço.
+      const services = (props.services as string[]) ?? [];
+      const subnetIds = (props.subnetIds as string[]) ?? [];
+      const entries: Array<[string, CloudFormationResource]> = [];
+      const rtId = `${logicalId}RouteTable`;
+      entries.push([rtId, {
+        Type: 'AWS::EC2::RouteTable',
+        Properties: {
+          VpcId: resolveVpcId(props.vpcId as string, ctx),
+          Tags: [{ Key: 'Name', Value: rtId }],
+        },
+      }]);
+      subnetIds.forEach((sid, i) => {
+        entries.push([`${logicalId}RTAssoc${i}`, {
+          Type: 'AWS::EC2::SubnetRouteTableAssociation',
+          Properties: {
+            SubnetId: resolveSubnetId(sid, ctx),
+            RouteTableId: { Ref: rtId },
+          },
+        }]);
+      });
+      for (const svc of services) {
+        const epId = `${logicalId}${svc.charAt(0).toUpperCase()}${svc.slice(1)}Endpoint`;
+        entries.push([epId, {
+          Type: 'AWS::EC2::VPCEndpoint',
+          Properties: {
+            ServiceName: { 'Fn::Sub': `com.amazonaws.\${AWS::Region}.${svc}` },
+            VpcId: resolveVpcId(props.vpcId as string, ctx),
+            VpcEndpointType: 'Gateway',
+            RouteTableIds: [{ Ref: rtId }],
+          },
+        }]);
+      }
+      return entries;
+    }
+
     case 'Network.SecurityGroup': {
       const ingress = (props.ingressRules as Array<Record<string, unknown>>) ?? [];
       const egress = (props.egressRules as Array<Record<string, unknown>>) ?? [];
@@ -687,25 +906,35 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
           GroupDescription: (props.description as string) ?? `Security group ${logicalId}`,
           VpcId: props.vpcId ? resolveVpcId(props.vpcId as string, ctx) : undefined,
           SecurityGroupIngress: ingress.map((r, i) => {
-            if (r.cidr === undefined) {
-              console.warn(`[aws] Security group rule sem CIDR; usando 0.0.0.0/0 — defina props.cidr explicitamente (${construct.id} ingress[${i}])`);
-            }
-            return {
+            const base = {
               IpProtocol: r.protocol as string,
               FromPort: r.fromPort as number,
               ToPort: r.toPort as number,
-              CidrIp: (r.cidr as string) ?? '0.0.0.0/0',
               ...(r.description ? { Description: r.description } : {}),
             };
+            // Fonte = outro SG (padrão correto p/ "acesso só do SG X") tem
+            // precedência sobre CIDR — CloudFormation exige um OU outro.
+            if (r.sourceSecurityGroupId) {
+              return { ...base, SourceSecurityGroupId: resolveSecurityGroupId(r.sourceSecurityGroupId as string, ctx) };
+            }
+            if (r.cidr === undefined) {
+              console.warn(`[aws] Security group rule sem CIDR nem sourceSecurityGroupId; usando 0.0.0.0/0 (${construct.id} ingress[${i}])`);
+            }
+            return { ...base, CidrIp: (r.cidr as string) ?? '0.0.0.0/0' };
           }),
           SecurityGroupEgress: egress.length > 0
-            ? egress.map(r => ({
-                IpProtocol: r.protocol as string,
-                FromPort: r.fromPort as number,
-                ToPort: r.toPort as number,
-                CidrIp: (r.cidr as string) ?? '0.0.0.0/0',
-                ...(r.description ? { Description: r.description } : {}),
-              }))
+            ? egress.map(r => {
+                const base = {
+                  IpProtocol: r.protocol as string,
+                  FromPort: r.fromPort as number,
+                  ToPort: r.toPort as number,
+                  ...(r.description ? { Description: r.description } : {}),
+                };
+                if (r.destinationSecurityGroupId) {
+                  return { ...base, DestinationSecurityGroupId: resolveSecurityGroupId(r.destinationSecurityGroupId as string, ctx) };
+                }
+                return { ...base, CidrIp: (r.cidr as string) ?? '0.0.0.0/0' };
+              })
             : [{ IpProtocol: '-1', CidrIp: '0.0.0.0/0', Description: 'Allow all egress' }],
           Tags: [{ Key: 'Name', Value: logicalId }],
         },
@@ -772,8 +1001,12 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
         },
       }]];
 
+      // O 1º target group é o "default": listeners não-redirect fazem forward
+      // pra ele e o ECS Service registra as tasks nele (ver resolveTargetGroupArn).
+      let defaultTgId: string | undefined;
       for (const tg of targetGroups) {
         const tgId = `${logicalId}TG${(tg.name as string).replace(/[^a-zA-Z0-9]/g, '')}`;
+        if (!defaultTgId) defaultTgId = tgId;
         entries.push([tgId, {
           Type: 'AWS::ElasticLoadBalancingV2::TargetGroup',
           Properties: {
@@ -788,18 +1021,29 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
         }]);
       }
 
-      for (let i = 0; i < listeners.length; i++) {
-        const l = listeners[i];
-        entries.push([`${logicalId}Listener${i + 1}`, {
+      let listenerIdx = 0;
+      for (const l of listeners) {
+        // HTTPS/TLS sem certificado não sobe (CFN exige Certificates) — pula com aviso
+        // em vez de derrubar o deploy inteiro. Use certificateArn (ACM) para HTTPS.
+        if ((l.protocol === 'HTTPS' || l.protocol === 'TLS') && !l.certificateArn) {
+          console.warn(`[aws] LoadBalancer "${construct.id}": listener ${l.protocol}:${l.port} sem certificateArn — ignorado (HTTPS exige um certificado ACM).`);
+          continue;
+        }
+        listenerIdx++;
+        // forward → target group default quando existe; senão redirect ou 404.
+        const defaultActions = (l.redirectToHttps as boolean)
+          ? [{ Type: 'redirect', RedirectConfig: { Protocol: 'HTTPS', Port: '443', StatusCode: 'HTTP_301' } }]
+          : defaultTgId
+            ? [{ Type: 'forward', TargetGroupArn: { Ref: defaultTgId } }]
+            : [{ Type: 'fixed-response', FixedResponseConfig: { StatusCode: '404', MessageBody: 'Not found', ContentType: 'text/plain' } }];
+        entries.push([`${logicalId}Listener${listenerIdx}`, {
           Type: 'AWS::ElasticLoadBalancingV2::Listener',
           Properties: {
             LoadBalancerArn: { Ref: logicalId },
             Port: l.port as number,
             Protocol: l.protocol as string,
             ...(l.certificateArn ? { Certificates: [{ CertificateArn: l.certificateArn }] } : {}),
-            DefaultActions: (l.redirectToHttps as boolean)
-              ? [{ Type: 'redirect', RedirectConfig: { Protocol: 'HTTPS', Port: '443', StatusCode: 'HTTP_301' } }]
-              : [{ Type: 'fixed-response', FixedResponseConfig: { StatusCode: '404', MessageBody: 'Not found', ContentType: 'text/plain' } }],
+            DefaultActions: defaultActions,
           },
         }]);
       }
@@ -1225,7 +1469,28 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
     case 'Cache.Redis': {
       const numNodes = (props.numCacheNodes as number) ?? 1;
       const autoFailover = (props.automaticFailoverEnabled as boolean) ?? false;
-      return [[logicalId, {
+      const redisSubnetIds = props.subnetIds as string[] | undefined;
+      const redisEntries: Array<[string, CloudFormationResource]> = [];
+
+      // Cria o CacheSubnetGroup a partir de subnetIds (como Memcached). Sem isso,
+      // passar um id de subnet direto em CacheSubnetGroupName falha no deploy —
+      // ElastiCache exige um SubnetGroup, não uma subnet.
+      let cacheSubnetGroupName: unknown;
+      if (redisSubnetIds && redisSubnetIds.length > 0) {
+        const subnetGroupId = `${logicalId}SubnetGroup`;
+        redisEntries.push([subnetGroupId, {
+          Type: 'AWS::ElastiCache::SubnetGroup',
+          Properties: {
+            Description: `Subnet group para ${construct.id}`,
+            SubnetIds: redisSubnetIds.map(id => resolveSubnetId(id, ctx)),
+          },
+        }]);
+        cacheSubnetGroupName = { Ref: subnetGroupId };
+      } else if (props.subnetGroupName) {
+        cacheSubnetGroupName = props.subnetGroupName;
+      }
+
+      redisEntries.push([logicalId, {
         Type: 'AWS::ElastiCache::ReplicationGroup',
         Properties: {
           ReplicationGroupDescription: `Redis ${construct.id}`,
@@ -1237,10 +1502,11 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
           AutomaticFailoverEnabled: autoFailover && numNodes > 1,
           AtRestEncryptionEnabled: (props.atRestEncryptionEnabled as boolean) ?? true,
           TransitEncryptionEnabled: (props.transitEncryptionEnabled as boolean) ?? true,
-          ...(props.subnetGroupName ? { CacheSubnetGroupName: props.subnetGroupName } : {}),
+          ...(cacheSubnetGroupName ? { CacheSubnetGroupName: cacheSubnetGroupName } : {}),
           ...(props.securityGroupIds ? { SecurityGroupIds: (props.securityGroupIds as string[]).map(id => resolveSecurityGroupId(id, ctx)) } : {}),
         },
-      }]];
+      }]);
+      return redisEntries;
     }
 
     case 'Cache.Memcached': {
@@ -1828,6 +2094,19 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
           },
         }]);
         if (protocol === 'sqs' && isConstructId) subscribedQueues.push(endpointRaw);
+        // SNS → Lambda: a Subscription só entrega se a Lambda autorizar o SNS a
+        // invocá-la. Sem essa permission a assinatura não confirma / não dispara.
+        if (protocol === 'lambda' && isConstructId) {
+          topicEntries.push([`${logicalId}InvokeLambda${i + 1}`, {
+            Type: 'AWS::Lambda::Permission',
+            Properties: {
+              Action: 'lambda:InvokeFunction',
+              FunctionName: endpoint,
+              Principal: 'sns.amazonaws.com',
+              SourceArn: { Ref: logicalId },
+            },
+          }]);
+        }
       });
 
       // SQS::QueuePolicy: autoriza o SNS a enviar mensagens para cada fila inscrita.
@@ -1895,8 +2174,14 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
           ComparisonOperator: (props.comparisonOperator as string) ?? 'GreaterThanThreshold',
           Statistic: (props.statistic as string) ?? 'Average',
           TreatMissingData: (props.treatMissingData as string) ?? 'notBreaching',
-          ...(props.alarmActions ? { AlarmActions: props.alarmActions } : {}),
-          ...(props.okActions ? { OKActions: props.okActions } : {}),
+          ...((() => {
+            const acts = ((props.alarmActions as unknown[]) ?? []).map(a => resolveAlarmAction(a, ctx)).filter(a => a !== undefined);
+            return acts.length > 0 ? { AlarmActions: acts } : {};
+          })()),
+          ...((() => {
+            const acts = ((props.okActions as unknown[]) ?? []).map(a => resolveAlarmAction(a, ctx)).filter(a => a !== undefined);
+            return acts.length > 0 ? { OKActions: acts } : {};
+          })()),
           ...(dimensions ? { Dimensions: Object.entries(dimensions).map(([k, v]) => ({ Name: k, Value: v })) } : {}),
         },
       }]];
@@ -2154,11 +2439,30 @@ export function synthesize(stack: Stack, allStacks?: Stack[], profile: Environme
   const secretVaults = new Set<string>();
   const s3Buckets = new Set<string>();
   const sqsEventSourceLambdas = new Set<string>();
+  const albDefaultTg = new Map<string, { stackName: string; tgLogicalId: string }>();
+  const lambdaConstructs = new Set<string>();
+  const publicSubnetsByVpc = new Map<string, Array<{ id: string; stackName: string }>>();
   for (const s of universe) {
     for (const c of s.constructs) {
       registry.set(c.id, s.name);
+      if (c.type === 'Function.Lambda') lambdaConstructs.add(c.id);
       if (c.type === 'Secret.Vault') secretVaults.add(c.id);
       if (c.type === 'Storage.Bucket') s3Buckets.add(c.id);
+      if (c.type === 'Network.Subnet') {
+        const p = c.props as Record<string, unknown>;
+        if (p.public && typeof p.vpcId === 'string') {
+          const arr = publicSubnetsByVpc.get(p.vpcId) ?? [];
+          arr.push({ id: c.id, stackName: s.name });
+          publicSubnetsByVpc.set(p.vpcId, arr);
+        }
+      }
+      if (c.type === 'Network.LoadBalancer') {
+        const tgs = (c.props as Record<string, unknown>).targetGroups as Array<{ name: string }> | undefined;
+        if (tgs && tgs.length > 0) {
+          const lbLogicalId = c.id.replace(/[^a-zA-Z0-9]/g, '');
+          albDefaultTg.set(c.id, { stackName: s.name, tgLogicalId: `${lbLogicalId}TG${tgs[0].name.replace(/[^a-zA-Z0-9]/g, '')}` });
+        }
+      }
       if (c.type === 'Function.Lambda' && Array.isArray((c.props as Record<string, unknown>).eventSources)) {
         sqsEventSourceLambdas.add(c.id);
       }
@@ -2186,7 +2490,7 @@ export function synthesize(stack: Stack, allStacks?: Stack[], profile: Environme
       }
     }
   }
-  const ctx: SynthContext = { currentStackName: stack.name, registry, lambdaRoles, vpcLambdas, dbSecretSuffix, secretVaults, s3Buckets, sqsEventSourceLambdas, profile };
+  const ctx: SynthContext = { currentStackName: stack.name, registry, lambdaRoles, vpcLambdas, dbSecretSuffix, secretVaults, s3Buckets, sqsEventSourceLambdas, albDefaultTg, lambdaConstructs, publicSubnetsByVpc, profile };
 
   for (const construct of stack.constructs) {
     const entries = synthesizeConstruct(construct, ctx);
@@ -2307,6 +2611,33 @@ export function synthesize(stack: Stack, allStacks?: Stack[], profile: Environme
         Value: { Ref: `${logicalId}Secret` },
         Export: { Name: `${stack.name}-${construct.id}-SecretArn` },
       };
+    }
+    if (construct.type === 'Cache.Redis') {
+      // Exporta Endpoint/Port pra Lambda/ECS em OUTRA stack conectar via
+      // Fn::ImportValue (REDIS_HOST/REDIS_PORT). ReplicationGroup expõe o
+      // primary endpoint em PrimaryEndPoint.Address/Port.
+      const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
+      outputs[`${logicalId}Endpoint`] = {
+        Value: { 'Fn::GetAtt': [logicalId, 'PrimaryEndPoint.Address'] },
+        Export: { Name: `${stack.name}-${construct.id}-Endpoint` },
+      };
+      outputs[`${logicalId}Port`] = {
+        Value: { 'Fn::GetAtt': [logicalId, 'PrimaryEndPoint.Port'] },
+        Export: { Name: `${stack.name}-${construct.id}-Port` },
+      };
+    }
+    if (construct.type === 'Network.LoadBalancer') {
+      // Exporta o ARN do target group default pra um Compute.Container em OUTRA
+      // stack registrar suas tasks (ECS Service LoadBalancers). Ver resolveTargetGroupArn.
+      const tgs = (construct.props as Record<string, unknown>).targetGroups as Array<{ name: string }> | undefined;
+      if (tgs && tgs.length > 0) {
+        const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
+        const tgLogicalId = `${logicalId}TG${tgs[0].name.replace(/[^a-zA-Z0-9]/g, '')}`;
+        outputs[`${logicalId}TargetGroupArn`] = {
+          Value: { Ref: tgLogicalId },
+          Export: { Name: `${stack.name}-${construct.id}-TargetGroupArn` },
+        };
+      }
     }
   }
 
