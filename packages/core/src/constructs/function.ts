@@ -12,6 +12,14 @@ export interface FunctionLambdaProps {
   vpcId?: string;
   subnetIds?: string[];
   securityGroupIds?: string[];
+  /** Aciona esta Lambda a partir de filas SQS (event source mapping).
+   *  queueId = id de um Messaging.Queue (ou ARN literal de fila existente). */
+  eventSources?: Array<{
+    queueId: string;
+    batchSize?: number;
+    bisectBatchOnFunctionError?: boolean;
+    maxBatchingWindowSeconds?: number;
+  }>;
 }
 
 export interface FunctionApiGatewayProps {

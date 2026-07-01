@@ -195,22 +195,51 @@ function resolveSecurityGroupId(id: string, ctx: SynthContext): unknown {
  * referência real ao recurso. ARNs literais, '*' e qualquer outra string passam
  * inalterados.
  */
+/**
+ * Resolve o ARN de uma fila SQS referenciada por id de construct (Messaging.Queue)
+ * → Fn::GetAtt local / Fn::ImportValue cross-stack. ARN literal passa inalterado.
+ */
+function resolveQueueArn(value: string, ctx: SynthContext): unknown {
+  if (value.startsWith('arn:')) return value;
+  const ownerStack = ctx.registry.get(value);
+  if (!ownerStack) return value;
+  const logicalId = value.replace(/[^a-zA-Z0-9]/g, '');
+  if (ownerStack === ctx.currentStackName) return { 'Fn::GetAtt': [logicalId, 'Arn'] };
+  return { 'Fn::ImportValue': `${ownerStack}-${value}-Arn` };
+}
+
 function resolvePolicyResource(value: string, ctx: SynthContext): unknown {
+  // Padrão "<id>.SecretArn"/".Arn" (Secret.Vault etc).
   const match = /^([^.]+)\.(SecretArn|Arn)$/.exec(value);
-  if (!match) return value;
-  const [, constructId] = match;
-  if (!ctx.registry.has(constructId)) return value;
-  // Reusa a resolução de env var (Ref/ImportValue conforme local vs cross-stack).
-  return resolveEnvVarValue(`${constructId}.SecretArn`, ctx);
+  if (match && ctx.registry.has(match[1])) {
+    if (ctx.secretVaults.has(match[1])) return resolveEnvVarValue(`${match[1]}.SecretArn`, ctx);
+    return resolveQueueArn(match[1], ctx); // GetAtt Arn genérico
+  }
+  // Id de construct cru (ex: 'TaskQueue' passado como taskQueue.id em resources) → ARN.
+  if (ctx.registry.has(value)) {
+    if (ctx.secretVaults.has(value)) return resolveEnvVarValue(`${value}.SecretArn`, ctx);
+    return resolveQueueArn(value, ctx);
+  }
+  return value;
 }
 
 function resolveEnvVarValue(value: string, ctx: SynthContext): unknown {
-  const match = /^([^.]+)\.(Endpoint|Port|SecretArn|Username|Password)$/.exec(value);
+  const match = /^([^.]+)\.(Endpoint|Port|SecretArn|Username|Password|QueueUrl|QueueArn|Arn|TopicArn)$/.exec(value);
   if (!match) return value;
   const [, constructId, field] = match;
   const ownerStack = ctx.registry.get(constructId);
   if (!ownerStack) return value;
   const logicalId = constructId.replace(/[^a-zA-Z0-9]/g, '');
+
+  // SQS/SNS: QueueUrl = Ref (a URL da fila); QueueArn/Arn/TopicArn = GetAtt Arn.
+  if (field === 'QueueUrl') {
+    if (ownerStack === ctx.currentStackName) return { Ref: logicalId };
+    return { 'Fn::ImportValue': `${ownerStack}-${constructId}-QueueUrl` };
+  }
+  if (field === 'QueueArn' || field === 'Arn' || field === 'TopicArn') {
+    if (ownerStack === ctx.currentStackName) return { 'Fn::GetAtt': [logicalId, field === 'TopicArn' ? 'TopicArn' : 'Arn'] };
+    return { 'Fn::ImportValue': `${ownerStack}-${constructId}-Arn` };
+  }
 
   // Secret.Vault standalone: o próprio recurso É o secret — Ref retorna o ARN.
   // (Database tem um sub-recurso `${logicalId}Secret`; Vault não.)
@@ -1231,6 +1260,24 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
           } : {}),
         },
       }]);
+
+      // Event source mappings: aciona a Lambda a partir de filas SQS.
+      const eventSources = (props.eventSources as Array<Record<string, unknown>> | undefined) ?? [];
+      eventSources.forEach((es, i) => {
+        const queueId = es.queueId as string;
+        const esmId = `${logicalId}EventSource${i + 1}`;
+        entries.push([esmId, {
+          Type: 'AWS::Lambda::EventSourceMapping',
+          Properties: {
+            EventSourceArn: resolveQueueArn(queueId, ctx),
+            FunctionName: { Ref: logicalId },
+            BatchSize: (es.batchSize as number) ?? 10,
+            // BisectBatchOnFunctionError NÃO é suportado para SQS (só Kinesis/DynamoDB
+            // streams) — ignorado de propósito para não quebrar o deploy.
+            ...(es.maxBatchingWindowSeconds !== undefined ? { MaximumBatchingWindowInSeconds: es.maxBatchingWindowSeconds } : {}),
+          },
+        }]);
+      });
       return entries;
     }
 
@@ -1654,7 +1701,7 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
           DelaySeconds: (props.delaySeconds as number) ?? 0,
           ...(fifo ? { FifoQueue: true } : {}),
           SqsManagedSseEnabled: (props.encrypted as boolean) ?? true,
-          ...(props.dlqArn ? { RedrivePolicy: { deadLetterTargetArn: props.dlqArn as string, maxReceiveCount: (props.maxReceiveCount as number) ?? 3 } } : {}),
+          ...(props.dlqArn ? { RedrivePolicy: { deadLetterTargetArn: resolveQueueArn(props.dlqArn as string, ctx), maxReceiveCount: (props.maxReceiveCount as number) ?? 3 } } : {}),
         },
       }]];
     }

@@ -906,4 +906,37 @@ describe('AWSProvider', () => {
     // authorizer da rota foi criado
     expect(Object.values(tpl.Resources).some((r: any) => r.Type === 'AWS::ApiGatewayV2::Authorizer')).toBe(true);
   });
+
+  test('Fn.Lambda.eventSources → EventSourceMapping da fila SQS (caso openai31 worker)', () => {
+    new Messaging.Queue(stack, 'TaskQueue', { visibilityTimeoutSeconds: 60 });
+    new Fn.Lambda(stack, 'ProcessorFn', { runtime: 'nodejs20', handler: 'p.handler', code: '.',
+      eventSources: [{ queueId: 'TaskQueue', batchSize: 10, bisectBatchOnFunctionError: true }] });
+    const tpl = provider.synthesize(stack) as any;
+    const esm = Object.values(tpl.Resources).find((r: any) => r.Type === 'AWS::Lambda::EventSourceMapping') as any;
+    expect(esm).toBeDefined();
+    expect(esm.Properties.EventSourceArn).toEqual({ 'Fn::GetAtt': ['TaskQueue', 'Arn'] });
+    expect(esm.Properties.FunctionName).toEqual({ Ref: 'ProcessorFn' });
+    expect(esm.Properties.BatchSize).toBe(10);
+    // BisectBatchOnFunctionError NÃO é suportado para SQS — não deve aparecer
+    expect(esm.Properties.BisectBatchOnFunctionError).toBeUndefined();
+  });
+
+  test('Messaging.Queue dlqArn por id de construct → RedrivePolicy com ARN resolvido', () => {
+    new Messaging.Queue(stack, 'DLQ', {});
+    new Messaging.Queue(stack, 'MainQ', { dlqArn: 'DLQ', maxReceiveCount: 5 });
+    const tpl = provider.synthesize(stack) as any;
+    expect(tpl.Resources.MainQ.Properties.RedrivePolicy.deadLetterTargetArn).toEqual({ 'Fn::GetAtt': ['DLQ', 'Arn'] });
+  });
+
+  test('env var QUEUE_URL/Arn de fila → Ref/GetAtt (não string literal)', () => {
+    new Messaging.Queue(stack, 'TaskQueue', {});
+    new Fn.Lambda(stack, 'ProducerFn', { runtime: 'nodejs20', handler: 'p.handler', code: '.',
+      environment: { QUEUE_URL: 'TaskQueue.QueueUrl' } });
+    new Policy.IAM(stack, 'P', { attachTo: 'ProducerFn', attachType: 'lambda',
+      statements: [{ effect: 'Allow', actions: ['sqs:SendMessage'], resources: ['TaskQueue.Arn'] }] });
+    const tpl = provider.synthesize(stack) as any;
+    const fn = tpl.Resources.ProducerFn;
+    expect(fn.Properties.Environment.Variables.QUEUE_URL).toEqual({ Ref: 'TaskQueue' });
+    expect(tpl.Resources.PRole.Properties.Policies[0].PolicyDocument.Statement[0].Resource).toEqual([{ 'Fn::GetAtt': ['TaskQueue', 'Arn'] }]);
+  });
 });
