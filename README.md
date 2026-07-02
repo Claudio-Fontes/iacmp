@@ -9,7 +9,7 @@ CLI unificado e inteligente para provisionamento de infraestrutura em nuvem com 
 | Provider | Status | Observação |
 |---|---|---|
 | `aws` | Estável — deploy real validado | Provider de referência; 20 ciclos de bateria com correções aplicadas |
-| `terraform` | Experimental — será reformulado | Será reposicionado como formato de saída (não provider), ver [docs/estudo-arquitetura-multicloud.md](docs/estudo-arquitetura-multicloud.md) |
+| `terraform` | Beta — mesma semântica do provider aws (gerado do mesmo grafo de recursos); falta validação por deploy real (fase D) | Gerado via `emitTerraform(buildGraph(...))` — mesmos constructs, mesma validação semântica e CFN do provider aws |
 | `azure` | Experimental / congelado | Synth gera ARM templates mas nunca validado em deploy real; não recebe novas features |
 | `gcp` | Experimental / congelado | O Deployment Manager foi descontinuado pela Google; o synth atual será substituído por Terraform |
 
@@ -103,7 +103,7 @@ iacmp init meu-projeto --template rds
 | `aws` | CloudFormation JSON | Estável |
 | `azure` | ARM Template JSON | Experimental / congelado |
 | `gcp` | GCP Deployment Manager JSON | Experimental / congelado |
-| `terraform` | HCL (`.tf`) | Experimental |
+| `terraform` | Terraform JSON (`.tf.json`) | Beta |
 
 ## Constructs disponíveis
 

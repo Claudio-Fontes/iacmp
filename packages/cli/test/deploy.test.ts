@@ -95,11 +95,11 @@ describe('deploy --dry-run — caso feliz por provider (synth antes)', () => {
     dir = makeProject({ provider: 'terraform' });
     const synth = runCli(['synth', '--provider', 'terraform'], { cwd: dir });
     expect(synth.status).toBe(0);
-    expect(exists(dir, 'synth-out/terraform/main-stack.tf')).toBe(true);
+    expect(exists(dir, 'synth-out/terraform/main-stack.tf.json')).toBe(true);
 
     const r = runCli(['deploy', '--provider', 'terraform', '--dry-run'], { cwd: dir });
     expect(r.status).toBe(0);
-    expect(r.stdout).toContain('Stack: main-stack — 4 recurso(s)');
+    expect(r.stdout).toContain('Stack: main-stack — 12 recurso(s)');
     expect(r.stdout).toContain('terraform init');
     expect(r.stdout).toContain('terraform apply -auto-approve');
   });

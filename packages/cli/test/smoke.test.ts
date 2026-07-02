@@ -71,7 +71,7 @@ describe('synth → deploy → diff (pipeline E2E)', () => {
     runCli(['synth', '--provider', 'aws'], { cwd: dir });
     runCli(['synth', '--provider', 'terraform'], { cwd: dir });
     expect(exists(dir, 'synth-out/aws/main-stack.json')).toBe(true);
-    expect(exists(dir, 'synth-out/terraform/main-stack.tf')).toBe(true);
+    expect(exists(dir, 'synth-out/terraform/main-stack.tf.json')).toBe(true);
   });
 
   test('erro claro sem projeto inicializado', () => {

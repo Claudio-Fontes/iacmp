@@ -60,20 +60,20 @@ describe('synth — comando (black-box)', () => {
       expect(typeof parsed).toBe('object');
     });
 
-    test('terraform → synth-out/terraform/main-stack.tf com bloco resource', () => {
+    test('terraform → synth-out/terraform/main-stack.tf.json com JSON válido', () => {
       dir = makeProject({ provider: 'terraform' });
       const r = runCli(['synth', '--provider', 'terraform'], { cwd: dir });
 
       expect(r.status).toBe(0);
-      expect(r.stdout).toContain(path.join('synth-out', 'terraform', 'main-stack.tf'));
-      // extensão correta: .tf, NÃO .json
-      expect(exists(dir, 'synth-out/terraform/main-stack.tf')).toBe(true);
+      expect(r.stdout).toContain(path.join('synth-out', 'terraform', 'main-stack.tf.json'));
+      // extensão correta: .tf.json (Terraform JSON syntax)
+      expect(exists(dir, 'synth-out/terraform/main-stack.tf.json')).toBe(true);
       expect(exists(dir, 'synth-out/terraform/main-stack.json')).toBe(false);
 
-      const hcl = read(dir, 'synth-out/terraform/main-stack.tf');
-      expect(hcl).toContain('resource');
-      // HCL não deve ser JSON parseável (é texto HCL, não JSON)
-      expect(() => JSON.parse(hcl)).toThrow();
+      const tfJson = read(dir, 'synth-out/terraform/main-stack.tf.json');
+      // TF JSON syntax: parseável e contém chave "resource"
+      const parsed = JSON.parse(tfJson);
+      expect(parsed).toHaveProperty('resource');
     });
   });
 
@@ -91,7 +91,7 @@ describe('synth — comando (black-box)', () => {
       const r = runCli(['synth', '-p', 'terraform'], { cwd: dir });
 
       expect(r.status).toBe(0);
-      expect(exists(dir, 'synth-out/terraform/main-stack.tf')).toBe(true);
+      expect(exists(dir, 'synth-out/terraform/main-stack.tf.json')).toBe(true);
     });
   });
 

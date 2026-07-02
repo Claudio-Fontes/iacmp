@@ -13,7 +13,7 @@ import * as path from 'path';
 
 /** Extensão do arquivo de template gerado para cada provider. */
 export function templateExt(provider: string): string {
-  return provider === 'terraform' ? '.tf' : '.json';
+  return provider === 'terraform' ? '.tf.json' : '.json';
 }
 
 /** Raiz dos outputs de synth (`synth-out/`). */
@@ -186,8 +186,16 @@ export function countResources(filePath: string, provider: string): number {
   }
 
   if (provider === 'terraform') {
-    const matches = content.match(/^resource\s+"/gm);
-    return matches ? matches.length : 0;
+    // Formato .tf.json: { "resource": { "<type>": { "<name>": {...} } } }
+    try {
+      const tfJson = JSON.parse(content) as Record<string, unknown>;
+      const resourceMap = tfJson['resource'];
+      if (!resourceMap || typeof resourceMap !== 'object') return 0;
+      return Object.values(resourceMap as Record<string, Record<string, unknown>>)
+        .reduce((sum, instances) => sum + Object.keys(instances).length, 0);
+    } catch {
+      return 0;
+    }
   }
 
   let parsed: unknown;

@@ -239,9 +239,9 @@ export default class Synth extends Command {
 
           case 'terraform': {
             const p = new TerraformProvider();
-            const hcl = p.synthesize(typedStack, allStacks);
-            const outPath = path.join(provOutDir, `${stackName}.tf`);
-            fs.writeFileSync(outPath, hcl);
+            const tfJson = p.synthesize(typedStack, allStacks, profile);
+            const outPath = path.join(provOutDir, `${stackName}.tf.json`);
+            fs.writeFileSync(outPath, tfJson);
             this.log(`Sintetizado: ${outPath}`);
             break;
           }

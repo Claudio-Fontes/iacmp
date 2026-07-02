@@ -33,8 +33,8 @@ function write(p: string, content: string): void {
 }
 
 describe('templateExt', () => {
-  test('terraform usa .tf, demais usam .json', () => {
-    expect(templateExt('terraform')).toBe('.tf');
+  test('terraform usa .tf.json, demais usam .json', () => {
+    expect(templateExt('terraform')).toBe('.tf.json');
     expect(templateExt('aws')).toBe('.json');
     expect(templateExt('azure')).toBe('.json');
     expect(templateExt('gcp')).toBe('.json');
@@ -82,10 +82,10 @@ describe('listTemplates — contrato escrita/leitura (CLI-01)', () => {
 
   test('isola providers diferentes (sem vazamento entre subdiretórios)', () => {
     write(path.join(providerOutDir(cwd, 'aws'), 'rede.json'), '{"Resources":{}}');
-    write(path.join(providerOutDir(cwd, 'terraform'), 'rede.tf'), 'resource "x" "y" {}');
+    write(path.join(providerOutDir(cwd, 'terraform'), 'rede.tf.json'), '{"resource":{"x":{"y":{}}}}');
 
     expect(listTemplates(cwd, 'aws').map(t => t.fileName)).toEqual(['rede.json']);
-    expect(listTemplates(cwd, 'terraform').map(t => t.fileName)).toEqual(['rede.tf']);
+    expect(listTemplates(cwd, 'terraform').map(t => t.fileName)).toEqual(['rede.tf.json']);
   });
 
   test('filtra por stack', () => {
@@ -129,10 +129,15 @@ describe('countResources', () => {
     expect(countResources(p, 'gcp')).toBe(2);
   });
 
-  test('terraform — blocos resource no HCL', () => {
-    const p = path.join(providerOutDir(cwd, 'terraform'), 's.tf');
-    write(p, 'resource "aws_vpc" "main" {}\nresource "aws_subnet" "a" {}\n');
-    expect(countResources(p, 'terraform')).toBe(2);
+  test('terraform — JSON syntax (.tf.json): conta instâncias de resource', () => {
+    const p = path.join(providerOutDir(cwd, 'terraform'), 's.tf.json');
+    write(p, JSON.stringify({
+      resource: {
+        aws_vpc: { main: {} },
+        aws_subnet: { a: {}, b: {} },
+      },
+    }));
+    expect(countResources(p, 'terraform')).toBe(3);
   });
 
   test('arquivo inexistente ou JSON inválido → 0', () => {

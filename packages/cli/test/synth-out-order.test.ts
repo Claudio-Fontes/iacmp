@@ -40,10 +40,10 @@ describe('orderByDependency', () => {
     expect(orderByDependency([a, b]).map(t => t.fileName)).toEqual(['a.json', 'b.json']);
   });
 
-  test('template não-JSON (ex: terraform .tf) não quebra — sem dependências conhecidas', () => {
-    const tfPath = path.join(dir, 'main.tf');
-    fs.writeFileSync(tfPath, 'resource "aws_s3_bucket" "x" {}');
-    const tf: TemplateRef = { stackName: 'main', filePath: tfPath, fileName: 'main.tf' };
+  test('template terraform (.tf.json) sem Outputs CFN não quebra — sem dependências conhecidas', () => {
+    const tfPath = path.join(dir, 'main.tf.json');
+    fs.writeFileSync(tfPath, JSON.stringify({ resource: { aws_s3_bucket: { x: {} } } }));
+    const tf: TemplateRef = { stackName: 'main', filePath: tfPath, fileName: 'main.tf.json' };
     expect(orderByDependency([tf])).toEqual([tf]);
   });
 

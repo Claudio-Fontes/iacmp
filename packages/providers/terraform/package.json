@@ -13,7 +13,8 @@
     "test": "jest"
   },
   "dependencies": {
-    "@iacmp/core": "*"
+    "@iacmp/core": "*",
+    "@iacmp/provider-aws": "*"
   },
   "devDependencies": {
     "@types/jest": "^29",

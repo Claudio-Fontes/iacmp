@@ -1,12 +1,21 @@
-import { Stack } from '@iacmp/core';
-import { synthesize } from './synth/hcl';
+import { Stack, EnvironmentProfile, DEFAULT_PROFILE } from '@iacmp/core';
+import {
+  buildGraph,
+  emitCloudFormation,
+  emitTerraform,
+  validateResourceReferences,
+  validateNoNullValues,
+} from '@iacmp/provider-aws';
 
 export class TerraformProvider {
   readonly name = 'terraform';
 
-  // allStacks: paridade de assinatura com AWSProvider (visão global pra
-  // resolução cross-stack) — ainda não usado neste provider.
-  synthesize(stack: Stack, _allStacks?: Stack[]): string {
-    return synthesize(stack);
+  synthesize(stack: Stack, allStacks?: Stack[], profile: EnvironmentProfile = DEFAULT_PROFILE): string {
+    const graph = buildGraph(stack, allStacks, profile);
+    const cfnTemplate = emitCloudFormation(graph);
+    validateResourceReferences(cfnTemplate.Resources);
+    validateNoNullValues(cfnTemplate.Resources);
+    const tfJson = emitTerraform(cfnTemplate);
+    return JSON.stringify(tfJson, null, 2);
   }
 }

@@ -77,3 +77,24 @@ jobs:
             packages/providers/aws/test/golden/sns-alarm.json \
             packages/providers/aws/test/golden/stepfunctions-approval.json \
             packages/providers/aws/test/golden/waf-rest-api.json
+
+  terraform-validate:
+    name: terraform validate (golden-tf templates)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Validate golden Terraform JSON templates
+        run: |
+          for f in packages/providers/aws/test/golden-tf/*.tf.json; do
+            echo "Validating $f..."
+            tmpdir=$(mktemp -d)
+            cp "$f" "$tmpdir/main.tf.json"
+            terraform -chdir="$tmpdir" init -backend=false
+            terraform -chdir="$tmpdir" validate
+            rm -rf "$tmpdir"
+          done

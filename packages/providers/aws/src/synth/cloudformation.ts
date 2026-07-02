@@ -35,7 +35,7 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
   );
 }
 
-export function synthesize(stack: Stack, allStacks?: Stack[], profile: EnvironmentProfile = DEFAULT_PROFILE): CloudFormationTemplate {
+export function buildGraph(stack: Stack, allStacks?: Stack[], profile: EnvironmentProfile = DEFAULT_PROFILE): StackGraph {
   const resources: Record<string, CloudFormationResource> = {};
   const outputs: Record<string, { Value: unknown; Export: { Name: string } }> = {};
 
@@ -308,11 +308,13 @@ export function synthesize(stack: Stack, allStacks?: Stack[], profile: Environme
     value: out.Value,
   }));
 
-  const graph: StackGraph = { stackName: stack.name, nodes, exports: graphExports };
-  const template = emitCloudFormation(graph);
+  return { stackName: stack.name, nodes, exports: graphExports };
+}
 
+export function synthesize(stack: Stack, allStacks?: Stack[], profile: EnvironmentProfile = DEFAULT_PROFILE): CloudFormationTemplate {
+  const graph = buildGraph(stack, allStacks, profile);
+  const template = emitCloudFormation(graph);
   validateResourceReferences(template.Resources);
   validateNoNullValues(template.Resources);
-
   return template;
 }
