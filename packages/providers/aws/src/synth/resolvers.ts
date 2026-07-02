@@ -1,27 +1,202 @@
+import { ref, type Ref } from '@iacmp/core';
 import { type CloudFormationResource, type SynthContext } from './types';
+
+// ─── Mapa tipo × atributo → { sameStack, exportSuffix } ─────────────────────
+// exportSuffix vazio ('') = sameStack é usada também para cross-stack
+// (caso Password que usa dynamic ref independente da stack).
+type SameStackFn = (logicalId: string, constructId: string, ownerStack: string, ctx: SynthContext) => unknown;
+
+interface ResolutionEntry {
+  sameStack: SameStackFn;
+  exportSuffix: string;
+}
+
+const RESOLVE_MAP: Record<string, Record<string, ResolutionEntry>> = {
+  'Secret.Vault': {
+    'SecretArn': { sameStack: (l) => ({ Ref: l }), exportSuffix: 'SecretArn' },
+    'Arn':       { sameStack: (l) => ({ Ref: l }), exportSuffix: 'SecretArn' }, // vault só exporta -SecretArn
+  },
+  'Database.SQL': {
+    'Endpoint':  { sameStack: (l) => ({ 'Fn::GetAtt': [l, 'Endpoint.Address'] }), exportSuffix: 'Endpoint' },
+    'Port':      { sameStack: (l) => ({ 'Fn::GetAtt': [l, 'Endpoint.Port'] }), exportSuffix: 'Port' },
+    'SecretArn': { sameStack: (l) => ({ Ref: `${l}Secret` }), exportSuffix: 'SecretArn' },
+    'Password': {
+      sameStack: (_, cid, owner, ctx) => {
+        const suffix = ctx.dbSecretSuffix.get(cid) ?? 'db-password';
+        return `{{resolve:secretsmanager:${owner}-${cid}-${suffix}:SecretString:password}}`;
+      },
+      exportSuffix: '', // dynamic ref — usa sameStack para cross-stack também
+    },
+    'Username': { sameStack: () => 'dbadmin', exportSuffix: 'Username' },
+  },
+  'Database.DocumentDB': {
+    'Endpoint':  { sameStack: (l) => ({ 'Fn::GetAtt': [`${l}Cluster`, 'Endpoint'] }), exportSuffix: 'Endpoint' },
+    'Port':      { sameStack: (l) => ({ 'Fn::GetAtt': [`${l}Cluster`, 'Port'] }), exportSuffix: 'Port' },
+    'SecretArn': { sameStack: (l) => ({ Ref: `${l}Secret` }), exportSuffix: 'SecretArn' },
+    'Password': {
+      sameStack: (_, cid, owner, ctx) => {
+        const suffix = ctx.dbSecretSuffix.get(cid) ?? 'docdb-password';
+        return `{{resolve:secretsmanager:${owner}-${cid}-${suffix}:SecretString:password}}`;
+      },
+      exportSuffix: '',
+    },
+  },
+  'Cache.Redis': {
+    'Endpoint': { sameStack: (l) => ({ 'Fn::GetAtt': [l, 'PrimaryEndPoint.Address'] }), exportSuffix: 'Endpoint' },
+    'Port':     { sameStack: (l) => ({ 'Fn::GetAtt': [l, 'PrimaryEndPoint.Port'] }), exportSuffix: 'Port' },
+  },
+  'Messaging.Queue': {
+    'Arn':      { sameStack: (l) => ({ 'Fn::GetAtt': [l, 'Arn'] }), exportSuffix: 'Arn' },
+    'QueueArn': { sameStack: (l) => ({ 'Fn::GetAtt': [l, 'Arn'] }), exportSuffix: 'Arn' }, // alias
+    'QueueUrl': { sameStack: (l) => ({ Ref: l }), exportSuffix: 'QueueUrl' },
+  },
+  'Messaging.Topic': {
+    'Arn':      { sameStack: (l) => ({ Ref: l }), exportSuffix: 'Arn' }, // Ref retorna ARN para SNS
+    'TopicArn': { sameStack: (l) => ({ Ref: l }), exportSuffix: 'Arn' }, // alias
+  },
+  'Messaging.Stream': {
+    'Arn':  { sameStack: (l) => ({ 'Fn::GetAtt': [l, 'Arn'] }), exportSuffix: 'Arn' },
+    'Name': { sameStack: (l) => ({ Ref: l }), exportSuffix: 'Name' },
+  },
+  'Function.Lambda': {
+    'Arn': { sameStack: (l) => ({ 'Fn::GetAtt': [l, 'Arn'] }), exportSuffix: 'Arn' },
+  },
+  'Network.LoadBalancer': {
+    'TargetGroupArn': {
+      sameStack: (_, cid, __, ctx) => {
+        const tg = ctx.albDefaultTg.get(cid);
+        return tg ? { Ref: tg.tgLogicalId } : cid; // Ref de TargetGroup retorna o ARN em CFn
+      },
+      exportSuffix: 'TargetGroupArn',
+    },
+    'DnsName': { sameStack: (l) => ({ 'Fn::GetAtt': [l, 'DNSName'] }), exportSuffix: 'DnsName' },
+  },
+  'Network.WAF': {
+    'Arn': { sameStack: (l) => ({ 'Fn::GetAtt': [l, 'Arn'] }), exportSuffix: 'Arn' },
+  },
+  'Storage.Bucket': {
+    'Arn':  { sameStack: (l) => ({ 'Fn::GetAtt': [l, 'Arn'] }), exportSuffix: 'Arn' },
+    'Name': { sameStack: (l) => ({ Ref: l }), exportSuffix: 'Name' },
+  },
+  'Database.DynamoDB': {
+    'Arn':  { sameStack: (l) => ({ 'Fn::GetAtt': [l, 'Arn'] }), exportSuffix: 'Arn' },
+    'Name': { sameStack: (l) => ({ Ref: l }), exportSuffix: 'Name' },
+  },
+  'Network.VPC':           { 'VpcId':   { sameStack: (l) => ({ Ref: l }), exportSuffix: 'VpcId' } },
+  'Network.Subnet':        { 'SubnetId':{ sameStack: (l) => ({ Ref: l }), exportSuffix: 'SubnetId' } },
+  'Network.SecurityGroup': { 'GroupId': { sameStack: (l) => ({ 'Fn::GetAtt': [l, 'GroupId'] }), exportSuffix: 'GroupId' } },
+};
+
+// Atributo default para bare IDs (construct sem sufixo de atributo).
+const DEFAULT_ATTR: Partial<Record<string, string>> = {
+  'Secret.Vault':         'SecretArn',
+  'Storage.Bucket':       'Arn',
+  'Messaging.Queue':      'Arn',
+  'Messaging.Topic':      'Arn',
+  'Messaging.Stream':     'Arn',
+  'Function.Lambda':      'Arn',
+  'Network.WAF':          'Arn',
+  'Database.DynamoDB':    'Arn',
+  'Network.LoadBalancer': 'TargetGroupArn',
+};
+
+// Normalização de aliases de atributo na string.
+const ATTR_ALIAS: Record<string, string> = {
+  'arn':        'Arn',
+  'name':       'Name',
+  'BucketName': 'Name',
+};
+
+/**
+ * Converte uma string legada ('AppDB.SecretArn', 'AlertsTopic', 'arn:...') em
+ * `Ref` tipado ou `{ literal: string }`. Cobre:
+ *  - `'arn:...'` literal
+ *  - `'<id>.<attr>'` com attr válido (inclusive aliases arn/name/TopicArn)
+ *  - `'<id>'` cru — usa DEFAULT_ATTR para o tipo do construct
+ */
+export function parseStringRef(value: string, ctx: SynthContext): Ref | { literal: string } {
+  if (value.startsWith('arn:')) return { literal: value };
+
+  // Padrão '<id>.<attr>'
+  const dot = value.indexOf('.');
+  if (dot !== -1) {
+    const constructId = value.slice(0, dot);
+    const rawAttr = value.slice(dot + 1);
+    if (ctx.registry.has(constructId)) {
+      const attr = ATTR_ALIAS[rawAttr] ?? rawAttr;
+      return ref(constructId, attr);
+    }
+  }
+
+  // Bare ID
+  if (ctx.registry.has(value)) {
+    const type = ctx.registry.get(value)!.type;
+    const attr = DEFAULT_ATTR[type];
+    if (attr) return ref(value, attr);
+  }
+
+  return { literal: value };
+}
+
+/**
+ * ÚNICO ponto de resolução de Ref → expressão CloudFormation.
+ * Valida:
+ *  1. constructId existe no registry (erro claro se não)
+ *  2. attribute válido para o tipo via RESOLVE_MAP
+ *  3. opts.expectType → erro de tipo se não bater
+ *  4. same-stack → GetAtt/Ref via RESOLVE_MAP.sameStack
+ *     cross-stack → ImportValue com exportSuffix (ou sameStack se exportSuffix vazio)
+ */
+export function resolveRef(r: Ref, ctx: SynthContext, opts?: { expectType?: string }): unknown {
+  const entry = ctx.registry.get(r.constructId);
+  if (!entry) {
+    throw new Error(`Referência "${r.constructId}" não foi encontrada em nenhuma stack do projeto.`);
+  }
+  const { stackName, type } = entry;
+
+  if (opts?.expectType && type !== opts.expectType) {
+    throw new Error(`Referência "${r.constructId}" (tipo: "${type}") não é do tipo esperado "${opts.expectType}".`);
+  }
+
+  const attrMap = RESOLVE_MAP[type];
+  if (!attrMap) {
+    throw new Error(`Tipo "${type}" não tem atributos referenciáveis definidos. constructId: "${r.constructId}".`);
+  }
+
+  const resolution = attrMap[r.attribute];
+  if (!resolution) {
+    const valid = Object.keys(attrMap).join(', ');
+    throw new Error(`Atributo "${r.attribute}" não é válido para o tipo "${type}". Atributos válidos: ${valid}. constructId: "${r.constructId}".`);
+  }
+
+  const logicalId = r.constructId.replace(/[^a-zA-Z0-9]/g, '');
+  const isSameStack = stackName === ctx.currentStackName;
+
+  if (isSameStack || !resolution.exportSuffix) {
+    return resolution.sameStack(logicalId, r.constructId, stackName, ctx);
+  }
+  return { 'Fn::ImportValue': `${stackName}-${r.constructId}-${resolution.exportSuffix}` };
+}
 
 /**
  * Resolve a referência ao ARN de uma Function.Lambda como valor standalone
  * (ex: Lambda Permission's FunctionName) — local usa Fn::GetAtt, cross-stack
  * usa Fn::ImportValue.
  */
-// Helper compartilhado: resolve o ARN de uma referência a um construct (Lambda,
-// fila, tópico...) — same-stack GetAtt / cross-stack ImportValue "-Arn". NÃO
-// valida o tipo do construct: quem exige uma Fn.Lambda (ex: rota de ApiGateway)
-// deve checar ctx.lambdaConstructs no próprio call-site (ver requireLambda).
+// Helper compartilhado: resolve o ARN de um construct (Lambda, fila, tópico...)
+// — wrapper fino de parseStringRef+resolveRef. same-stack GetAtt / cross-stack ImportValue.
 export function resolveLambdaArnRef(lambdaId: string, ctx: SynthContext): unknown {
-  const ownerStack = ctx.registry.get(lambdaId);
-  if (!ownerStack) {
+  const parsed = parseStringRef(lambdaId, ctx);
+  if ('literal' in parsed) {
     throw new Error(`Referência "${lambdaId}" não foi encontrada em nenhuma stack do projeto.`);
   }
-  if (ownerStack === ctx.currentStackName) return { 'Fn::GetAtt': [lambdaId, 'Arn'] };
-  return { 'Fn::ImportValue': `${ownerStack}-${lambdaId}-Arn` };
+  return resolveRef(parsed, ctx);
 }
 
 /** Exige que `id` seja uma Fn.Lambda (usado por rotas de ApiGateway); lança um
  *  erro claro caso contrário. */
 export function requireLambda(id: string, ctx: SynthContext): void {
-  if (!ctx.lambdaConstructs.has(id)) {
+  if (ctx.registry.get(id)?.type !== 'Function.Lambda') {
     throw new Error(`Function.ApiGateway: a rota aponta lambdaId "${id}", que não é uma Fn.Lambda. API Gateway só integra com Lambda — um Compute.Container/ECS deve ser exposto por um Network.LoadBalancer (ALB), não por API Gateway.`);
   }
 }
@@ -35,7 +210,7 @@ export function requireLambda(id: string, ctx: SynthContext): void {
  */
 export function buildInvocationUri(lambdaId: string, ctx: SynthContext): unknown {
   const template = 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations';
-  const ownerStack = ctx.registry.get(lambdaId);
+  const ownerStack = ctx.registry.get(lambdaId)?.stackName;
   if (!ownerStack) {
     throw new Error(`Lambda "${lambdaId}" referenciada em Function.ApiGateway não foi encontrada em nenhuma stack do projeto.`);
   }
@@ -131,7 +306,7 @@ export function defaultServiceRole(
 
 export function resolveVpcId(id: string, ctx: SynthContext): unknown {
   if (/^vpc-[0-9a-z]+$/.test(id)) return id;
-  const ownerStack = ctx.registry.get(id);
+  const ownerStack = ctx.registry.get(id)?.stackName;
   if (!ownerStack) return id;
   const logicalId = id.replace(/[^a-zA-Z0-9]/g, '');
   if (ownerStack === ctx.currentStackName) return { Ref: logicalId };
@@ -140,7 +315,7 @@ export function resolveVpcId(id: string, ctx: SynthContext): unknown {
 
 export function resolveSubnetId(id: string, ctx: SynthContext): unknown {
   if (/^subnet-[0-9a-z]+$/.test(id)) return id;
-  const ownerStack = ctx.registry.get(id);
+  const ownerStack = ctx.registry.get(id)?.stackName;
   if (!ownerStack) return id;
   const logicalId = id.replace(/[^a-zA-Z0-9]/g, '');
   if (ownerStack === ctx.currentStackName) return { Ref: logicalId };
@@ -149,7 +324,7 @@ export function resolveSubnetId(id: string, ctx: SynthContext): unknown {
 
 export function resolveSecurityGroupId(id: string, ctx: SynthContext): unknown {
   if (/^sg-[0-9a-zA-Z]+$/.test(id)) return id;
-  const ownerStack = ctx.registry.get(id);
+  const ownerStack = ctx.registry.get(id)?.stackName;
   if (!ownerStack) return id;
   const logicalId = id.replace(/[^a-zA-Z0-9]/g, '');
   if (ownerStack === ctx.currentStackName) return { 'Fn::GetAtt': [logicalId, 'GroupId'] };
@@ -183,96 +358,35 @@ export function normalizeRate(rate: string): string {
 
 export function resolveQueueArn(value: string, ctx: SynthContext): unknown {
   if (value.startsWith('arn:')) return value;
-  const ownerStack = ctx.registry.get(value);
-  if (!ownerStack) return value;
-  const logicalId = value.replace(/[^a-zA-Z0-9]/g, '');
-  if (ownerStack === ctx.currentStackName) return { 'Fn::GetAtt': [logicalId, 'Arn'] };
-  return { 'Fn::ImportValue': `${ownerStack}-${value}-Arn` };
+  const parsed = parseStringRef(value, ctx);
+  if ('literal' in parsed) return value;
+  return resolveRef(parsed, ctx);
 }
 
 export function resolvePolicyResource(value: string, ctx: SynthContext): unknown {
-  // Referência a ARN de bucket S3, aceitando sufixo de path e ".arn" opcional:
-  // "UploadsBucket.arn/*", "UploadsBucket/*", "UploadsBucket.arn", "UploadsBucket".
+  if (typeof value !== 'string') return value; // null/undefined pass through → validateNoNullValues
+  if (value.startsWith('arn:') || value === '*') return value;
+  // S3 bucket ARN com sufixo de path opcional: 'UploadsBucket.arn/*' ou 'UploadsBucket/*'.
+  // parseStringRef não preserva o sufixo, então este caso é tratado antes.
   const s3Match = /^([^./]+)(?:\.arn)?(\/.*)?$/i.exec(value);
   if (s3Match) {
     const id = s3Match[1];
     const suffix = s3Match[2] ?? '';
-    const reg = ctx.registry.get(id);
-    if (reg && ctx.s3Buckets.has(id)) {
-      const logicalId = id.replace(/[^a-zA-Z0-9]/g, '');
-      const bucketArn = reg === ctx.currentStackName
-        ? { 'Fn::GetAtt': [logicalId, 'Arn'] }
-        : { 'Fn::ImportValue': `${reg}-${id}-Arn` };
-      // Sem sufixo → o próprio ARN; com sufixo (ex: /*) → Fn::Sub concatenando.
+    if (ctx.registry.get(id)?.type === 'Storage.Bucket') {
+      const bucketArn = resolveRef(ref(id, 'Arn'), ctx);
       if (!suffix) return bucketArn;
       return { 'Fn::Sub': [`\${BArn}${suffix}`, { BArn: bucketArn }] };
     }
   }
-  // Padrão "<id>.SecretArn"/".Arn"/".QueueArn"/".TopicArn" (Secret.Vault, filas, tópicos).
-  const match = /^([^.]+)\.(SecretArn|Arn|QueueArn|TopicArn)$/.exec(value);
-  if (match && ctx.registry.has(match[1])) {
-    // SecretArn resolve pelo mesmo caminho das env vars — cobre tanto Secret.Vault
-    // (o recurso É o secret) quanto Database.SQL (sub-recurso `${id}Secret`, export
-    // `-SecretArn`). resolveQueueArn produziria `-Arn`, que não existe para o DB.
-    // Qualquer ref a um Secret.Vault (mesmo com sufixo `.Arn`) também vai por aqui —
-    // um vault exporta `-SecretArn`, nunca `-Arn`.
-    if (match[2] === 'SecretArn' || ctx.secretVaults.has(match[1])) return resolveEnvVarValue(`${match[1]}.SecretArn`, ctx);
-    return resolveQueueArn(match[1], ctx); // GetAtt Arn / ImportValue-Arn (fila e tópico exportam "-Arn")
-  }
-  // Id de construct cru (ex: 'TaskQueue' em resources) → ARN.
-  if (ctx.registry.has(value)) {
-    if (ctx.secretVaults.has(value)) return resolveEnvVarValue(`${value}.SecretArn`, ctx);
-    return resolveQueueArn(value, ctx);
-  }
-  return value;
+  const parsed = parseStringRef(value, ctx);
+  if ('literal' in parsed) return value;
+  return resolveRef(parsed, ctx);
 }
 
 export function resolveEnvVarValue(value: string, ctx: SynthContext): unknown {
-  const match = /^([^.]+)\.(Endpoint|Port|SecretArn|Username|Password|QueueUrl|QueueArn|Arn|arn|TopicArn|BucketName|Name|name)$/.exec(value);
-  if (!match) return value;
-  const [, constructId, fieldRaw] = match;
-  const field = fieldRaw === 'arn' ? 'Arn' : fieldRaw === 'name' ? 'Name' : fieldRaw;
-  const ownerStack = ctx.registry.get(constructId);
-  if (!ownerStack) return value;
-  const logicalId = constructId.replace(/[^a-zA-Z0-9]/g, '');
-
-  // BucketName/Name: Ref de AWS::S3::Bucket retorna o nome real (com sufixo CFN).
-  if (field === 'BucketName' || field === 'Name') {
-    if (ownerStack === ctx.currentStackName) return { Ref: logicalId };
-    return { 'Fn::ImportValue': `${ownerStack}-${constructId}-Name` };
-  }
-
-  // SQS/SNS: QueueUrl = Ref (a URL da fila); QueueArn/Arn/TopicArn = GetAtt Arn.
-  if (field === 'QueueUrl') {
-    if (ownerStack === ctx.currentStackName) return { Ref: logicalId };
-    return { 'Fn::ImportValue': `${ownerStack}-${constructId}-QueueUrl` };
-  }
-  if (field === 'QueueArn' || field === 'Arn' || field === 'TopicArn') {
-    if (ownerStack === ctx.currentStackName) return { 'Fn::GetAtt': [logicalId, field === 'TopicArn' ? 'TopicArn' : 'Arn'] };
-    return { 'Fn::ImportValue': `${ownerStack}-${constructId}-Arn` };
-  }
-
-  // Secret.Vault standalone: o próprio recurso É o secret — Ref retorna o ARN.
-  // (Database tem um sub-recurso `${logicalId}Secret`; Vault não.)
-  if (field === 'SecretArn' && ctx.secretVaults.has(constructId)) {
-    if (ownerStack === ctx.currentStackName) return { Ref: logicalId };
-    return { 'Fn::ImportValue': `${ownerStack}-${constructId}-SecretArn` };
-  }
-
-  // Password: CloudFormation dynamic reference — resolvido em deploy time (sem SDK runtime)
-  if (field === 'Password') {
-    const suffix = ctx.dbSecretSuffix.get(constructId) ?? 'db-password';
-    return `{{resolve:secretsmanager:${ownerStack}-${constructId}-${suffix}:SecretString:password}}`;
-  }
-
-  if (ownerStack === ctx.currentStackName) {
-    if (field === 'Endpoint') return { 'Fn::GetAtt': [logicalId, 'Endpoint.Address'] };
-    if (field === 'Port') return { 'Fn::GetAtt': [logicalId, 'Endpoint.Port'] };
-    if (field === 'SecretArn') return { Ref: `${logicalId}Secret` };
-    if (field === 'Username') return value; // username é estático (dbadmin), retorna as-is
-    return value;
-  }
-  return { 'Fn::ImportValue': `${ownerStack}-${constructId}-${field}` };
+  const parsed = parseStringRef(value, ctx);
+  if ('literal' in parsed) return value;
+  return resolveRef(parsed, ctx);
 }
 
 /**
@@ -285,12 +399,9 @@ export function resolveEnvVarValue(value: string, ctx: SynthContext): unknown {
 export function resolveAlarmAction(value: unknown, ctx: SynthContext): unknown | undefined {
   if (typeof value !== 'string' || value.length === 0) return undefined;
   if (value.startsWith('arn:')) return value;
-  const id = value.replace(/\.(TopicArn|arn|Arn)$/, '');
-  const ownerStack = ctx.registry.get(id);
-  if (!ownerStack) return value; // ref desconhecida — deixa como veio (visível no deploy)
-  const logicalId = id.replace(/[^a-zA-Z0-9]/g, '');
-  if (ownerStack === ctx.currentStackName) return { Ref: logicalId };
-  return { 'Fn::ImportValue': `${ownerStack}-${id}-Arn` };
+  const parsed = parseStringRef(value, ctx);
+  if ('literal' in parsed) return value; // ref desconhecida — deixa como veio (visível no deploy)
+  return resolveRef(parsed, ctx);
 }
 
 /**
@@ -314,9 +425,7 @@ export function alarmActionsBlock(key: 'AlarmActions' | 'OKActions', raw: unknow
  */
 export function resolveTargetGroupArn(value: string, ctx: SynthContext): unknown {
   if (value.startsWith('arn:')) return value;
-  const lbId = value.replace(/\.TargetGroupArn$/, '');
-  const tg = ctx.albDefaultTg.get(lbId);
-  if (!tg) return value; // LB sem target group declarado — deixa como veio (erro visível no synth/deploy)
-  if (tg.stackName === ctx.currentStackName) return { 'Fn::GetAtt': [tg.tgLogicalId, 'TargetGroupArn'] };
-  return { 'Fn::ImportValue': `${tg.stackName}-${lbId}-TargetGroupArn` };
+  const parsed = parseStringRef(value, ctx);
+  if ('literal' in parsed) return value;
+  return resolveRef(parsed, ctx);
 }

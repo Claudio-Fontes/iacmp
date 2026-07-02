@@ -59,23 +59,17 @@ export function synthesize(stack: Stack, allStacks?: Stack[], profile: Environme
     );
   }
 
-  const registry = new Map<string, string>();
+  const registry = new Map<string, { stackName: string; type: string }>();
   const lambdaRoles = new Map<string, { stackName: string; roleLogicalId: string }>();
   const vpcLambdas = new Set<string>();
   const dbSecretSuffix = new Map<string, string>();
-  const secretVaults = new Set<string>();
-  const s3Buckets = new Set<string>();
   const sqsEventSourceLambdas = new Set<string>();
   const kinesisEventSourceLambdas = new Set<string>();
   const albDefaultTg = new Map<string, { stackName: string; tgLogicalId: string; listenerLogicalId?: string }>();
-  const lambdaConstructs = new Set<string>();
   const publicSubnetsByVpc = new Map<string, Array<{ id: string; stackName: string }>>();
   for (const s of universe) {
     for (const c of s.constructs) {
-      registry.set(c.id, s.name);
-      if (c.type === 'Function.Lambda') lambdaConstructs.add(c.id);
-      if (c.type === 'Secret.Vault') secretVaults.add(c.id);
-      if (c.type === 'Storage.Bucket') s3Buckets.add(c.id);
+      registry.set(c.id, { stackName: s.name, type: c.type });
       if (c.type === 'Network.Subnet') {
         const p = c.props as Record<string, unknown>;
         if (p.public && typeof p.vpcId === 'string') {
@@ -130,7 +124,7 @@ export function synthesize(stack: Stack, allStacks?: Stack[], profile: Environme
       }
     }
   }
-  const ctx: SynthContext = { currentStackName: stack.name, registry, lambdaRoles, vpcLambdas, dbSecretSuffix, secretVaults, s3Buckets, sqsEventSourceLambdas, kinesisEventSourceLambdas, albDefaultTg, lambdaConstructs, publicSubnetsByVpc, profile };
+  const ctx: SynthContext = { currentStackName: stack.name, registry, lambdaRoles, vpcLambdas, dbSecretSuffix, sqsEventSourceLambdas, kinesisEventSourceLambdas, albDefaultTg, publicSubnetsByVpc, profile };
 
   for (const construct of stack.constructs) {
     const entries = synthesizeConstruct(construct, ctx);

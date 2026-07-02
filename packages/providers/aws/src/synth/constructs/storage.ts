@@ -66,7 +66,7 @@ export function synthStorage(
         const dependsOn: string[] = [];
         notifications.forEach((n, ni) => {
           const lambdaId = n.lambdaId as string;
-          if (!ctx.lambdaConstructs.has(lambdaId)) {
+          if (ctx.registry.get(lambdaId)?.type !== 'Function.Lambda') {
             throw new Error(`Storage.Bucket "${construct.id}": eventNotifications[${ni}].lambdaId "${lambdaId}" não é uma Fn.Lambda. Aponte para o id de uma Function.Lambda.`);
           }
           const fnArn = resolveLambdaArnRef(lambdaId, ctx);

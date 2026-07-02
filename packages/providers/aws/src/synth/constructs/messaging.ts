@@ -59,7 +59,7 @@ export function synthMessaging(
         const endpointRaw = s.endpoint as string;
         // sqs/lambda: endpoint pode ser id de construct → resolve ARN.
         const isConstructId = (protocol === 'sqs' || protocol === 'lambda') && ctx.registry.has(endpointRaw);
-        if (protocol === 'lambda' && isConstructId && !ctx.lambdaConstructs.has(endpointRaw)) {
+        if (protocol === 'lambda' && isConstructId && ctx.registry.get(endpointRaw)?.type !== 'Function.Lambda') {
           throw new Error(`Messaging.Topic "${construct.id}": subscription[${i}] protocol:'lambda' tem endpoint "${endpointRaw}", que não é uma Fn.Lambda. Aponte para o id de uma Function.Lambda.`);
         }
         const endpoint = isConstructId
@@ -142,7 +142,7 @@ export function synthMessaging(
         // Target: resolve targetLambdaId (ou targetArn com id) → ARN da Lambda.
         const targetLambdaId = (r.targetLambdaId as string | undefined)
           ?? (typeof r.targetArn === 'string' && ctx.registry.has(r.targetArn) ? (r.targetArn as string) : undefined);
-        if (targetLambdaId && !ctx.lambdaConstructs.has(targetLambdaId)) {
+        if (targetLambdaId && ctx.registry.get(targetLambdaId)?.type !== 'Function.Lambda') {
           throw new Error(`Events.EventBridge "${construct.id}": targetLambdaId "${targetLambdaId}" não é uma Fn.Lambda. Aponte para o id de uma Function.Lambda.`);
         }
         const targetArnValue = targetLambdaId

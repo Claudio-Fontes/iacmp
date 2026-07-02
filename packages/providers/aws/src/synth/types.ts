@@ -23,8 +23,8 @@ export interface CloudFormationTemplate {
  */
 export interface SynthContext {
   currentStackName: string;
-  /** constructId (ex: 'SaveMessageFn') → nome da Stack que o declara. */
-  registry: Map<string, string>;
+  /** constructId → { stackName, type } de TODAS as stacks do universo. */
+  registry: Map<string, { stackName: string; type: string }>;
   /**
    * lambdaId (id de uma Function.Lambda) → role IAM criada por um Policy.IAM
    * (attachType: 'lambda', attachTo: lambdaId) que a referencia, se existir.
@@ -32,10 +32,6 @@ export interface SynthContext {
   lambdaRoles: Map<string, { stackName: string; roleLogicalId: string }>;
   /** constructId de Database → sufixo do nome do secret (ex: 'AppDB' → 'db-password' ou 'aurora-password'). */
   dbSecretSuffix: Map<string, string>;
-  /** IDs de Secret.Vault — o próprio logicalId É o secret (Ref retorna o ARN). */
-  secretVaults: Set<string>;
-  /** IDs de Storage.Bucket — para resolver ARN/nome em policies e env vars. */
-  s3Buckets: Set<string>;
   /** IDs de Fn.Lambda com eventSources SQS — a role precisa da SQSQueueExecutionRole. */
   sqsEventSourceLambdas: Set<string>;
   /** IDs de Fn.Lambda com eventSources Kinesis — a role precisa da KinesisExecutionRole. */
@@ -45,8 +41,6 @@ export interface SynthContext {
   /** constructId de Network.LoadBalancer → target group default (1º) e o listener que
    *  faz forward pra ele (para o ECS Service depender do listener certo). */
   albDefaultTg: Map<string, { stackName: string; tgLogicalId: string; listenerLogicalId?: string }>;
-  /** IDs de Function.Lambda — alvos válidos de rotas de Function.ApiGateway. */
-  lambdaConstructs: Set<string>;
   /** vpcId (construct id) → Network.Subnet com public:true que o referenciam (para IGW + rota pública). */
   publicSubnetsByVpc: Map<string, Array<{ id: string; stackName: string }>>;
   /** Perfil de ambiente (tier da conta, região) — fonte dos defaults derivados. */

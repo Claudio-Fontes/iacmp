@@ -292,7 +292,7 @@ export function synthFunction(
         // WebACLAssociation (o WAF não é uma prop do stage; é um recurso à parte).
         if (props.wafAclId) {
           const wafId = props.wafAclId as string;
-          const wafStack = ctx.registry.get(wafId);
+          const wafStack = ctx.registry.get(wafId)?.stackName;
           const wafArn = wafStack
             ? (wafStack === ctx.currentStackName
                 ? { 'Fn::GetAtt': [wafId.replace(/[^a-zA-Z0-9]/g, ''), 'Arn'] }

@@ -1,3 +1,7 @@
+export { ref, isRef } from './refs';
+export type { Ref, ConstructAttributeMap } from './refs';
+export { CONSTRUCT_ATTRIBUTES } from './refs';
+
 export { Stack } from './stack';
 export type { BaseConstruct } from './stack';
 

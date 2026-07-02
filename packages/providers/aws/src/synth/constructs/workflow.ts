@@ -28,7 +28,7 @@ export function synthWorkflow(
           if (isTask && rawResource && !rawResource.startsWith('arn:')) {
             // Um Task com resource que não é ARN precisa apontar pra uma Fn.Lambda —
             // um id de outro construct (ou typo) gera uma ASL inválida no deploy.
-            if (!ctx.lambdaConstructs.has(rawResource)) {
+            if (ctx.registry.get(rawResource)?.type !== 'Function.Lambda') {
               throw new Error(`Workflow.StepFunctions "${construct.id}": o step Task "${s.name}" tem resource "${rawResource}", que não é uma Fn.Lambda nem um ARN. Aponte para o id de uma Fn.Lambda.`);
             }
             const varName = `${(s.name as string).replace(/[^a-zA-Z0-9]/g, '')}Arn`;
