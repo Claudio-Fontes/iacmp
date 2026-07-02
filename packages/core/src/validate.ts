@@ -338,7 +338,7 @@ export function validateSemantics(stacks: Stack[], profile?: EnvironmentProfile)
     'Storage.Bucket': 'storage', 'Storage.FileSystem': 'storage', 'Storage.Archive': 'storage',
     'Secret.Vault': 'security', 'Certificate.TLS': 'security',
     'Cache.Redis': 'cache', 'Cache.Memcached': 'cache',
-    'Messaging.Queue': 'messaging', 'Messaging.Topic': 'messaging', 'Events.EventBridge': 'messaging',
+    'Messaging.Queue': 'messaging', 'Messaging.Topic': 'messaging', 'Messaging.Stream': 'messaging', 'Events.EventBridge': 'messaging',
   };
   for (const s of stacks) {
     const layers = new Map<string, string[]>(); // camada → tipos encontrados

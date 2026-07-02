@@ -50,8 +50,9 @@ export interface SynthContext {
   kinesisEventSourceLambdas: Set<string>;
   /** IDs de Function.Lambda que têm vpcId definido — precisam de VPCAccessExecutionRole. */
   vpcLambdas: Set<string>;
-  /** constructId de Network.LoadBalancer → target group default (1º) para registro de tasks ECS. */
-  albDefaultTg: Map<string, { stackName: string; tgLogicalId: string }>;
+  /** constructId de Network.LoadBalancer → target group default (1º) e o listener que
+   *  faz forward pra ele (para o ECS Service depender do listener certo). */
+  albDefaultTg: Map<string, { stackName: string; tgLogicalId: string; listenerLogicalId?: string }>;
   /** IDs de Function.Lambda — alvos válidos de rotas de Function.ApiGateway. */
   lambdaConstructs: Set<string>;
   /** vpcId (construct id) → Network.Subnet com public:true que o referenciam (para IGW + rota pública). */
@@ -65,19 +66,25 @@ export interface SynthContext {
  * (ex: Lambda Permission's FunctionName) — local usa Fn::GetAtt, cross-stack
  * usa Fn::ImportValue.
  */
+// Helper compartilhado: resolve o ARN de uma referência a um construct (Lambda,
+// fila, tópico...) — same-stack GetAtt / cross-stack ImportValue "-Arn". NÃO
+// valida o tipo do construct: quem exige uma Fn.Lambda (ex: rota de ApiGateway)
+// deve checar ctx.lambdaConstructs no próprio call-site (ver requireLambda).
 function resolveLambdaArnRef(lambdaId: string, ctx: SynthContext): unknown {
   const ownerStack = ctx.registry.get(lambdaId);
   if (!ownerStack) {
-    throw new Error(`Lambda "${lambdaId}" referenciada em Function.ApiGateway não foi encontrada em nenhuma stack do projeto.`);
-  }
-  // O alvo de uma rota TEM que ser uma Function.Lambda. Apontar para um
-  // Compute.Container/ECS (ou outro construct) é inválido — API Gateway só
-  // integra com Lambda; um container é exposto por Network.LoadBalancer (ALB).
-  if (!ctx.lambdaConstructs.has(lambdaId)) {
-    throw new Error(`Function.ApiGateway: a rota aponta lambdaId "${lambdaId}", que não é uma Fn.Lambda. API Gateway só integra com Lambda — um Compute.Container/ECS deve ser exposto por um Network.LoadBalancer (ALB), não por API Gateway.`);
+    throw new Error(`Referência "${lambdaId}" não foi encontrada em nenhuma stack do projeto.`);
   }
   if (ownerStack === ctx.currentStackName) return { 'Fn::GetAtt': [lambdaId, 'Arn'] };
   return { 'Fn::ImportValue': `${ownerStack}-${lambdaId}-Arn` };
+}
+
+/** Exige que `id` seja uma Fn.Lambda (usado por rotas de ApiGateway); lança um
+ *  erro claro caso contrário. */
+function requireLambda(id: string, ctx: SynthContext): void {
+  if (!ctx.lambdaConstructs.has(id)) {
+    throw new Error(`Function.ApiGateway: a rota aponta lambdaId "${id}", que não é uma Fn.Lambda. API Gateway só integra com Lambda — um Compute.Container/ECS deve ser exposto por um Network.LoadBalancer (ALB), não por API Gateway.`);
+  }
 }
 
 /**
@@ -268,7 +275,9 @@ function resolvePolicyResource(value: string, ctx: SynthContext): unknown {
     // SecretArn resolve pelo mesmo caminho das env vars — cobre tanto Secret.Vault
     // (o recurso É o secret) quanto Database.SQL (sub-recurso `${id}Secret`, export
     // `-SecretArn`). resolveQueueArn produziria `-Arn`, que não existe para o DB.
-    if (match[2] === 'SecretArn') return resolveEnvVarValue(`${match[1]}.SecretArn`, ctx);
+    // Qualquer ref a um Secret.Vault (mesmo com sufixo `.Arn`) também vai por aqui —
+    // um vault exporta `-SecretArn`, nunca `-Arn`.
+    if (match[2] === 'SecretArn' || ctx.secretVaults.has(match[1])) return resolveEnvVarValue(`${match[1]}.SecretArn`, ctx);
     return resolveQueueArn(match[1], ctx); // GetAtt Arn / ImportValue-Arn (fila e tópico exportam "-Arn")
   }
   // Id de construct cru (ex: 'TaskQueue' em resources) → ARN.
@@ -328,13 +337,6 @@ function resolveEnvVarValue(value: string, ctx: SynthContext): unknown {
 }
 
 /**
- * Resolve o ARN do target group default de um Network.LoadBalancer para registrar
- * tasks de um Compute.Container (ECS Service LoadBalancers). Aceita
- * "<lbId>.TargetGroupArn" ou "<lbId>" cru. Mesma stack → Fn::GetAtt do TG;
- * cross-stack → Fn::ImportValue do export "<stack>-<lbId>-TargetGroupArn".
- * ARN literal passa inalterado.
- */
-/**
  * Resolve uma ação de alarme (AlarmActions/OKActions) que referencia um
  * Messaging.Topic: aceita o id ('AlertsTopic'), 'AlertsTopic.TopicArn'/'.arn'
  * ou um ARN literal. Same-stack → { Ref } (SNS Ref retorna o ARN); cross-stack
@@ -352,6 +354,25 @@ function resolveAlarmAction(value: unknown, ctx: SynthContext): unknown | undefi
   return { 'Fn::ImportValue': `${ownerStack}-${id}-Arn` };
 }
 
+/**
+ * Bloco AlarmActions/OKActions resolvido. Normaliza um valor escalar para array
+ * (a IA às vezes emite `alarmActions: 'AlertsTopic'` em vez de array — chamar
+ * `.map` direto num string quebraria o synth), resolve cada ref e descarta
+ * undefined; retorna {} quando vazio (não emite a chave).
+ */
+function alarmActionsBlock(key: 'AlarmActions' | 'OKActions', raw: unknown, ctx: SynthContext): Record<string, unknown> {
+  const arr = Array.isArray(raw) ? raw : raw != null ? [raw] : [];
+  const acts = arr.map(a => resolveAlarmAction(a, ctx)).filter(a => a !== undefined);
+  return acts.length > 0 ? { [key]: acts } : {};
+}
+
+/**
+ * Resolve o ARN do target group default de um Network.LoadBalancer para registrar
+ * tasks de um Compute.Container (ECS Service LoadBalancers). Aceita
+ * "<lbId>.TargetGroupArn" ou "<lbId>" cru. Mesma stack → Fn::GetAtt do TG;
+ * cross-stack → Fn::ImportValue do export "<stack>-<lbId>-TargetGroupArn".
+ * ARN literal passa inalterado.
+ */
 function resolveTargetGroupArn(value: string, ctx: SynthContext): unknown {
   if (value.startsWith('arn:')) return value;
   const lbId = value.replace(/\.TargetGroupArn$/, '');
@@ -547,11 +568,13 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
           // Dá tempo do container passar no health check do ALB antes do ECS matar a task.
           serviceProps.HealthCheckGracePeriodSeconds = 60;
           // O ECS exige o target group JÁ associado a um listener do ALB. Same-stack,
-          // força a ordem: o Service depende do 1º listener do LB (cross-stack o
-          // ImportValue do TG já garante que a stack do ALB subiu antes).
+          // força a ordem: o Service depende do listener que faz forward pro TG
+          // (não o "Listener1" cru — pode ser um redirect, ou nem existir se o único
+          // listener for HTTPS-sem-cert). Cross-stack o ImportValue do TG já garante
+          // que a stack do ALB subiu antes.
           const tg = ctx.albDefaultTg.get(lbId);
-          if (tg && tg.stackName === ctx.currentStackName) {
-            serviceDependsOn.push(`${lbId.replace(/[^a-zA-Z0-9]/g, '')}Listener1`);
+          if (tg && tg.stackName === ctx.currentStackName && tg.listenerLogicalId) {
+            serviceDependsOn.push(tg.listenerLogicalId);
           }
         }
         entries.push([svcLogicalId, {
@@ -573,7 +596,9 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
               ResourceId: `service/${construct.id}/${construct.id}`,
               ScalableDimension: 'ecs:service:DesiredCount',
               ServiceNamespace: 'ecs',
-              RoleARN: { 'Fn::Sub': 'arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService' },
+              // RoleARN omitido de propósito: o Application Auto Scaling cria/usa a
+              // service-linked role sozinho. Hardcodar a SLR quebra o 1º deploy numa
+              // conta que nunca usou App Auto Scaling (a SLR ainda não existe).
             },
           }]);
           entries.push([`${logicalId}ScalingPolicy`, {
@@ -976,7 +1001,9 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
               Name: (r.name as string) ?? `rule-${i}`,
               Priority: (r.priority as number) ?? (i + 1),
               ...(r.managedGroup
-                ? { OverrideAction: { None: {} } }
+                // Managed group usa OverrideAction: 'count' = monitorar sem bloquear
+                // (respeita o modo teste), senão None (deixa a ação nativa do grupo valer).
+                ? { OverrideAction: (r.action as string) === 'count' ? { Count: {} } : { None: {} } }
                 : { Action: { [r.rateLimit ? (actionKey === 'Allow' ? 'Block' : actionKey) : actionKey]: {} } }),
               VisibilityConfig: {
                 SampledRequestsEnabled: true,
@@ -1633,6 +1660,8 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
     case 'Function.ApiGateway': {
       const apigwType = (props.type as string) ?? 'HTTP';
       const routes = (props.routes as Array<Record<string, unknown>>) ?? [];
+      // Toda rota com lambdaId TEM que apontar para uma Fn.Lambda (não um container etc).
+      for (const r of routes) if (r.lambdaId) requireLambda(r.lambdaId as string, ctx);
       // REST (v1) só aceita nome de stage [a-zA-Z0-9_] — '$default' é exclusivo do
       // HTTP API (v2). Default por tipo pra não quebrar o deploy do REST.
       const stageName = (props.stageName as string) ?? (apigwType === 'REST' ? 'prod' : '$default');
@@ -2069,7 +2098,12 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
           const rawResource = (s.resource as string) ?? '';
           // Resolve o id de uma Fn.Lambda pro ARN via variável do Fn::Sub.
           let arnRef = rawResource;
-          if (isTask && rawResource && !rawResource.startsWith('arn:') && ctx.lambdaConstructs.has(rawResource)) {
+          if (isTask && rawResource && !rawResource.startsWith('arn:')) {
+            // Um Task com resource que não é ARN precisa apontar pra uma Fn.Lambda —
+            // um id de outro construct (ou typo) gera uma ASL inválida no deploy.
+            if (!ctx.lambdaConstructs.has(rawResource)) {
+              throw new Error(`Workflow.StepFunctions "${construct.id}": o step Task "${s.name}" tem resource "${rawResource}", que não é uma Fn.Lambda nem um ARN. Aponte para o id de uma Fn.Lambda.`);
+            }
             const varName = `${(s.name as string).replace(/[^a-zA-Z0-9]/g, '')}Arn`;
             subVars[varName] = resolveLambdaArnRef(rawResource, ctx);
             arnRef = `\${${varName}}`;
@@ -2280,14 +2314,8 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
           ComparisonOperator: (props.comparisonOperator as string) ?? 'GreaterThanThreshold',
           Statistic: (props.statistic as string) ?? 'Average',
           TreatMissingData: (props.treatMissingData as string) ?? 'notBreaching',
-          ...((() => {
-            const acts = ((props.alarmActions as unknown[]) ?? []).map(a => resolveAlarmAction(a, ctx)).filter(a => a !== undefined);
-            return acts.length > 0 ? { AlarmActions: acts } : {};
-          })()),
-          ...((() => {
-            const acts = ((props.okActions as unknown[]) ?? []).map(a => resolveAlarmAction(a, ctx)).filter(a => a !== undefined);
-            return acts.length > 0 ? { OKActions: acts } : {};
-          })()),
+          ...alarmActionsBlock('AlarmActions', props.alarmActions, ctx),
+          ...alarmActionsBlock('OKActions', props.okActions, ctx),
           ...(dimensions ? { Dimensions: Object.entries(dimensions).map(([k, v]) => ({ Name: k, Value: v })) } : {}),
         },
       }]];
@@ -2546,7 +2574,7 @@ export function synthesize(stack: Stack, allStacks?: Stack[], profile: Environme
   const s3Buckets = new Set<string>();
   const sqsEventSourceLambdas = new Set<string>();
   const kinesisEventSourceLambdas = new Set<string>();
-  const albDefaultTg = new Map<string, { stackName: string; tgLogicalId: string }>();
+  const albDefaultTg = new Map<string, { stackName: string; tgLogicalId: string; listenerLogicalId?: string }>();
   const lambdaConstructs = new Set<string>();
   const publicSubnetsByVpc = new Map<string, Array<{ id: string; stackName: string }>>();
   for (const s of universe) {
@@ -2564,10 +2592,20 @@ export function synthesize(stack: Stack, allStacks?: Stack[], profile: Environme
         }
       }
       if (c.type === 'Network.LoadBalancer') {
-        const tgs = (c.props as Record<string, unknown>).targetGroups as Array<{ name: string }> | undefined;
+        const lbProps = c.props as Record<string, unknown>;
+        const tgs = lbProps.targetGroups as Array<{ name: string }> | undefined;
         if (tgs && tgs.length > 0) {
           const lbLogicalId = c.id.replace(/[^a-zA-Z0-9]/g, '');
-          albDefaultTg.set(c.id, { stackName: s.name, tgLogicalId: `${lbLogicalId}TG${tgs[0].name.replace(/[^a-zA-Z0-9]/g, '')}` });
+          // Descobre o listener que faz forward pro TG default: espelha a numeração
+          // do synth (pula HTTPS/TLS sem certificado; o 1º não-redirect faz forward).
+          const listeners = (lbProps.listeners as Array<Record<string, unknown>> | undefined) ?? [];
+          let idx = 0; let listenerLogicalId: string | undefined;
+          for (const l of listeners) {
+            if ((l.protocol === 'HTTPS' || l.protocol === 'TLS') && !l.certificateArn) continue;
+            idx++;
+            if (!l.redirectToHttps && !listenerLogicalId) listenerLogicalId = `${lbLogicalId}Listener${idx}`;
+          }
+          albDefaultTg.set(c.id, { stackName: s.name, tgLogicalId: `${lbLogicalId}TG${tgs[0].name.replace(/[^a-zA-Z0-9]/g, '')}`, listenerLogicalId });
         }
       }
       if (c.type === 'Function.Lambda' && Array.isArray((c.props as Record<string, unknown>).eventSources)) {
