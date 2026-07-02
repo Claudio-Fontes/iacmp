@@ -733,6 +733,9 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
         const dependsOn: string[] = [];
         notifications.forEach((n, ni) => {
           const lambdaId = n.lambdaId as string;
+          if (!ctx.lambdaConstructs.has(lambdaId)) {
+            throw new Error(`Storage.Bucket "${construct.id}": eventNotifications[${ni}].lambdaId "${lambdaId}" não é uma Fn.Lambda. Aponte para o id de uma Function.Lambda.`);
+          }
           const fnArn = resolveLambdaArnRef(lambdaId, ctx);
           const events = (n.events as string[] | undefined) ?? ['s3:ObjectCreated:*'];
           const filterRules: Array<Record<string, string>> = [];
@@ -1666,6 +1669,8 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
       // HTTP API (v2). Default por tipo pra não quebrar o deploy do REST.
       const stageName = (props.stageName as string) ?? (apigwType === 'REST' ? 'prod' : '$default');
       const authorizerLambdaId = props.authorizerLambdaId as string | undefined;
+      if (authorizerLambdaId) requireLambda(authorizerLambdaId, ctx);
+      for (const r of routes) if (r.authorizerLambdaId) requireLambda(r.authorizerLambdaId as string, ctx);
       const authorizerId = authorizerLambdaId ? `${logicalId}Authorizer` : undefined;
       // Authorizer por rota (route.authorizerLambdaId) — cada Lambda authorizer
       // distinta vira um AWS::Gateway::Authorizer. Combinado com o do gateway.
@@ -2046,6 +2051,9 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
         // Target: resolve targetLambdaId (ou targetArn com id) → ARN da Lambda.
         const targetLambdaId = (r.targetLambdaId as string | undefined)
           ?? (typeof r.targetArn === 'string' && ctx.registry.has(r.targetArn) ? (r.targetArn as string) : undefined);
+        if (targetLambdaId && !ctx.lambdaConstructs.has(targetLambdaId)) {
+          throw new Error(`Events.EventBridge "${construct.id}": targetLambdaId "${targetLambdaId}" não é uma Fn.Lambda. Aponte para o id de uma Function.Lambda.`);
+        }
         const targetArnValue = targetLambdaId
           ? resolveLambdaArnRef(targetLambdaId, ctx)
           : (r.targetArn as string | undefined);
@@ -2219,6 +2227,9 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
         const endpointRaw = s.endpoint as string;
         // sqs/lambda: endpoint pode ser id de construct → resolve ARN.
         const isConstructId = (protocol === 'sqs' || protocol === 'lambda') && ctx.registry.has(endpointRaw);
+        if (protocol === 'lambda' && isConstructId && !ctx.lambdaConstructs.has(endpointRaw)) {
+          throw new Error(`Messaging.Topic "${construct.id}": subscription[${i}] protocol:'lambda' tem endpoint "${endpointRaw}", que não é uma Fn.Lambda. Aponte para o id de uma Function.Lambda.`);
+        }
         const endpoint = isConstructId
           ? (protocol === 'sqs' ? resolveQueueArn(endpointRaw, ctx) : resolveLambdaArnRef(endpointRaw, ctx))
           : endpointRaw;
