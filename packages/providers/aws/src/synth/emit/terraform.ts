@@ -164,12 +164,20 @@ export function emitTerraform(template: CloudFormationTemplate): Record<string, 
 
   const tfResources: Record<string, Record<string, unknown>> = {};
   const tfOutputs: Record<string, unknown> = {};
+  // Sidecar data sources (e.g. archive_file for Lambda local code)
+  const tfData: Record<string, Record<string, unknown>> = {};
+  let needsArchiveProvider = false;
 
   for (const [logicalId, resource] of Object.entries(template.Resources)) {
     const mapping = getOrFallbackTFMapping(resource.Type);
     const tfId = toTFId(logicalId);
 
-    const resolvedProps = mapping.mapProps(resource.Properties, (v) => resolveValue(v, ctx));
+    const resolvedProps = mapping.mapProps(
+      resource.Properties,
+      (v) => resolveValue(v, ctx),
+      logicalId,
+      (refId) => ctx.resources[refId],
+    );
 
     if (resource.DependsOn && resource.DependsOn.length > 0) {
       const deps = resource.DependsOn.map((d) => {
@@ -189,6 +197,20 @@ export function emitTerraform(template: CloudFormationTemplate): Record<string, 
       tfResources[mapping.tfType] = {};
     }
     tfResources[mapping.tfType][tfId] = resolvedProps;
+
+    // Handle sidecars: additional TF resources and data sources from one CFN resource
+    if (mapping.sidecars) {
+      const sc = mapping.sidecars(logicalId, resource.Properties, (v) => resolveValue(v, ctx));
+      for (const sr of sc.resources ?? []) {
+        if (!tfResources[sr.tfType]) tfResources[sr.tfType] = {};
+        tfResources[sr.tfType][sr.tfId] = sr.props;
+      }
+      for (const ds of sc.dataSources ?? []) {
+        if (!tfData[ds.dsType]) tfData[ds.dsType] = {};
+        tfData[ds.dsType][ds.dsId] = ds.props;
+      }
+      if (sc.addArchiveProvider) needsArchiveProvider = true;
+    }
   }
 
   if (template.Outputs) {
@@ -207,7 +229,8 @@ export function emitTerraform(template: CloudFormationTemplate): Record<string, 
     variables[varName] = { type: 'string' };
   }
 
-  const data: Record<string, unknown> = {};
+  // Merge ctx data sources + sidecar data sources
+  const data: Record<string, unknown> = { ...tfData };
   if (ctx.usedDataSources.has('aws_region')) {
     data['aws_region'] = { current: {} };
   }
@@ -215,12 +238,15 @@ export function emitTerraform(template: CloudFormationTemplate): Record<string, 
     data['aws_caller_identity'] = { current: {} };
   }
 
+  const requiredProviders: Record<string, unknown> = {
+    aws: { source: 'hashicorp/aws', version: '~> 5.0' },
+  };
+  if (needsArchiveProvider) {
+    requiredProviders['archive'] = { source: 'hashicorp/archive', version: '~> 2.0' };
+  }
+
   const result: Record<string, unknown> = {
-    terraform: {
-      required_providers: {
-        aws: { source: 'hashicorp/aws', version: '~> 5.0' },
-      },
-    },
+    terraform: { required_providers: requiredProviders },
     provider: {
       aws: { region: '${var.aws_region}' },
     },

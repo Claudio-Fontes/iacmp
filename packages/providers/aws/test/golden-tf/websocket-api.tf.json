@@ -47,6 +47,10 @@
         "aws": {
           "source": "hashicorp/aws",
           "version": "~> 5.0"
+        },
+        "archive": {
+          "source": "hashicorp/archive",
+          "version": "~> 2.0"
         }
       }
     },
@@ -65,6 +69,23 @@
       }
     },
     "data": {
+      "archive_file": {
+        "connectfn_archive": {
+          "type": "zip",
+          "source_dir": "dist/",
+          "output_path": "connectfn.zip"
+        },
+        "disconnectfn_archive": {
+          "type": "zip",
+          "source_dir": "dist/",
+          "output_path": "disconnectfn.zip"
+        },
+        "defaultfn_archive": {
+          "type": "zip",
+          "source_dir": "dist/",
+          "output_path": "defaultfn.zip"
+        }
+      },
       "aws_region": {
         "current": {}
       },
@@ -98,7 +119,8 @@
           "function_name": "ConnectFn",
           "runtime": "nodejs20.x",
           "handler": "connect.handler",
-          "filename": "dist/",
+          "filename": "${data.archive_file.connectfn_archive.output_path}",
+          "source_code_hash": "${data.archive_file.connectfn_archive.output_base64sha256}",
           "memory_size": 128,
           "timeout": 30,
           "role": "${aws_iam_role.connectfndefaultrole.arn}",
@@ -112,7 +134,8 @@
           "function_name": "DisconnectFn",
           "runtime": "nodejs20.x",
           "handler": "disconnect.handler",
-          "filename": "dist/",
+          "filename": "${data.archive_file.disconnectfn_archive.output_path}",
+          "source_code_hash": "${data.archive_file.disconnectfn_archive.output_base64sha256}",
           "memory_size": 128,
           "timeout": 30,
           "role": "${aws_iam_role.disconnectfndefaultrole.arn}",
@@ -126,7 +149,8 @@
           "function_name": "DefaultFn",
           "runtime": "nodejs20.x",
           "handler": "default.handler",
-          "filename": "dist/",
+          "filename": "${data.archive_file.defaultfn_archive.output_path}",
+          "source_code_hash": "${data.archive_file.defaultfn_archive.output_base64sha256}",
           "memory_size": 128,
           "timeout": 30,
           "role": "${aws_iam_role.defaultfndefaultrole.arn}",

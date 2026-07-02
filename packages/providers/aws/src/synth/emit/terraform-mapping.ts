@@ -1,13 +1,38 @@
 import type { CloudFormationResource } from '../types';
 
+export interface SidecarResource {
+  tfType: string;
+  tfId: string;
+  props: Record<string, unknown>;
+}
+
+export interface SidecarDataSource {
+  dsType: string;
+  dsId: string;
+  props: Record<string, unknown>;
+}
+
+export interface SidecarResult {
+  resources?: SidecarResource[];
+  dataSources?: SidecarDataSource[];
+  addArchiveProvider?: boolean;
+}
+
 export interface TFMapping {
   tfType: string;
   mapProps: (
     props: Record<string, unknown>,
     resolve: (v: unknown) => unknown,
+    logicalId?: string,
+    getResource?: (refId: string) => CloudFormationResource | undefined,
   ) => Record<string, unknown>;
   attrMap: Record<string, string>;
   refAttr: string;
+  sidecars?: (
+    logicalId: string,
+    props: Record<string, unknown>,
+    resolve: (v: unknown) => unknown,
+  ) => SidecarResult;
 }
 
 export function toSnake(key: string): string {
@@ -15,6 +40,43 @@ export function toSnake(key: string): string {
     .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2')
     .replace(/([a-z\d])([A-Z])/g, '$1_$2')
     .toLowerCase();
+}
+
+function toTFId(id: string): string {
+  return id.replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
+}
+
+/** Recursively snake_cases all object keys (leaves values untouched). */
+function deepSnakeKeys(v: unknown): unknown {
+  if (v === null || v === undefined) return v;
+  if (Array.isArray(v)) return v.map(deepSnakeKeys);
+  if (typeof v === 'object') {
+    const result: Record<string, unknown> = {};
+    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+      result[toSnake(k)] = deepSnakeKeys(val);
+    }
+    return result;
+  }
+  return v;
+}
+
+/**
+ * Like deepSnakeKeys but pre-substitutes known compound words before snake_casing.
+ * Required for WAF: TF uses "cloudwatch" (one word), but toSnake("CloudWatch") → "cloud_watch".
+ */
+function deepSnakeKeysWAF(v: unknown): unknown {
+  if (v === null || v === undefined) return v;
+  if (Array.isArray(v)) return v.map(deepSnakeKeysWAF);
+  if (typeof v === 'object') {
+    const result: Record<string, unknown> = {};
+    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+      // CloudWatch is a single compound word in TF attribute names
+      const normalized = k.replace('CloudWatch', 'Cloudwatch');
+      result[toSnake(normalized)] = deepSnakeKeysWAF(val);
+    }
+    return result;
+  }
+  return v;
 }
 
 function generic(
@@ -32,11 +94,26 @@ function generic(
   return result;
 }
 
+/**
+ * Maps a single CFN security-group rule to TF inline rule.
+ * Includes required defaults for all attributes the provider enforces.
+ */
 function sgRule(
   rule: Record<string, unknown>,
   resolve: (v: unknown) => unknown,
 ): Record<string, unknown> {
-  const r: Record<string, unknown> = {};
+  const r: Record<string, unknown> = {
+    // All required fields with defaults (aws provider v5 enforces them all)
+    description: '',
+    from_port: 0,
+    to_port: 0,
+    protocol: '-1',
+    cidr_blocks: [],
+    ipv6_cidr_blocks: [],
+    prefix_list_ids: [],
+    security_groups: [],
+    self: false,
+  };
   for (const [k, v] of Object.entries(rule)) {
     switch (k) {
       case 'IpProtocol': r['protocol'] = resolve(v); break;
@@ -57,13 +134,16 @@ export const TERRAFORM_MAPPING: Record<string, TFMapping> = {
     tfType: 'aws_lambda_function',
     refAttr: 'function_name',
     attrMap: { Arn: 'arn' },
-    mapProps: (props, resolve) => {
+    mapProps: (props, resolve, logicalId) => {
       const result: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(props)) {
         switch (k) {
           case 'Code':
             if (typeof v === 'string') {
-              result['filename'] = v;
+              // Local directory → archive_file data source (generated via sidecars)
+              const archiveId = `${toTFId(logicalId ?? 'fn')}_archive`;
+              result['filename'] = `\${data.archive_file.${archiveId}.output_path}`;
+              result['source_code_hash'] = `\${data.archive_file.${archiveId}.output_base64sha256}`;
             } else if (v && typeof v === 'object') {
               const code = v as Record<string, unknown>;
               if ('ZipFile' in code) {
@@ -94,6 +174,22 @@ export const TERRAFORM_MAPPING: Record<string, TFMapping> = {
         }
       }
       return result;
+    },
+    sidecars: (logicalId, props) => {
+      if (typeof props['Code'] !== 'string') return {};
+      const tfId = toTFId(logicalId);
+      return {
+        dataSources: [{
+          dsType: 'archive_file',
+          dsId: `${tfId}_archive`,
+          props: {
+            type: 'zip',
+            source_dir: props['Code'],
+            output_path: `${tfId}.zip`,
+          },
+        }],
+        addArchiveProvider: true,
+      };
     },
   },
 
@@ -190,11 +286,67 @@ export const TERRAFORM_MAPPING: Record<string, TFMapping> = {
       for (const [k, v] of Object.entries(props)) {
         switch (k) {
           case 'BucketName': result['bucket'] = resolve(v); break;
+          // These are separate resources in provider v5 — handled via sidecars
+          case 'VersioningConfiguration':
+          case 'PublicAccessBlockConfiguration':
+          case 'NotificationConfiguration':
+            break;
           case 'Tags': break;
           default: result[toSnake(k)] = resolve(v);
         }
       }
       return result;
+    },
+    sidecars: (logicalId, props, resolve) => {
+      const tfId = toTFId(logicalId);
+      const bucketRef = `\${aws_s3_bucket.${tfId}.id}`;
+      const resources: SidecarResource[] = [];
+
+      if (props['VersioningConfiguration']) {
+        const vc = props['VersioningConfiguration'] as Record<string, unknown>;
+        resources.push({
+          tfType: 'aws_s3_bucket_versioning',
+          tfId: `${tfId}_versioning`,
+          props: {
+            bucket: bucketRef,
+            versioning_configuration: { status: vc['Status'] },
+          },
+        });
+      }
+
+      if (props['PublicAccessBlockConfiguration']) {
+        const pabc = props['PublicAccessBlockConfiguration'] as Record<string, unknown>;
+        resources.push({
+          tfType: 'aws_s3_bucket_public_access_block',
+          tfId: `${tfId}_public_access_block`,
+          props: {
+            bucket: bucketRef,
+            block_public_acls: pabc['BlockPublicAcls'],
+            block_public_policy: pabc['BlockPublicPolicy'],
+            ignore_public_acls: pabc['IgnorePublicAcls'],
+            restrict_public_buckets: pabc['RestrictPublicBuckets'],
+          },
+        });
+      }
+
+      if (props['NotificationConfiguration']) {
+        const nc = props['NotificationConfiguration'] as Record<string, unknown>;
+        if (nc['LambdaConfigurations']) {
+          resources.push({
+            tfType: 'aws_s3_bucket_notification',
+            tfId: `${tfId}_notification`,
+            props: {
+              bucket: bucketRef,
+              lambda_function: (nc['LambdaConfigurations'] as Array<Record<string, unknown>>).map((lc) => ({
+                lambda_function_arn: resolve(lc['Function']),
+                events: [lc['Event']],
+              })),
+            },
+          });
+        }
+      }
+
+      return { resources };
     },
   },
 
@@ -345,7 +497,10 @@ export const TERRAFORM_MAPPING: Record<string, TFMapping> = {
   'AWS::ElastiCache::ReplicationGroup': {
     tfType: 'aws_elasticache_replication_group',
     refAttr: 'id',
-    attrMap: { 'PrimaryEndPoint.Address': 'primary_endpoint_address' },
+    attrMap: {
+      'PrimaryEndPoint.Address': 'primary_endpoint_address',
+      'PrimaryEndPoint.Port': 'port',
+    },
     mapProps: (props, resolve) => {
       const result: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(props)) {
@@ -371,12 +526,16 @@ export const TERRAFORM_MAPPING: Record<string, TFMapping> = {
     tfType: 'aws_elasticache_subnet_group',
     refAttr: 'id',
     attrMap: {},
-    mapProps: (props, resolve) =>
-      generic(props, resolve, new Set(), {
-        CacheSubnetGroupName: 'name',
-        Description: 'description',
-        SubnetIds: 'subnet_ids',
-      }),
+    mapProps: (props, resolve, logicalId) => {
+      const result: Record<string, unknown> = {};
+      // `name` is required in TF; CFN may omit CacheSubnetGroupName (uses logicalId)
+      result['name'] = props['CacheSubnetGroupName']
+        ? resolve(props['CacheSubnetGroupName'])
+        : toTFId(logicalId ?? 'subnet_group');
+      if (props['Description']) result['description'] = resolve(props['Description']);
+      if (props['SubnetIds']) result['subnet_ids'] = resolve(props['SubnetIds']);
+      return result;
+    },
   },
 
   'AWS::EC2::VPC': {
@@ -669,9 +828,12 @@ export const TERRAFORM_MAPPING: Record<string, TFMapping> = {
         switch (k) {
           case 'Name': result['name'] = resolve(v); break;
           case 'Scope': result['scope'] = resolve(v); break;
-          case 'DefaultAction': result['default_action'] = resolve(v); break;
-          case 'Rules': result['rule'] = resolve(v); break;
-          case 'VisibilityConfig': result['visibility_config'] = resolve(v); break;
+          // Deep snake_case: CFN uses PascalCase, TF requires snake_case at all levels.
+          // Uses WAF variant to keep "cloudwatch" as one word (not "cloud_watch").
+          case 'DefaultAction': result['default_action'] = deepSnakeKeysWAF(resolve(v)); break;
+          case 'Rules': result['rule'] = deepSnakeKeysWAF(resolve(v)); break;
+          case 'VisibilityConfig': result['visibility_config'] = deepSnakeKeysWAF(resolve(v)); break;
+          case 'Description': result['description'] = resolve(v); break;
           case 'Tags': break;
           default: result[toSnake(k)] = resolve(v);
         }
@@ -724,22 +886,31 @@ export const TERRAFORM_MAPPING: Record<string, TFMapping> = {
           case 'ResourceId': result['resource_id'] = resolve(v); break;
           case 'HttpMethod': result['http_method'] = resolve(v); break;
           case 'AuthorizationType': result['authorization'] = resolve(v); break;
-          case 'Integration': {
-            if (v && typeof v === 'object') {
-              const intg = v as Record<string, unknown>;
-              result['integration'] = {
-                type: intg['Type'],
-                http_method: intg['IntegrationHttpMethod'],
-                uri: resolve(intg['Uri']),
-              };
-            }
-            break;
-          }
+          case 'Integration': break; // emitted as separate aws_api_gateway_integration via sidecars
           case 'Tags': break;
           default: result[toSnake(k)] = resolve(v);
         }
       }
       return result;
+    },
+    sidecars: (logicalId, props, resolve) => {
+      if (!props['Integration']) return {};
+      const intg = props['Integration'] as Record<string, unknown>;
+      const tfId = toTFId(logicalId);
+      return {
+        resources: [{
+          tfType: 'aws_api_gateway_integration',
+          tfId: `${tfId}_integration`,
+          props: {
+            rest_api_id: resolve(props['RestApiId']),
+            resource_id: resolve(props['ResourceId']),
+            http_method: resolve(props['HttpMethod']),
+            type: intg['Type'],
+            integration_http_method: intg['IntegrationHttpMethod'],
+            uri: resolve(intg['Uri']),
+          },
+        }],
+      };
     },
   },
 
@@ -781,49 +952,101 @@ export const TERRAFORM_MAPPING: Record<string, TFMapping> = {
     tfType: 'aws_appautoscaling_policy',
     refAttr: 'arn',
     attrMap: {},
-    mapProps: (props, resolve) =>
-      generic(props, resolve, new Set(), {
-        PolicyName: 'name',
-        PolicyType: 'policy_type',
-        ScalingTargetId: 'resource_id',
-        ServiceNamespace: 'service_namespace',
-        ScalableDimension: 'scalable_dimension',
-      }),
+    mapProps: (props, resolve, _logicalId, getResource) => {
+      const result: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(props)) {
+        switch (k) {
+          case 'PolicyName': result['name'] = resolve(v); break;
+          case 'PolicyType': result['policy_type'] = resolve(v); break;
+          case 'ScalingTargetId': {
+            // CFN links via ScalingTargetId ref; TF needs scalable_dimension + service_namespace
+            // pulled from the referenced ScalableTarget
+            const ref = typeof v === 'object' && v !== null && 'Ref' in (v as Record<string, unknown>)
+              ? (v as Record<string, unknown>)['Ref'] as string
+              : null;
+            const target = ref ? getResource?.(ref) : undefined;
+            if (target) {
+              result['resource_id'] = target.Properties['ResourceId'];
+              result['scalable_dimension'] = target.Properties['ScalableDimension'];
+              result['service_namespace'] = target.Properties['ServiceNamespace'];
+            }
+            break;
+          }
+          // TargetTrackingScalingPolicyConfiguration sub-keys are PascalCase → deep snake_case
+          case 'TargetTrackingScalingPolicyConfiguration':
+            result['target_tracking_scaling_policy_configuration'] = deepSnakeKeys(resolve(v));
+            break;
+          case 'StepScalingPolicyConfiguration':
+            result['step_scaling_policy_configuration'] = deepSnakeKeys(resolve(v));
+            break;
+          case 'Tags': break;
+          default: result[toSnake(k)] = resolve(v);
+        }
+      }
+      return result;
+    },
   },
 
   'AWS::CloudWatch::Alarm': {
     tfType: 'aws_cloudwatch_metric_alarm',
     refAttr: 'id',
     attrMap: { Arn: 'arn' },
-    mapProps: (props, resolve) =>
-      generic(props, resolve, new Set(), {
-        AlarmName: 'alarm_name',
-        MetricName: 'metric_name',
-        Namespace: 'namespace',
-        Threshold: 'threshold',
-        EvaluationPeriods: 'evaluation_periods',
-        Period: 'period',
-        ComparisonOperator: 'comparison_operator',
-        Statistic: 'statistic',
-        TreatMissingData: 'treat_missing_data',
-        AlarmActions: 'alarm_actions',
-        Dimensions: 'dimensions',
-      }),
+    mapProps: (props, resolve) => {
+      const result: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(props)) {
+        switch (k) {
+          case 'AlarmName': result['alarm_name'] = resolve(v); break;
+          case 'MetricName': result['metric_name'] = resolve(v); break;
+          case 'Namespace': result['namespace'] = resolve(v); break;
+          case 'Threshold': result['threshold'] = resolve(v); break;
+          case 'EvaluationPeriods': result['evaluation_periods'] = resolve(v); break;
+          case 'Period': result['period'] = resolve(v); break;
+          case 'ComparisonOperator': result['comparison_operator'] = resolve(v); break;
+          case 'Statistic': result['statistic'] = resolve(v); break;
+          case 'TreatMissingData': result['treat_missing_data'] = resolve(v); break;
+          case 'AlarmActions': result['alarm_actions'] = resolve(v); break;
+          // CFN: [{Name:"k", Value:"v"}] → TF: {"k":"v"}
+          case 'Dimensions':
+            if (Array.isArray(v)) {
+              const map: Record<string, unknown> = {};
+              for (const d of v as Array<Record<string, unknown>>) {
+                map[d['Name'] as string] = resolve(d['Value']);
+              }
+              result['dimensions'] = map;
+            } else {
+              result['dimensions'] = resolve(v);
+            }
+            break;
+          case 'Tags': break;
+          default: result[toSnake(k)] = resolve(v);
+        }
+      }
+      return result;
+    },
   },
 
   'AWS::ElasticLoadBalancingV2::LoadBalancer': {
     tfType: 'aws_lb',
     refAttr: 'id',
     attrMap: { Arn: 'arn', DNSName: 'dns_name' },
-    mapProps: (props, resolve) =>
-      generic(props, resolve, new Set(), {
-        Name: 'name',
-        Type: 'load_balancer_type',
-        Scheme: 'internal',
-        Subnets: 'subnets',
-        SecurityGroups: 'security_groups',
-        LoadBalancerAttributes: 'access_logs',
-      }),
+    mapProps: (props, resolve) => {
+      const result: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(props)) {
+        switch (k) {
+          case 'Name': result['name'] = resolve(v); break;
+          case 'Type': result['load_balancer_type'] = resolve(v); break;
+          // CFN Scheme is a string; TF `internal` is a bool
+          case 'Scheme': result['internal'] = v === 'internal'; break;
+          case 'Subnets': result['subnets'] = resolve(v); break;
+          case 'SecurityGroups': result['security_groups'] = resolve(v); break;
+          // LoadBalancerAttributes is a [{Key, Value}] list — no direct TF equivalent; skip
+          case 'LoadBalancerAttributes': break;
+          case 'Tags': break;
+          default: result[toSnake(k)] = resolve(v);
+        }
+      }
+      return result;
+    },
   },
 
   'AWS::ElasticLoadBalancingV2::Listener': {
@@ -857,27 +1080,54 @@ export const TERRAFORM_MAPPING: Record<string, TFMapping> = {
     tfType: 'aws_lb_target_group',
     refAttr: 'id',
     attrMap: { TargetGroupArn: 'arn' },
-    mapProps: (props, resolve) =>
-      generic(props, resolve, new Set(), {
-        Name: 'name',
-        Port: 'port',
-        Protocol: 'protocol',
-        VpcId: 'vpc_id',
-        HealthCheckPath: 'health_check_path',
-        TargetType: 'target_type',
-      }),
+    mapProps: (props, resolve) => {
+      const result: Record<string, unknown> = {};
+      const healthCheck: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(props)) {
+        switch (k) {
+          case 'Name': result['name'] = resolve(v); break;
+          case 'Port': result['port'] = resolve(v); break;
+          case 'Protocol': result['protocol'] = resolve(v); break;
+          case 'VpcId': result['vpc_id'] = resolve(v); break;
+          case 'TargetType': result['target_type'] = resolve(v); break;
+          // Health check properties go into a nested block
+          case 'HealthCheckPath': healthCheck['path'] = resolve(v); break;
+          case 'HealthCheckPort': healthCheck['port'] = resolve(v); break;
+          case 'HealthCheckProtocol': healthCheck['protocol'] = resolve(v); break;
+          case 'HealthCheckIntervalSeconds': healthCheck['interval'] = resolve(v); break;
+          case 'HealthCheckTimeoutSeconds': healthCheck['timeout'] = resolve(v); break;
+          case 'HealthyThresholdCount': healthCheck['healthy_threshold'] = resolve(v); break;
+          case 'UnhealthyThresholdCount': healthCheck['unhealthy_threshold'] = resolve(v); break;
+          case 'Tags': break;
+          default: result[toSnake(k)] = resolve(v);
+        }
+      }
+      if (Object.keys(healthCheck).length > 0) {
+        result['health_check'] = healthCheck;
+      }
+      return result;
+    },
   },
 
   'AWS::SecretsManager::Secret': {
     tfType: 'aws_secretsmanager_secret',
     refAttr: 'arn',
     attrMap: { Id: 'arn' },
-    mapProps: (props, resolve) =>
-      generic(props, resolve, new Set(), {
-        Name: 'name',
-        Description: 'description',
-        SecretString: 'secret_string',
-      }),
+    mapProps: (props, resolve) => {
+      const result: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(props)) {
+        switch (k) {
+          case 'Name': result['name'] = resolve(v); break;
+          case 'Description': result['description'] = resolve(v); break;
+          case 'SecretString': result['secret_string'] = resolve(v); break;
+          // GenerateSecretString is CFN-only; TF uses random_password + aws_secretsmanager_secret_version
+          case 'GenerateSecretString': break;
+          case 'Tags': break;
+          default: result[toSnake(k)] = resolve(v);
+        }
+      }
+      return result;
+    },
   },
 };
 

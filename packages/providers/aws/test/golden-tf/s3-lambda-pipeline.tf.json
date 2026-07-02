@@ -4,6 +4,10 @@
       "aws": {
         "source": "hashicorp/aws",
         "version": "~> 5.0"
+      },
+      "archive": {
+        "source": "hashicorp/archive",
+        "version": "~> 2.0"
       }
     }
   },
@@ -19,6 +23,13 @@
     }
   },
   "data": {
+    "archive_file": {
+      "processfn_archive": {
+        "type": "zip",
+        "source_dir": "dist/",
+        "output_path": "processfn.zip"
+      }
+    },
     "aws_caller_identity": {
       "current": {}
     }
@@ -37,7 +48,8 @@
         "function_name": "ProcessFn",
         "runtime": "nodejs20.x",
         "handler": "index.handler",
-        "filename": "dist/",
+        "filename": "${data.archive_file.processfn_archive.output_path}",
+        "source_code_hash": "${data.archive_file.processfn_archive.output_base64sha256}",
         "memory_size": 128,
         "timeout": 30,
         "role": "${aws_iam_role.processfndefaultrole.arn}",
@@ -50,23 +62,6 @@
     },
     "aws_s3_bucket": {
       "inputbucket": {
-        "versioning_configuration": {
-          "Status": "Enabled"
-        },
-        "public_access_block_configuration": {
-          "BlockPublicAcls": true,
-          "BlockPublicPolicy": true,
-          "IgnorePublicAcls": true,
-          "RestrictPublicBuckets": true
-        },
-        "notification_configuration": {
-          "LambdaConfigurations": [
-            {
-              "Event": "s3:ObjectCreated:*",
-              "Function": "${aws_lambda_function.processfn.arn}"
-            }
-          ]
-        },
         "depends_on": [
           "aws_lambda_permission.inputbucketinvokepermission0"
         ],
@@ -75,18 +70,52 @@
         }
       },
       "outputbucket": {
-        "versioning_configuration": {
-          "Status": "Suspended"
-        },
-        "public_access_block_configuration": {
-          "BlockPublicAcls": true,
-          "BlockPublicPolicy": true,
-          "IgnorePublicAcls": true,
-          "RestrictPublicBuckets": true
-        },
         "lifecycle": {
           "prevent_destroy": true
         }
+      }
+    },
+    "aws_s3_bucket_versioning": {
+      "inputbucket_versioning": {
+        "bucket": "${aws_s3_bucket.inputbucket.id}",
+        "versioning_configuration": {
+          "status": "Enabled"
+        }
+      },
+      "outputbucket_versioning": {
+        "bucket": "${aws_s3_bucket.outputbucket.id}",
+        "versioning_configuration": {
+          "status": "Suspended"
+        }
+      }
+    },
+    "aws_s3_bucket_public_access_block": {
+      "inputbucket_public_access_block": {
+        "bucket": "${aws_s3_bucket.inputbucket.id}",
+        "block_public_acls": true,
+        "block_public_policy": true,
+        "ignore_public_acls": true,
+        "restrict_public_buckets": true
+      },
+      "outputbucket_public_access_block": {
+        "bucket": "${aws_s3_bucket.outputbucket.id}",
+        "block_public_acls": true,
+        "block_public_policy": true,
+        "ignore_public_acls": true,
+        "restrict_public_buckets": true
+      }
+    },
+    "aws_s3_bucket_notification": {
+      "inputbucket_notification": {
+        "bucket": "${aws_s3_bucket.inputbucket.id}",
+        "lambda_function": [
+          {
+            "lambda_function_arn": "${aws_lambda_function.processfn.arn}",
+            "events": [
+              "s3:ObjectCreated:*"
+            ]
+          }
+        ]
       }
     },
     "aws_lambda_permission": {

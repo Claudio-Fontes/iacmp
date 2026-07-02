@@ -4,6 +4,10 @@
       "aws": {
         "source": "hashicorp/aws",
         "version": "~> 5.0"
+      },
+      "archive": {
+        "source": "hashicorp/archive",
+        "version": "~> 2.0"
       }
     }
   },
@@ -16,6 +20,20 @@
     "aws_region": {
       "type": "string",
       "default": "us-east-1"
+    }
+  },
+  "data": {
+    "archive_file": {
+      "notifyfn_archive": {
+        "type": "zip",
+        "source_dir": "dist/",
+        "output_path": "notifyfn.zip"
+      },
+      "actionfn_archive": {
+        "type": "zip",
+        "source_dir": "dist/",
+        "output_path": "actionfn.zip"
+      }
     }
   },
   "resource": {
@@ -47,7 +65,8 @@
         "function_name": "NotifyFn",
         "runtime": "nodejs20.x",
         "handler": "notify.handler",
-        "filename": "dist/",
+        "filename": "${data.archive_file.notifyfn_archive.output_path}",
+        "source_code_hash": "${data.archive_file.notifyfn_archive.output_base64sha256}",
         "memory_size": 128,
         "timeout": 30,
         "role": "${aws_iam_role.notifyfndefaultrole.arn}"
@@ -56,7 +75,8 @@
         "function_name": "ActionFn",
         "runtime": "nodejs20.x",
         "handler": "action.handler",
-        "filename": "dist/",
+        "filename": "${data.archive_file.actionfn_archive.output_path}",
+        "source_code_hash": "${data.archive_file.actionfn_archive.output_base64sha256}",
         "memory_size": 128,
         "timeout": 30,
         "role": "${aws_iam_role.actionfndefaultrole.arn}"
