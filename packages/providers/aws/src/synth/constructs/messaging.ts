@@ -1,6 +1,7 @@
 import { BaseConstruct, isRef } from '@iacmp/core';
 import type { CloudFormationResource, SynthContext } from '../types';
 import { resolveLambdaArnRef, resolveRef, normalizeRate, resolveQueueArn } from '../resolvers';
+import { resourceRef } from '../graph';
 
 export function synthMessaging(
   construct: BaseConstruct,
@@ -72,7 +73,7 @@ export function synthMessaging(
         topicEntries.push([subId, {
           Type: 'AWS::SNS::Subscription',
           Properties: {
-            TopicArn: { Ref: logicalId },
+            TopicArn: resourceRef(logicalId, 'Id'),
             Protocol: protocol,
             Endpoint: endpoint,
             ...(protocol === 'sqs' ? { RawMessageDelivery: true } : {}),
@@ -101,7 +102,7 @@ export function synthMessaging(
         topicEntries.push([`${qLogical}SnsPolicy`, {
           Type: 'AWS::SQS::QueuePolicy',
           Properties: {
-            Queues: [{ Ref: qLogical }],
+            Queues: [resourceRef(qLogical, 'Id')],
             PolicyDocument: {
               Version: '2012-10-17',
               Statement: [{
@@ -109,7 +110,7 @@ export function synthMessaging(
                 Principal: { Service: 'sns.amazonaws.com' },
                 Action: 'sqs:SendMessage',
                 Resource: resolveQueueArn(qId, ctx),
-                Condition: { ArnEquals: { 'aws:SourceArn': { Ref: logicalId } } },
+                Condition: { ArnEquals: { 'aws:SourceArn': resourceRef(logicalId, 'Id') } },
               }],
             },
           },
@@ -152,7 +153,7 @@ export function synthMessaging(
           ? resolveLambdaArnRef(targetLambdaId, ctx)
           : (r.targetArn as string | undefined);
 
-        const eventBusName = busName !== 'default' ? { Ref: `${logicalId}Bus` } : 'default';
+        const eventBusName = busName !== 'default' ? resourceRef(`${logicalId}Bus`, 'Id') : 'default';
 
         entries.push([ruleLogicalId, {
           Type: 'AWS::Events::Rule',
@@ -174,7 +175,7 @@ export function synthMessaging(
               Action: 'lambda:InvokeFunction',
               FunctionName: resolveLambdaArnRef(targetLambdaId, ctx),
               Principal: 'events.amazonaws.com',
-              SourceArn: { 'Fn::GetAtt': [ruleLogicalId, 'Arn'] },
+              SourceArn: resourceRef(ruleLogicalId, 'Arn'),
             },
           }]);
         }

@@ -1,6 +1,7 @@
 import { BaseConstruct } from '@iacmp/core';
 import type { CloudFormationResource, SynthContext } from '../types';
 import { alarmActionsBlock } from '../resolvers';
+import { resourceRef } from '../graph';
 
 export function synthMonitoring(
   construct: BaseConstruct,
@@ -77,7 +78,7 @@ export function synthMonitoring(
         entries.push([`${logicalId}${(f.name as string).replace(/[^a-zA-Z0-9]/g, '')}Filter`, {
           Type: 'AWS::Logs::SubscriptionFilter',
           Properties: {
-            LogGroupName: { Ref: logicalId },
+            LogGroupName: resourceRef(logicalId, 'Id'),
             FilterName: f.name as string,
             FilterPattern: f.filterPattern as string,
             DestinationArn: f.destinationArn as string,

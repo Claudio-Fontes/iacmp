@@ -1,6 +1,7 @@
 import { BaseConstruct, isRef } from '@iacmp/core';
 import type { CloudFormationResource, SynthContext } from '../types';
 import { resolveLambdaArnRef, resolveRef } from '../resolvers';
+import { resourceRef, subRef } from '../graph';
 
 export function synthStorage(
   construct: BaseConstruct,
@@ -104,13 +105,13 @@ export function synthStorage(
         entries.push([`${logicalId}Policy`, {
           Type: 'AWS::S3::BucketPolicy',
           Properties: {
-            Bucket: { Ref: logicalId },
+            Bucket: resourceRef(logicalId, 'Id'),
             PolicyDocument: {
               Statement: [{
                 Effect: 'Allow',
                 Principal: '*',
                 Action: 's3:GetObject',
-                Resource: { 'Fn::Sub': `arn:aws:s3:::$\{${logicalId}}/*` },
+                Resource: subRef(`arn:aws:s3:::$\{${logicalId}}/*`),
               }],
             },
           },
@@ -138,7 +139,7 @@ export function synthStorage(
         entries.push([apId, {
           Type: 'AWS::EFS::AccessPoint',
           Properties: {
-            FileSystemId: { Ref: logicalId },
+            FileSystemId: resourceRef(logicalId, 'Id'),
             RootDirectory: { Path: ap.path as string },
             ...(ap.uid ? { PosixUser: { Uid: String(ap.uid), Gid: String(ap.gid ?? ap.uid) } } : {}),
             AccessPointTags: [{ Key: 'Name', Value: ap.name as string }],

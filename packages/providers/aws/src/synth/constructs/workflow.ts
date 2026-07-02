@@ -1,6 +1,7 @@
 import { BaseConstruct, isRef } from '@iacmp/core';
 import type { CloudFormationResource, SynthContext } from '../types';
 import { resolveLambdaArnRef, resolveRef, defaultServiceRole } from '../resolvers';
+import { resourceRef, subRef, type ResourceRef, type ImportRef } from '../graph';
 
 export function synthWorkflow(
   construct: BaseConstruct,
@@ -14,7 +15,7 @@ export function synthWorkflow(
       // Um Task cujo `resource` é o id de uma Fn.Lambda precisa do ARN real no
       // Resource (Step Functions rejeita um id cru). Como a DefinitionString usa
       // Fn::Sub, cada ARN vira uma variável ${...} resolvida no 2º arg do Sub.
-      const subVars: Record<string, unknown> = {};
+      const subVars: Record<string, ResourceRef | ImportRef | string> = {};
       const definition = {
         Comment: (props.description as string) ?? `Workflow ${construct.id}`,
         StartAt: (steps[0]?.name as string) ?? 'Start',
@@ -33,7 +34,7 @@ export function synthWorkflow(
               throw new Error(`Workflow.StepFunctions "${construct.id}": o step Task "${s.name}" tem resource "${rawResource}", que não é uma Fn.Lambda nem um ARN. Aponte para o id de uma Fn.Lambda.`);
             }
             const varName = `${(s.name as string).replace(/[^a-zA-Z0-9]/g, '')}Arn`;
-            subVars[varName] = isRef(rawResourceRaw) ? resolveRef(rawResourceRaw, ctx) : resolveLambdaArnRef(rawResource, ctx);
+            subVars[varName] = (isRef(rawResourceRaw) ? resolveRef(rawResourceRaw, ctx) : resolveLambdaArnRef(rawResource, ctx)) as ResourceRef | ImportRef;
             arnRef = `\${${varName}}`;
           }
           // waitForToken: Task de callback — invoca a Lambda passando o task token
@@ -87,10 +88,8 @@ export function synthWorkflow(
           Properties: {
             StateMachineName: construct.id,
             StateMachineType: (props.type as string) ?? 'STANDARD',
-            DefinitionString: Object.keys(subVars).length > 0
-              ? { 'Fn::Sub': [JSON.stringify(definition), subVars] }
-              : { 'Fn::Sub': JSON.stringify(definition) },
-            RoleArn: { 'Fn::GetAtt': [roleLogicalId, 'Arn'] },
+            DefinitionString: subRef(JSON.stringify(definition), Object.keys(subVars).length > 0 ? subVars : {}),
+            RoleArn: resourceRef(roleLogicalId, 'Arn'),
           },
         }],
       ];

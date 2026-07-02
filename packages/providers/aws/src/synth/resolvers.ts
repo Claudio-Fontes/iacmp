@@ -1,10 +1,11 @@
 import { ref, isRef, type Ref } from '@iacmp/core';
+import { resourceRef, importRef, type ResourceRef, type ImportRef } from './graph';
 import { type CloudFormationResource, type SynthContext } from './types';
 
 // ─── Mapa tipo × atributo → { sameStack, exportSuffix } ─────────────────────
 // exportSuffix vazio ('') = sameStack é usada também para cross-stack
 // (caso Password que usa dynamic ref independente da stack).
-type SameStackFn = (logicalId: string, constructId: string, ownerStack: string, ctx: SynthContext) => unknown;
+type SameStackFn = (logicalId: string, constructId: string, ownerStack: string, ctx: SynthContext) => ResourceRef | string;
 
 interface ResolutionEntry {
   sameStack: SameStackFn;
@@ -13,13 +14,13 @@ interface ResolutionEntry {
 
 const RESOLVE_MAP: Record<string, Record<string, ResolutionEntry>> = {
   'Secret.Vault': {
-    'SecretArn': { sameStack: (l) => ({ Ref: l }), exportSuffix: 'SecretArn' },
-    'Arn':       { sameStack: (l) => ({ Ref: l }), exportSuffix: 'SecretArn' }, // vault só exporta -SecretArn
+    'SecretArn': { sameStack: (l) => resourceRef(l, 'Id'), exportSuffix: 'SecretArn' },
+    'Arn':       { sameStack: (l) => resourceRef(l, 'Id'), exportSuffix: 'SecretArn' }, // vault só exporta -SecretArn
   },
   'Database.SQL': {
-    'Endpoint':  { sameStack: (l) => ({ 'Fn::GetAtt': [l, 'Endpoint.Address'] }), exportSuffix: 'Endpoint' },
-    'Port':      { sameStack: (l) => ({ 'Fn::GetAtt': [l, 'Endpoint.Port'] }), exportSuffix: 'Port' },
-    'SecretArn': { sameStack: (l) => ({ Ref: `${l}Secret` }), exportSuffix: 'SecretArn' },
+    'Endpoint':  { sameStack: (l) => resourceRef(l, 'Endpoint.Address'), exportSuffix: 'Endpoint' },
+    'Port':      { sameStack: (l) => resourceRef(l, 'Endpoint.Port'), exportSuffix: 'Port' },
+    'SecretArn': { sameStack: (l) => resourceRef(`${l}Secret`, 'Id'), exportSuffix: 'SecretArn' },
     'Password': {
       sameStack: (_, cid, owner, ctx) => {
         const suffix = ctx.dbSecretSuffix.get(cid) ?? 'db-password';
@@ -30,9 +31,9 @@ const RESOLVE_MAP: Record<string, Record<string, ResolutionEntry>> = {
     'Username': { sameStack: () => 'dbadmin', exportSuffix: 'Username' },
   },
   'Database.DocumentDB': {
-    'Endpoint':  { sameStack: (l) => ({ 'Fn::GetAtt': [`${l}Cluster`, 'Endpoint'] }), exportSuffix: 'Endpoint' },
-    'Port':      { sameStack: (l) => ({ 'Fn::GetAtt': [`${l}Cluster`, 'Port'] }), exportSuffix: 'Port' },
-    'SecretArn': { sameStack: (l) => ({ Ref: `${l}Secret` }), exportSuffix: 'SecretArn' },
+    'Endpoint':  { sameStack: (l) => resourceRef(`${l}Cluster`, 'Endpoint'), exportSuffix: 'Endpoint' },
+    'Port':      { sameStack: (l) => resourceRef(`${l}Cluster`, 'Port'), exportSuffix: 'Port' },
+    'SecretArn': { sameStack: (l) => resourceRef(`${l}Secret`, 'Id'), exportSuffix: 'SecretArn' },
     'Password': {
       sameStack: (_, cid, owner, ctx) => {
         const suffix = ctx.dbSecretSuffix.get(cid) ?? 'docdb-password';
@@ -42,49 +43,49 @@ const RESOLVE_MAP: Record<string, Record<string, ResolutionEntry>> = {
     },
   },
   'Cache.Redis': {
-    'Endpoint': { sameStack: (l) => ({ 'Fn::GetAtt': [l, 'PrimaryEndPoint.Address'] }), exportSuffix: 'Endpoint' },
-    'Port':     { sameStack: (l) => ({ 'Fn::GetAtt': [l, 'PrimaryEndPoint.Port'] }), exportSuffix: 'Port' },
+    'Endpoint': { sameStack: (l) => resourceRef(l, 'PrimaryEndPoint.Address'), exportSuffix: 'Endpoint' },
+    'Port':     { sameStack: (l) => resourceRef(l, 'PrimaryEndPoint.Port'), exportSuffix: 'Port' },
   },
   'Messaging.Queue': {
-    'Arn':      { sameStack: (l) => ({ 'Fn::GetAtt': [l, 'Arn'] }), exportSuffix: 'Arn' },
-    'QueueArn': { sameStack: (l) => ({ 'Fn::GetAtt': [l, 'Arn'] }), exportSuffix: 'Arn' }, // alias
-    'QueueUrl': { sameStack: (l) => ({ Ref: l }), exportSuffix: 'QueueUrl' },
+    'Arn':      { sameStack: (l) => resourceRef(l, 'Arn'), exportSuffix: 'Arn' },
+    'QueueArn': { sameStack: (l) => resourceRef(l, 'Arn'), exportSuffix: 'Arn' }, // alias
+    'QueueUrl': { sameStack: (l) => resourceRef(l, 'Id'), exportSuffix: 'QueueUrl' },
   },
   'Messaging.Topic': {
-    'Arn':      { sameStack: (l) => ({ Ref: l }), exportSuffix: 'Arn' }, // Ref retorna ARN para SNS
-    'TopicArn': { sameStack: (l) => ({ Ref: l }), exportSuffix: 'Arn' }, // alias
+    'Arn':      { sameStack: (l) => resourceRef(l, 'Id'), exportSuffix: 'Arn' }, // Ref retorna ARN para SNS
+    'TopicArn': { sameStack: (l) => resourceRef(l, 'Id'), exportSuffix: 'Arn' }, // alias
   },
   'Messaging.Stream': {
-    'Arn':  { sameStack: (l) => ({ 'Fn::GetAtt': [l, 'Arn'] }), exportSuffix: 'Arn' },
-    'Name': { sameStack: (l) => ({ Ref: l }), exportSuffix: 'Name' },
+    'Arn':  { sameStack: (l) => resourceRef(l, 'Arn'), exportSuffix: 'Arn' },
+    'Name': { sameStack: (l) => resourceRef(l, 'Id'), exportSuffix: 'Name' },
   },
   'Function.Lambda': {
-    'Arn': { sameStack: (l) => ({ 'Fn::GetAtt': [l, 'Arn'] }), exportSuffix: 'Arn' },
+    'Arn': { sameStack: (l) => resourceRef(l, 'Arn'), exportSuffix: 'Arn' },
   },
   'Network.LoadBalancer': {
     'TargetGroupArn': {
       sameStack: (_, cid, __, ctx) => {
         const tg = ctx.albDefaultTg.get(cid);
-        return tg ? { Ref: tg.tgLogicalId } : cid; // Ref de TargetGroup retorna o ARN em CFn
+        return tg ? resourceRef(tg.tgLogicalId, 'Id') : cid;
       },
       exportSuffix: 'TargetGroupArn',
     },
-    'DnsName': { sameStack: (l) => ({ 'Fn::GetAtt': [l, 'DNSName'] }), exportSuffix: 'DnsName' },
+    'DnsName': { sameStack: (l) => resourceRef(l, 'DNSName'), exportSuffix: 'DnsName' },
   },
   'Network.WAF': {
-    'Arn': { sameStack: (l) => ({ 'Fn::GetAtt': [l, 'Arn'] }), exportSuffix: 'Arn' },
+    'Arn': { sameStack: (l) => resourceRef(l, 'Arn'), exportSuffix: 'Arn' },
   },
   'Storage.Bucket': {
-    'Arn':  { sameStack: (l) => ({ 'Fn::GetAtt': [l, 'Arn'] }), exportSuffix: 'Arn' },
-    'Name': { sameStack: (l) => ({ Ref: l }), exportSuffix: 'Name' },
+    'Arn':  { sameStack: (l) => resourceRef(l, 'Arn'), exportSuffix: 'Arn' },
+    'Name': { sameStack: (l) => resourceRef(l, 'Id'), exportSuffix: 'Name' },
   },
   'Database.DynamoDB': {
-    'Arn':  { sameStack: (l) => ({ 'Fn::GetAtt': [l, 'Arn'] }), exportSuffix: 'Arn' },
-    'Name': { sameStack: (l) => ({ Ref: l }), exportSuffix: 'Name' },
+    'Arn':  { sameStack: (l) => resourceRef(l, 'Arn'), exportSuffix: 'Arn' },
+    'Name': { sameStack: (l) => resourceRef(l, 'Id'), exportSuffix: 'Name' },
   },
-  'Network.VPC':           { 'VpcId':   { sameStack: (l) => ({ Ref: l }), exportSuffix: 'VpcId' } },
-  'Network.Subnet':        { 'SubnetId':{ sameStack: (l) => ({ Ref: l }), exportSuffix: 'SubnetId' } },
-  'Network.SecurityGroup': { 'GroupId': { sameStack: (l) => ({ 'Fn::GetAtt': [l, 'GroupId'] }), exportSuffix: 'GroupId' } },
+  'Network.VPC':           { 'VpcId':   { sameStack: (l) => resourceRef(l, 'Id'), exportSuffix: 'VpcId' } },
+  'Network.Subnet':        { 'SubnetId':{ sameStack: (l) => resourceRef(l, 'Id'), exportSuffix: 'SubnetId' } },
+  'Network.SecurityGroup': { 'GroupId': { sameStack: (l) => resourceRef(l, 'GroupId'), exportSuffix: 'GroupId' } },
 };
 
 // Atributo default para bare IDs (construct sem sufixo de atributo).
@@ -175,7 +176,7 @@ export function resolveRef(r: Ref, ctx: SynthContext, opts?: { expectType?: stri
   if (isSameStack || !resolution.exportSuffix) {
     return resolution.sameStack(logicalId, r.constructId, stackName, ctx);
   }
-  return { 'Fn::ImportValue': `${stackName}-${r.constructId}-${resolution.exportSuffix}` };
+  return importRef(`${stackName}-${r.constructId}-${resolution.exportSuffix}`);
 }
 
 /**
