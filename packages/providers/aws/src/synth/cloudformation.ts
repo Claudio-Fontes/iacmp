@@ -9,6 +9,8 @@ import {
 import { type CloudFormationResource, type CloudFormationTemplate, type SynthContext } from './types';
 export type { CloudFormationResource, CloudFormationTemplate, SynthContext } from './types';
 import { validateResourceReferences, validateNoNullValues } from './validation';
+import type { ResourceNode, StackExport, StackGraph } from './graph';
+import { emitCloudFormation } from './emit/cloudformation';
 import { synthMonitoring } from './constructs/monitoring';
 import { synthWorkflow } from './constructs/workflow';
 import { synthMessaging } from './constructs/messaging';
@@ -291,14 +293,25 @@ export function synthesize(stack: Stack, allStacks?: Stack[], profile: Environme
     }
   }
 
-  validateResourceReferences(resources);
-  validateNoNullValues(resources);
+  const nodes: ResourceNode[] = Object.entries(resources).map(([logicalId, res]) => ({
+    logicalId,
+    awsType: res.Type,
+    properties: res.Properties,
+    dependsOn: res.DependsOn ?? [],
+    deletionPolicy: res.DeletionPolicy,
+  }));
 
-  const template: CloudFormationTemplate = {
-    AWSTemplateFormatVersion: '2010-09-09',
-    Description: `Stack ${stack.name} — gerada pelo iacmp`,
-    Resources: resources,
-  };
-  if (Object.keys(outputs).length > 0) template.Outputs = outputs;
+  const graphExports: StackExport[] = Object.entries(outputs).map(([key, out]) => ({
+    key,
+    name: out.Export.Name,
+    value: out.Value,
+  }));
+
+  const graph: StackGraph = { stackName: stack.name, nodes, exports: graphExports };
+  const template = emitCloudFormation(graph);
+
+  validateResourceReferences(template.Resources);
+  validateNoNullValues(template.Resources);
+
   return template;
 }
