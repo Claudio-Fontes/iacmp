@@ -1,4 +1,10 @@
+import { ref, type Ref } from '../refs';
 import { Stack, BaseConstruct } from '../stack';
+
+export interface BucketRefs {
+  readonly arn: Ref<'Arn'>;
+  readonly name: Ref<'Name'>;
+}
 
 export interface StorageBucketProps {
   versioning?: boolean;
@@ -22,7 +28,7 @@ export interface StorageBucketProps {
    *  lambdaId = id de uma Fn.Lambda. O synth cria a NotificationConfiguration e a
    *  Lambda::Permission necessárias. */
   eventNotifications?: Array<{
-    lambdaId: string;
+    lambdaId: string | Ref<'Arn'>;
     events?: string[];   // ex: ['s3:ObjectCreated:*'] (padrão)
     prefix?: string;
     suffix?: string;
@@ -49,13 +55,15 @@ export interface StorageArchiveProps {
 }
 
 export namespace Storage {
-  export class Bucket implements BaseConstruct {
+  export class Bucket implements BaseConstruct, BucketRefs {
     readonly type = 'Storage.Bucket';
     readonly props: Record<string, unknown>;
     constructor(stack: Stack, readonly id: string, props: StorageBucketProps) {
       this.props = props as unknown as Record<string, unknown>;
       stack.addConstruct(this);
     }
+    get arn(): Ref<'Arn'> { return ref(this.id, 'Arn'); }
+    get name(): Ref<'Name'> { return ref(this.id, 'Name'); }
   }
 
   export class FileSystem implements BaseConstruct {

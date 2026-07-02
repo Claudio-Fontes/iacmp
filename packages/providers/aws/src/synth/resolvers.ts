@@ -1,4 +1,4 @@
-import { ref, type Ref } from '@iacmp/core';
+import { ref, isRef, type Ref } from '@iacmp/core';
 import { type CloudFormationResource, type SynthContext } from './types';
 
 // ─── Mapa tipo × atributo → { sameStack, exportSuffix } ─────────────────────
@@ -363,7 +363,8 @@ export function resolveQueueArn(value: string, ctx: SynthContext): unknown {
   return resolveRef(parsed, ctx);
 }
 
-export function resolvePolicyResource(value: string, ctx: SynthContext): unknown {
+export function resolvePolicyResource(value: unknown, ctx: SynthContext): unknown {
+  if (isRef(value)) return resolveRef(value, ctx);
   if (typeof value !== 'string') return value; // null/undefined pass through → validateNoNullValues
   if (value.startsWith('arn:') || value === '*') return value;
   // S3 bucket ARN com sufixo de path opcional: 'UploadsBucket.arn/*' ou 'UploadsBucket/*'.
@@ -383,7 +384,9 @@ export function resolvePolicyResource(value: string, ctx: SynthContext): unknown
   return resolveRef(parsed, ctx);
 }
 
-export function resolveEnvVarValue(value: string, ctx: SynthContext): unknown {
+export function resolveEnvVarValue(value: unknown, ctx: SynthContext): unknown {
+  if (isRef(value)) return resolveRef(value, ctx);
+  if (typeof value !== 'string') return value;
   const parsed = parseStringRef(value, ctx);
   if ('literal' in parsed) return value;
   return resolveRef(parsed, ctx);
@@ -397,6 +400,7 @@ export function resolveEnvVarValue(value: string, ctx: SynthContext): unknown {
  * a IA às vezes gera) são descartadas para não virarem null no template.
  */
 export function resolveAlarmAction(value: unknown, ctx: SynthContext): unknown | undefined {
+  if (isRef(value)) return resolveRef(value, ctx);
   if (typeof value !== 'string' || value.length === 0) return undefined;
   if (value.startsWith('arn:')) return value;
   const parsed = parseStringRef(value, ctx);
@@ -423,7 +427,9 @@ export function alarmActionsBlock(key: 'AlarmActions' | 'OKActions', raw: unknow
  * cross-stack → Fn::ImportValue do export "<stack>-<lbId>-TargetGroupArn".
  * ARN literal passa inalterado.
  */
-export function resolveTargetGroupArn(value: string, ctx: SynthContext): unknown {
+export function resolveTargetGroupArn(value: unknown, ctx: SynthContext): unknown {
+  if (isRef(value)) return resolveRef(value, ctx);
+  if (typeof value !== 'string') return value;
   if (value.startsWith('arn:')) return value;
   const parsed = parseStringRef(value, ctx);
   if ('literal' in parsed) return value;

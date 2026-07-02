@@ -1,4 +1,26 @@
+import { ref, type Ref } from '../refs';
 import { Stack, BaseConstruct } from '../stack';
+
+export interface VPCRefs {
+  readonly vpcId: Ref<'VpcId'>;
+}
+
+export interface SubnetRefs {
+  readonly subnetId: Ref<'SubnetId'>;
+}
+
+export interface SecurityGroupRefs {
+  readonly groupId: Ref<'GroupId'>;
+}
+
+export interface WAFRefs {
+  readonly arn: Ref<'Arn'>;
+}
+
+export interface LoadBalancerRefs {
+  readonly targetGroupArn: Ref<'TargetGroupArn'>;
+  readonly dnsName: Ref<'DnsName'>;
+}
 
 export interface NetworkVPCProps {
   cidr?: string;
@@ -114,16 +136,17 @@ export interface NetworkDnsProps {
 }
 
 export namespace Network {
-  export class VPC implements BaseConstruct {
+  export class VPC implements BaseConstruct, VPCRefs {
     readonly type = 'Network.VPC';
     readonly props: Record<string, unknown>;
     constructor(stack: Stack, readonly id: string, props: NetworkVPCProps) {
       this.props = props as unknown as Record<string, unknown>;
       stack.addConstruct(this);
     }
+    get vpcId(): Ref<'VpcId'> { return ref(this.id, 'VpcId'); }
   }
 
-  export class Subnet implements BaseConstruct {
+  export class Subnet implements BaseConstruct, SubnetRefs {
     readonly type = 'Network.Subnet';
     readonly props: Record<string, unknown>;
     constructor(stack: Stack, readonly id: string, props: NetworkSubnetProps) {
@@ -132,9 +155,10 @@ export namespace Network {
       this.props = props as unknown as Record<string, unknown>;
       stack.addConstruct(this);
     }
+    get subnetId(): Ref<'SubnetId'> { return ref(this.id, 'SubnetId'); }
   }
 
-  export class SecurityGroup implements BaseConstruct {
+  export class SecurityGroup implements BaseConstruct, SecurityGroupRefs {
     readonly type = 'Network.SecurityGroup';
     readonly props: Record<string, unknown>;
     constructor(stack: Stack, readonly id: string, props: NetworkSecurityGroupProps) {
@@ -142,18 +166,20 @@ export namespace Network {
       this.props = props as unknown as Record<string, unknown>;
       stack.addConstruct(this);
     }
+    get groupId(): Ref<'GroupId'> { return ref(this.id, 'GroupId'); }
   }
 
-  export class WAF implements BaseConstruct {
+  export class WAF implements BaseConstruct, WAFRefs {
     readonly type = 'Network.WAF';
     readonly props: Record<string, unknown>;
     constructor(stack: Stack, readonly id: string, props: NetworkWAFProps) {
       this.props = props as unknown as Record<string, unknown>;
       stack.addConstruct(this);
     }
+    get arn(): Ref<'Arn'> { return ref(this.id, 'Arn'); }
   }
 
-  export class LoadBalancer implements BaseConstruct {
+  export class LoadBalancer implements BaseConstruct, LoadBalancerRefs {
     readonly type = 'Network.LoadBalancer';
     readonly props: Record<string, unknown>;
     constructor(stack: Stack, readonly id: string, props: NetworkLoadBalancerProps) {
@@ -161,6 +187,8 @@ export namespace Network {
       this.props = props as unknown as Record<string, unknown>;
       stack.addConstruct(this);
     }
+    get targetGroupArn(): Ref<'TargetGroupArn'> { return ref(this.id, 'TargetGroupArn'); }
+    get dnsName(): Ref<'DnsName'> { return ref(this.id, 'DnsName'); }
   }
 
   export class CDN implements BaseConstruct {

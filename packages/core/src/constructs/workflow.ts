@@ -1,9 +1,10 @@
+import { type Ref } from '../refs';
 import { Stack, BaseConstruct } from '../stack';
 
 export interface WorkflowStep {
   name: string;
   type?: 'Task' | 'Choice' | 'Wait' | 'Parallel' | 'Map' | 'Pass' | 'Succeed' | 'Fail';
-  resource?: string;
+  resource?: string | Ref<'Arn'>;
   description?: string;
   /** Task com callback: invoca a Lambda passando o task token e PAUSA a execução
    *  até alguém chamar SendTaskSuccess/SendTaskFailure com esse token (padrão de

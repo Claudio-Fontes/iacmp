@@ -1,3 +1,4 @@
+import { type Ref } from '../refs';
 import { Stack, BaseConstruct } from '../stack';
 
 export type PolicyEffect = 'Allow' | 'Deny';
@@ -6,7 +7,7 @@ export type PolicyPrincipalType = 'service' | 'account' | 'role' | 'user' | 'any
 export interface PolicyStatement {
   effect: PolicyEffect;
   actions: string[];
-  resources?: string[];
+  resources?: Array<string | Ref>;
   conditions?: Record<string, Record<string, string>>;
 }
 

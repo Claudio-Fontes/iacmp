@@ -1,3 +1,4 @@
+import { type Ref } from '../refs';
 import { Stack, BaseConstruct } from '../stack';
 
 export interface MonitoringAlarmProps {
@@ -9,8 +10,8 @@ export interface MonitoringAlarmProps {
   comparisonOperator?: 'GreaterThanThreshold' | 'LessThanThreshold' | 'GreaterThanOrEqualToThreshold' | 'LessThanOrEqualToThreshold';
   statistic?: 'Average' | 'Sum' | 'Minimum' | 'Maximum' | 'SampleCount';
   treatMissingData?: 'breaching' | 'notBreaching' | 'ignore' | 'missing';
-  alarmActions?: string[];
-  okActions?: string[];
+  alarmActions?: Array<string | Ref>;
+  okActions?: Array<string | Ref>;
   dimensions?: Record<string, string>;
 }
 

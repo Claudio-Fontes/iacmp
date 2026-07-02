@@ -1,6 +1,6 @@
-import { BaseConstruct } from '@iacmp/core';
+import { BaseConstruct, isRef } from '@iacmp/core';
 import type { CloudFormationResource, SynthContext } from '../types';
-import { resolveLambdaArnRef, defaultServiceRole } from '../resolvers';
+import { resolveLambdaArnRef, resolveRef, defaultServiceRole } from '../resolvers';
 
 export function synthWorkflow(
   construct: BaseConstruct,
@@ -22,9 +22,10 @@ export function synthWorkflow(
           const stateType = (s.type as string) ?? 'Task';
           const isTask = stateType === 'Task';
           const isWait = stateType === 'Wait';
-          const rawResource = (s.resource as string) ?? '';
+          const rawResourceRaw = s.resource;
+          const rawResource = isRef(rawResourceRaw) ? rawResourceRaw.constructId : ((rawResourceRaw as string) ?? '');
           // Resolve o id de uma Fn.Lambda pro ARN via variável do Fn::Sub.
-          let arnRef = rawResource;
+          let arnRef: unknown = rawResource;
           if (isTask && rawResource && !rawResource.startsWith('arn:')) {
             // Um Task com resource que não é ARN precisa apontar pra uma Fn.Lambda —
             // um id de outro construct (ou typo) gera uma ASL inválida no deploy.
@@ -32,7 +33,7 @@ export function synthWorkflow(
               throw new Error(`Workflow.StepFunctions "${construct.id}": o step Task "${s.name}" tem resource "${rawResource}", que não é uma Fn.Lambda nem um ARN. Aponte para o id de uma Fn.Lambda.`);
             }
             const varName = `${(s.name as string).replace(/[^a-zA-Z0-9]/g, '')}Arn`;
-            subVars[varName] = resolveLambdaArnRef(rawResource, ctx);
+            subVars[varName] = isRef(rawResourceRaw) ? resolveRef(rawResourceRaw, ctx) : resolveLambdaArnRef(rawResource, ctx);
             arnRef = `\${${varName}}`;
           }
           // waitForToken: Task de callback — invoca a Lambda passando o task token

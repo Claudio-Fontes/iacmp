@@ -1,4 +1,4 @@
-import { BaseConstruct } from '@iacmp/core';
+import { BaseConstruct, isRef, type Ref } from '@iacmp/core';
 import type { CloudFormationResource, SynthContext } from '../types';
 import { INSTANCE_TYPE_MAP } from '../types';
 import {
@@ -6,6 +6,7 @@ import {
   resolveSecurityGroupId,
   defaultServiceRole,
   resolveTargetGroupArn,
+  resolveRef,
 } from '../resolvers';
 
 const AMI_MAP: Record<string, string> = {
@@ -154,7 +155,7 @@ export function synthCompute(
       // Só cria o Service se subnets foram fornecidas — sem subnets o Fargate
       // falha com "subnets can not be empty" no CloudFormation.
       if (subnetIds.length > 0) {
-        const hasLb = typeof props.targetGroupArn === 'string';
+        const hasLb = props.targetGroupArn != null;
         const serviceProps: Record<string, unknown> = {
           ServiceName: construct.id,
           Cluster: { Ref: clusterLogicalId },
@@ -173,9 +174,10 @@ export function synthCompute(
         const serviceDependsOn: string[] = [logGroupLogicalId];
         // Registra as tasks no target group do ALB (só faz sentido com um container port).
         if (hasLb && props.port) {
-          const lbId = (props.targetGroupArn as string).replace(/\.TargetGroupArn$/, '');
+          const tgArn = props.targetGroupArn as string | Ref;
+          const lbId = isRef(tgArn) ? tgArn.constructId : (tgArn as string).replace(/\.TargetGroupArn$/, '');
           serviceProps.LoadBalancers = [{
-            TargetGroupArn: resolveTargetGroupArn(props.targetGroupArn as string, ctx),
+            TargetGroupArn: isRef(tgArn) ? resolveRef(tgArn, ctx) : resolveTargetGroupArn(tgArn as string, ctx),
             ContainerName: construct.id,
             ContainerPort: props.port,
           }];

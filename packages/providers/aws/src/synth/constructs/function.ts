@@ -1,4 +1,4 @@
-import { BaseConstruct } from '@iacmp/core';
+import { BaseConstruct, isRef, type Ref } from '@iacmp/core';
 import type { CloudFormationResource, SynthContext } from '../types';
 import {
   resolveLambdaArnRef,
@@ -10,6 +10,7 @@ import {
   resolveQueueArn,
   resolvePolicyResource,
   resolveEnvVarValue,
+  resolveRef,
 } from '../resolvers';
 
 export function synthFunction(
@@ -20,7 +21,7 @@ export function synthFunction(
   const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
   switch (construct.type) {
     case 'Function.Lambda': {
-      const environment = props.environment as Record<string, string> | undefined;
+      const environment = props.environment as Record<string, string | Ref> | undefined;
       const runtimeMap: Record<string, string> = {
         'nodejs20': 'nodejs20.x', 'nodejs18': 'nodejs18.x',
         'python3.12': 'python3.12', 'python3.11': 'python3.11',
@@ -45,7 +46,7 @@ export function synthFunction(
           ...(environment && Object.keys(environment).length > 0 ? {
             Environment: {
               Variables: Object.fromEntries(
-                Object.entries(environment).map(([k, v]) => [k, resolveEnvVarValue(v, ctx)])
+                Object.entries(environment).map(([k, v]) => [k, isRef(v) ? resolveRef(v, ctx) : resolveEnvVarValue(v as string, ctx)])
               ),
             },
           } : {}),
@@ -434,7 +435,7 @@ export function synthFunction(
               Statement: statements.map(s => ({
                 Effect: s.effect as string,
                 Action: s.actions as string[],
-                Resource: ((s.resources as string[]) ?? ['*']).map(r => resolvePolicyResource(r, ctx)),
+                Resource: ((s.resources as Array<string | Ref>) ?? ['*']).map(r => isRef(r) ? resolveRef(r, ctx) : resolvePolicyResource(r as string, ctx)),
                 ...(s.conditions ? { Condition: s.conditions } : {}),
               })),
             },

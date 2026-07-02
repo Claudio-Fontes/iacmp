@@ -1,6 +1,6 @@
-import { BaseConstruct } from '@iacmp/core';
+import { BaseConstruct, isRef } from '@iacmp/core';
 import type { CloudFormationResource, SynthContext } from '../types';
-import { resolveLambdaArnRef } from '../resolvers';
+import { resolveLambdaArnRef, resolveRef } from '../resolvers';
 
 export function synthStorage(
   construct: BaseConstruct,
@@ -65,11 +65,12 @@ export function synthStorage(
         const lambdaConfigs: Array<Record<string, unknown>> = [];
         const dependsOn: string[] = [];
         notifications.forEach((n, ni) => {
-          const lambdaId = n.lambdaId as string;
+          const rawLambdaId = n.lambdaId;
+          const lambdaId = isRef(rawLambdaId) ? rawLambdaId.constructId : (rawLambdaId as string);
           if (ctx.registry.get(lambdaId)?.type !== 'Function.Lambda') {
             throw new Error(`Storage.Bucket "${construct.id}": eventNotifications[${ni}].lambdaId "${lambdaId}" não é uma Fn.Lambda. Aponte para o id de uma Function.Lambda.`);
           }
-          const fnArn = resolveLambdaArnRef(lambdaId, ctx);
+          const fnArn = isRef(rawLambdaId) ? resolveRef(rawLambdaId, ctx) : resolveLambdaArnRef(lambdaId, ctx);
           const events = (n.events as string[] | undefined) ?? ['s3:ObjectCreated:*'];
           const filterRules: Array<Record<string, string>> = [];
           if (n.prefix) filterRules.push({ Name: 'prefix', Value: n.prefix as string });

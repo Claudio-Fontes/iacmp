@@ -36,6 +36,7 @@ export type {
   StorageBucketProps,
   StorageFileSystemProps,
   StorageArchiveProps,
+  BucketRefs,
 } from './constructs/storage';
 
 export { Network } from './constructs/network';
@@ -49,6 +50,11 @@ export type {
   NetworkLoadBalancerProps,
   NetworkCDNProps,
   NetworkDnsProps,
+  VPCRefs,
+  SubnetRefs,
+  SecurityGroupRefs,
+  WAFRefs,
+  LoadBalancerRefs,
 } from './constructs/network';
 
 export { Database } from './constructs/database';
@@ -57,12 +63,16 @@ export type {
   DatabaseDocumentDBProps,
   DatabaseDynamoDBProps,
   DynamoDBAttributeType,
+  SQLRefs,
+  DocumentDBRefs,
+  DynamoDBRefs,
 } from './constructs/database';
 
 export { Fn } from './constructs/function';
 export type {
   FunctionLambdaProps,
   FunctionApiGatewayProps,
+  LambdaRefs,
 } from './constructs/function';
 
 export { Policy } from './constructs/policy';
@@ -80,13 +90,20 @@ export { Workflow } from './constructs/workflow';
 export type { StepFunctionsProps, WorkflowStep } from './constructs/workflow';
 
 export { Cache } from './constructs/cache';
-export type { CacheRedisProps, CacheMemcachedProps } from './constructs/cache';
+export type { CacheRedisProps, CacheMemcachedProps, RedisRefs } from './constructs/cache';
 
 export { Messaging } from './constructs/messaging';
-export type { MessagingQueueProps, MessagingTopicProps } from './constructs/messaging';
+export type {
+  MessagingQueueProps,
+  MessagingTopicProps,
+  MessagingStreamProps,
+  QueueRefs,
+  TopicRefs,
+  StreamRefs,
+} from './constructs/messaging';
 
 export { Secret, Certificate } from './constructs/secret';
-export type { SecretVaultProps, CertificateTLSProps } from './constructs/secret';
+export type { SecretVaultProps, CertificateTLSProps, VaultRefs } from './constructs/secret';
 
 export { Monitoring, Logging } from './constructs/monitoring';
 export type {

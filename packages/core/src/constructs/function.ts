@@ -1,4 +1,9 @@
+import { ref, type Ref } from '../refs';
 import { Stack, BaseConstruct } from '../stack';
+
+export interface LambdaRefs {
+  readonly arn: Ref<'Arn'>;
+}
 
 export interface FunctionLambdaProps {
   runtime: 'nodejs20' | 'nodejs18' | 'python3.12' | 'python3.11' | 'java21' | 'go1.x' | 'dotnet8';
@@ -6,7 +11,7 @@ export interface FunctionLambdaProps {
   code: string;
   memory?: number;
   timeout?: number;
-  environment?: Record<string, string>;
+  environment?: Record<string, string | Ref>;
   reservedConcurrency?: number;
   layerArns?: string[];
   vpcId?: string;
@@ -49,13 +54,14 @@ export interface FunctionApiGatewayProps {
 }
 
 export namespace Fn {
-  export class Lambda implements BaseConstruct {
+  export class Lambda implements BaseConstruct, LambdaRefs {
     readonly type = 'Function.Lambda';
     readonly props: Record<string, unknown>;
     constructor(stack: Stack, readonly id: string, props: FunctionLambdaProps) {
       this.props = props as unknown as Record<string, unknown>;
       stack.addConstruct(this);
     }
+    get arn(): Ref<'Arn'> { return ref(this.id, 'Arn'); }
   }
 
   export class ApiGateway implements BaseConstruct {

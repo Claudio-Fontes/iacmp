@@ -1,4 +1,10 @@
+import { ref, type Ref } from '../refs';
 import { Stack, BaseConstruct } from '../stack';
+
+export interface RedisRefs {
+  readonly endpoint: Ref<'Endpoint'>;
+  readonly port: Ref<'Port'>;
+}
 
 export interface CacheRedisProps {
   nodeType?: 'small' | 'medium' | 'large';
@@ -20,13 +26,15 @@ export interface CacheMemcachedProps {
 }
 
 export namespace Cache {
-  export class Redis implements BaseConstruct {
+  export class Redis implements BaseConstruct, RedisRefs {
     readonly type = 'Cache.Redis';
     readonly props: Record<string, unknown>;
     constructor(stack: Stack, readonly id: string, props: CacheRedisProps) {
       this.props = props as unknown as Record<string, unknown>;
       stack.addConstruct(this);
     }
+    get endpoint(): Ref<'Endpoint'> { return ref(this.id, 'Endpoint'); }
+    get port(): Ref<'Port'> { return ref(this.id, 'Port'); }
   }
 
   export class Memcached implements BaseConstruct {

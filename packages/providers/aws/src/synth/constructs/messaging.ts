@@ -1,6 +1,6 @@
-import { BaseConstruct } from '@iacmp/core';
+import { BaseConstruct, isRef } from '@iacmp/core';
 import type { CloudFormationResource, SynthContext } from '../types';
-import { resolveLambdaArnRef, normalizeRate, resolveQueueArn } from '../resolvers';
+import { resolveLambdaArnRef, resolveRef, normalizeRate, resolveQueueArn } from '../resolvers';
 
 export function synthMessaging(
   construct: BaseConstruct,
@@ -56,15 +56,18 @@ export function synthMessaging(
       const subscribedQueues: string[] = [];
       subscriptions.forEach((s, i) => {
         const protocol = s.protocol as string;
-        const endpointRaw = s.endpoint as string;
-        // sqs/lambda: endpoint pode ser id de construct → resolve ARN.
+        const endpointVal = s.endpoint;
+        const endpointRaw = isRef(endpointVal) ? endpointVal.constructId : (endpointVal as string);
+        // sqs/lambda: endpoint pode ser id de construct ou Ref → resolve ARN.
         const isConstructId = (protocol === 'sqs' || protocol === 'lambda') && ctx.registry.has(endpointRaw);
         if (protocol === 'lambda' && isConstructId && ctx.registry.get(endpointRaw)?.type !== 'Function.Lambda') {
           throw new Error(`Messaging.Topic "${construct.id}": subscription[${i}] protocol:'lambda' tem endpoint "${endpointRaw}", que não é uma Fn.Lambda. Aponte para o id de uma Function.Lambda.`);
         }
-        const endpoint = isConstructId
-          ? (protocol === 'sqs' ? resolveQueueArn(endpointRaw, ctx) : resolveLambdaArnRef(endpointRaw, ctx))
-          : endpointRaw;
+        const endpoint = isRef(endpointVal)
+          ? resolveRef(endpointVal, ctx)
+          : isConstructId
+            ? (protocol === 'sqs' ? resolveQueueArn(endpointRaw, ctx) : resolveLambdaArnRef(endpointRaw, ctx))
+            : endpointRaw;
         const subId = `${logicalId}Sub${i + 1}`;
         topicEntries.push([subId, {
           Type: 'AWS::SNS::Subscription',

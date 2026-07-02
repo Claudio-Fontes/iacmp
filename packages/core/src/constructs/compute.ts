@@ -1,3 +1,4 @@
+import { type Ref } from '../refs';
 import { Stack, BaseConstruct } from '../stack';
 
 export interface ComputeInstanceProps {
@@ -36,8 +37,8 @@ export interface ComputeContainerProps {
   maxCapacity?: number;
   /** Alvo de utilização de CPU (%) para o target-tracking scaling. Default 50. */
   cpuTargetPercent?: number;
-  /** Target group do ALB onde registrar as tasks — ex: 'MyLoadBalancer.TargetGroupArn'. */
-  targetGroupArn?: string;
+  /** Target group do ALB onde registrar as tasks — ex: 'MyLoadBalancer.TargetGroupArn' ou getter lb.targetGroupArn. */
+  targetGroupArn?: string | Ref<'TargetGroupArn'>;
 }
 
 export interface ComputeKubernetesProps {

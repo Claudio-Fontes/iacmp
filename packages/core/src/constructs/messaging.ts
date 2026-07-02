@@ -1,4 +1,19 @@
+import { ref, type Ref } from '../refs';
 import { Stack, BaseConstruct } from '../stack';
+
+export interface QueueRefs {
+  readonly arn: Ref<'Arn'>;
+  readonly queueUrl: Ref<'QueueUrl'>;
+}
+
+export interface TopicRefs {
+  readonly arn: Ref<'Arn'>;
+}
+
+export interface StreamRefs {
+  readonly arn: Ref<'Arn'>;
+  readonly name: Ref<'Name'>;
+}
 
 export interface MessagingQueueProps {
   visibilityTimeoutSeconds?: number;
@@ -18,7 +33,7 @@ export interface MessagingTopicProps {
     protocol: 'lambda' | 'sqs' | 'email' | 'http' | 'https';
     /** Endpoint do subscriber. Para 'sqs'/'lambda', pode ser o id de um construct
      *  (Messaging.Queue/Fn.Lambda) — o synth resolve o ARN. Para email/http, o valor literal. */
-    endpoint: string;
+    endpoint: string | Ref;
     /** Filtro de mensagens por atributo (SNS message filtering). */
     filterPolicy?: Record<string, unknown>;
   }>;
@@ -33,7 +48,7 @@ export interface MessagingStreamProps {
 }
 
 export namespace Messaging {
-  export class Queue implements BaseConstruct {
+  export class Queue implements BaseConstruct, QueueRefs {
     readonly type = 'Messaging.Queue';
     readonly props: Record<string, unknown>;
 
@@ -41,10 +56,12 @@ export namespace Messaging {
       this.props = props as unknown as Record<string, unknown>;
       stack.addConstruct(this);
     }
+    get arn(): Ref<'Arn'> { return ref(this.id, 'Arn'); }
+    get queueUrl(): Ref<'QueueUrl'> { return ref(this.id, 'QueueUrl'); }
   }
 
   /** Kinesis Data Stream — ingestão de eventos em tempo real. */
-  export class Stream implements BaseConstruct {
+  export class Stream implements BaseConstruct, StreamRefs {
     readonly type = 'Messaging.Stream';
     readonly props: Record<string, unknown>;
 
@@ -52,9 +69,11 @@ export namespace Messaging {
       this.props = props as unknown as Record<string, unknown>;
       stack.addConstruct(this);
     }
+    get arn(): Ref<'Arn'> { return ref(this.id, 'Arn'); }
+    get name(): Ref<'Name'> { return ref(this.id, 'Name'); }
   }
 
-  export class Topic implements BaseConstruct {
+  export class Topic implements BaseConstruct, TopicRefs {
     readonly type = 'Messaging.Topic';
     readonly props: Record<string, unknown>;
 
@@ -62,5 +81,6 @@ export namespace Messaging {
       this.props = props as unknown as Record<string, unknown>;
       stack.addConstruct(this);
     }
+    get arn(): Ref<'Arn'> { return ref(this.id, 'Arn'); }
   }
 }

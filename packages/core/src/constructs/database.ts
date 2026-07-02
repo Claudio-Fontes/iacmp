@@ -1,4 +1,25 @@
+import { ref, type Ref } from '../refs';
 import { Stack, BaseConstruct } from '../stack';
+
+export interface SQLRefs {
+  readonly endpoint: Ref<'Endpoint'>;
+  readonly port: Ref<'Port'>;
+  readonly secretArn: Ref<'SecretArn'>;
+  readonly password: Ref<'Password'>;
+  readonly username: Ref<'Username'>;
+}
+
+export interface DocumentDBRefs {
+  readonly endpoint: Ref<'Endpoint'>;
+  readonly port: Ref<'Port'>;
+  readonly secretArn: Ref<'SecretArn'>;
+  readonly password: Ref<'Password'>;
+}
+
+export interface DynamoDBRefs {
+  readonly arn: Ref<'Arn'>;
+  readonly name: Ref<'Name'>;
+}
 
 export type SQLEngine =
   | 'mysql'
@@ -62,7 +83,7 @@ export interface DatabaseDynamoDBProps {
 }
 
 export namespace Database {
-  export class SQL implements BaseConstruct {
+  export class SQL implements BaseConstruct, SQLRefs {
     readonly type = 'Database.SQL';
     readonly props: Record<string, unknown>;
 
@@ -80,18 +101,27 @@ export namespace Database {
       this.props = props as unknown as Record<string, unknown>;
       stack.addConstruct(this);
     }
+    get endpoint(): Ref<'Endpoint'> { return ref(this.id, 'Endpoint'); }
+    get port(): Ref<'Port'> { return ref(this.id, 'Port'); }
+    get secretArn(): Ref<'SecretArn'> { return ref(this.id, 'SecretArn'); }
+    get password(): Ref<'Password'> { return ref(this.id, 'Password'); }
+    get username(): Ref<'Username'> { return ref(this.id, 'Username'); }
   }
 
-  export class DocumentDB implements BaseConstruct {
+  export class DocumentDB implements BaseConstruct, DocumentDBRefs {
     readonly type = 'Database.DocumentDB';
     readonly props: Record<string, unknown>;
     constructor(stack: Stack, readonly id: string, props: DatabaseDocumentDBProps) {
       this.props = props as unknown as Record<string, unknown>;
       stack.addConstruct(this);
     }
+    get endpoint(): Ref<'Endpoint'> { return ref(this.id, 'Endpoint'); }
+    get port(): Ref<'Port'> { return ref(this.id, 'Port'); }
+    get secretArn(): Ref<'SecretArn'> { return ref(this.id, 'SecretArn'); }
+    get password(): Ref<'Password'> { return ref(this.id, 'Password'); }
   }
 
-  export class DynamoDB implements BaseConstruct {
+  export class DynamoDB implements BaseConstruct, DynamoDBRefs {
     readonly type = 'Database.DynamoDB';
     readonly props: Record<string, unknown>;
     constructor(stack: Stack, readonly id: string, props: DatabaseDynamoDBProps) {
@@ -100,5 +130,7 @@ export namespace Database {
       this.props = props as unknown as Record<string, unknown>;
       stack.addConstruct(this);
     }
+    get arn(): Ref<'Arn'> { return ref(this.id, 'Arn'); }
+    get name(): Ref<'Name'> { return ref(this.id, 'Name'); }
   }
 }
