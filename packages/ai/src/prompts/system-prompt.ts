@@ -81,7 +81,7 @@ new Compute.Container(stack, 'LogicalId', {
 **REGRA — Container atrás de ALB:** um \`Compute.Container\` exposto por um \`Network.LoadBalancer\` (ALB) precisa de DOIS lados ligados: (1) no LoadBalancer, declare \`targetGroups: [{ name, port: <containerPort>, protocol: 'HTTP', healthCheckPath: '/' }]\` (o synth já faz o listener HTTP dar \`forward\` pro 1º target group); (2) no Container, aponte \`targetGroupArn: '<LoadBalancerId>.TargetGroupArn'\` e informe \`port\` — o synth registra as tasks no target group. Sem isso o ALB responde 404 e nunca alcança o container. Container NÃO fica atrás de \`Fn.ApiGateway\` (API Gateway é só para Lambda) — nunca coloque um container como \`lambdaId\` de uma rota de ApiGateway. NUM CENÁRIO SÓ DE CONTAINER (ECS/Fargate) NÃO GERE NENHUM \`Fn.ApiGateway\`.
 **Exemplo completo — Fargate atrás de ALB com autoscaling** (ALB + Container na MESMA stack; só listener HTTP:80, sem 443 sem certificado):
 \`\`\`typescript
-new Network.LoadBalancer(stack, 'AppAlb', {
+const alb = new Network.LoadBalancer(stack, 'AppAlb', {
   vpcId: 'AppVpc', type: 'application', scheme: 'internet-facing',
   subnetIds: ['PublicSubnet1', 'PublicSubnet2'], securityGroupIds: ['AlbSG'],
   targetGroups: [{ name: 'app-tg', port: 3000, protocol: 'HTTP', healthCheckPath: '/' }],
@@ -91,7 +91,7 @@ new Compute.Container(stack, 'ApiService', {
   image: 'minha-api:latest', cpu: 256, memory: 512, port: 3000, desiredCount: 2,
   subnetIds: ['PrivateSubnet1', 'PrivateSubnet2'], securityGroupIds: ['EcsSG'],
   minCapacity: 2, maxCapacity: 10,
-  targetGroupArn: 'AppAlb.TargetGroupArn',   // ← LIGA as tasks ao target group do ALB
+  targetGroupArn: alb.targetGroupArn,   // ← LIGA as tasks ao target group do ALB (getter tipado)
 });
 \`\`\`
 
@@ -437,7 +437,7 @@ new Cache.Redis(stack, 'LogicalId', {
 });
 export default stack;
 \`\`\`
-**REGRA Redis em VPC**: para Redis numa VPC, SEMPRE informe \`subnetIds\` (os IDs lógicos das subnets, ex: \`['PrivateSubnet1', 'PrivateSubnet2']\`) e \`securityGroupIds\` — NUNCA use \`subnetGroupName\` com um id de subnet cru (ElastiCache exige um SubnetGroup, não uma subnet; o synth cria o \`AWS::ElastiCache::SubnetGroup\` a partir de \`subnetIds\`). O synth exporta o endpoint como \`<LogicalId>.Endpoint\` e a porta como \`<LogicalId>.Port\` — use esses valores nas env vars da Lambda que conecta ao cache (ex: \`REDIS_HOST: 'ProductsCache.Endpoint'\`, \`REDIS_PORT: 'ProductsCache.Port'\`).
+**REGRA Redis em VPC**: para Redis numa VPC, SEMPRE informe \`subnetIds\` (os IDs lógicos das subnets, ex: \`['PrivateSubnet1', 'PrivateSubnet2']\`) e \`securityGroupIds\` — NUNCA use \`subnetGroupName\` com um id de subnet cru (ElastiCache exige um SubnetGroup, não uma subnet; o synth cria o \`AWS::ElastiCache::SubnetGroup\` a partir de \`subnetIds\`). Nas env vars da Lambda que conecta ao cache, use os getters tipados same-stack (\`const cache = new Cache.Redis(...); ... REDIS_HOST: cache.endpoint, REDIS_PORT: cache.port\`) ou, cross-stack, \`ref('ProductsCache', 'Endpoint')\`/a string \`'ProductsCache.Endpoint'\`.
 **REGRA TLS no cliente Redis (CRÍTICO):** o synth liga \`transitEncryptionEnabled\` por padrão (\`true\`) — o ElastiCache passa a EXIGIR TLS. Um cliente ioredis que conecta em texto puro (\`new Redis({ host, port })\`) fica pendurado no handshake e a Lambda dá TIMEOUT (não erro claro). SEMPRE conecte com TLS: \`new Redis({ host: process.env.CACHE_HOST, port: Number(process.env.CACHE_PORT), tls: {} })\`. (Só omita \`tls: {}\` se você tiver explicitamente setado \`transitEncryptionEnabled: false\` no construct.) Como \`AuthToken\` fica desabilitado por padrão, não é preciso \`password\`.
 
 ### Cache.Memcached — ElastiCache Memcached
@@ -680,7 +680,7 @@ new Secret.Vault(stack, 'LogicalId', {
 });
 export default stack;
 \`\`\`
-**REGRA ABSOLUTA — referenciar o ARN de um Secret.Vault:** \`Secret.Vault\` NÃO tem propriedade \`.secretArn\`/\`.secretId\` em código TypeScript — acessá-las gera \`undefined\` → \`null\` no template → deploy falha. Para passar o ARN do secret (na env var de uma Lambda OU no \`resources\` de uma Policy.IAM), use a STRING \`'<LogicalId>.SecretArn'\` (ex: \`'JwtSecret.SecretArn'\`) — o synth resolve automaticamente para o ARN real (Ref local ou Fn::ImportValue cross-stack). Exemplo: \`environment: { SECRET_ARN: 'JwtSecret.SecretArn' }\` e \`resources: ['JwtSecret.SecretArn']\`.
+**REGRA — referenciar o ARN de um Secret.Vault:** same-stack, use o getter tipado: \`const secret = new Secret.Vault(stack, 'JwtSecret', {}); ... environment: { SECRET_ARN: secret.secretArn }\` e \`resources: [secret.secretArn]\`. Cross-stack, use \`ref('JwtSecret', 'SecretArn')\` ou a string \`'JwtSecret.SecretArn'\` — o synth resolve para o ARN real (Ref local ou Fn::ImportValue). O ÚNICO getter de referência do Vault é \`.secretArn\` (e \`.arn\`, equivalente) — não existem \`.secretId\`, \`.value\` etc.
 
 ### Certificate.TLS — ACM / Key Vault Cert / Certificate Manager
 \`\`\`typescript
@@ -711,14 +711,14 @@ new Monitoring.Alarm(stack, 'LogicalId', {
   comparisonOperator?: 'GreaterThanThreshold' | 'LessThanThreshold' | 'GreaterThanOrEqualToThreshold' | 'LessThanOrEqualToThreshold',
   statistic?: 'Average' | 'Sum' | 'Minimum' | 'Maximum' | 'SampleCount',
   treatMissingData?: 'notBreaching' | 'breaching' | 'ignore' | 'missing',
-  alarmActions?: string[],    // ids de Messaging.Topic (ex: ['AlertsTopic']) — o synth resolve pro ARN
-  okActions?: string[],
+  alarmActions?: Array<string | Ref>,  // refs de Messaging.Topic: topic.arn (getter) ou 'AlertsTopic' — o synth resolve pro ARN
+  okActions?: Array<string | Ref>,
   dimensions?: Record<string, string>,
 });
 export default stack;
 \`\`\`
-**REGRA — referências são STRINGS, nunca \`.arn\`/\`.attr\` do objeto JS.** Os constructs NÃO expõem \`.arn\`, \`.url\`, etc. em runtime — \`const t = new Messaging.Topic(...); t.arn\` é \`undefined\` e vira \`null\` no template (o synth rejeita). Para referenciar um recurso (ex: o SNS topic num \`alarmActions\` ou num \`resources\` de Policy.IAM), passe o ID do construct como STRING: \`alarmActions: ['AlertsTopic']\`, \`resources: ['AlertsTopic']\`. O synth resolve o ARN. Vale para TODOS os constructs.
-**REGRA — Lambda subscrita a um SNS topic:** para "Lambda X subscrita ao Topic Y", declare a subscription NO PRÓPRIO \`Messaging.Topic\`: \`subscriptions: [{ protocol: 'lambda', endpoint: 'AlertHandlerFn' }]\` (o campo é \`endpoint\` = id da Fn.Lambda) — o synth cria a Subscription + a Lambda::Permission que autoriza o SNS. Não é preciso (nem existe) API Gateway para isso: um cenário de monitoramento (alarmes/dashboard/SNS/Lambda-de-alerta) NÃO tem HTTP — NÃO gere \`Fn.ApiGateway\`.
+**REGRA — como referenciar outro construct.** Same-stack: PREFIRA os getters tipados — \`const t = new Messaging.Topic(stack, 'AlertsTopic', {}); ... alarmActions: [t.arn]\`. Getters disponíveis: \`db.endpoint/.port/.password/.secretArn\`, \`vault.secretArn\`, \`topic.arn\`, \`queue.arn/.queueUrl\`, \`stream.arn/.name\`, \`fn.arn\`, \`bucket.arn/.name\`, \`cache.endpoint/.port\`, \`lb.targetGroupArn/.dnsName\`, \`waf.arn\`. Cross-stack (construct declarado em OUTRO arquivo de stack): use \`ref('AlertsTopic', 'Arn')\` (import \`ref\` de \`@iacmp/core\`) ou a string \`'AlertsTopic'\`/\`'AppDB.Endpoint'\`. NUNCA invente propriedades que não existem (\`.url\`, \`.address\`) — só os getters listados.
+**REGRA — Lambda subscrita a um SNS topic:** para "Lambda X subscrita ao Topic Y", declare a subscription NO PRÓPRIO \`Messaging.Topic\`: \`subscriptions: [{ protocol: 'lambda', endpoint: 'AlertHandlerFn' }]\` (\`endpoint\` = id da Fn.Lambda, ou \`fn.arn\` se a Lambda está na mesma stack) — o synth cria a Subscription + a Lambda::Permission que autoriza o SNS. Não é preciso (nem existe) API Gateway para isso: um cenário de monitoramento (alarmes/dashboard/SNS/Lambda-de-alerta) NÃO tem HTTP — NÃO gere \`Fn.ApiGateway\`.
 
 ### Monitoring.Dashboard — CloudWatch Dashboard
 \`\`\`typescript
@@ -833,14 +833,15 @@ export default stack;
 
 **stacks/compute/api-stack.ts** — Lambdas CRUD com VPC + Policy IAM
 \`\`\`typescript
-import { Stack, Fn, Policy } from '@iacmp/core';
+import { Stack, Fn, Policy, ref } from '@iacmp/core';
 const stack = new Stack('app-api');
 const vpcConfig = {
   vpcId: 'AppVpc',
   subnetIds: ['PrivateSubnet1', 'PrivateSubnet2'],
   securityGroupIds: ['LambdaSG'],
 };
-const dbEnv = { DB_HOST: 'AppDB.Endpoint', DB_PORT: 'AppDB.Port', DB_PASSWORD: 'AppDB.Password', DB_USER: 'dbadmin', DB_NAME: 'postgres' };
+// AppDB está em OUTRA stack → referência cross-stack via ref()
+const dbEnv = { DB_HOST: ref('AppDB', 'Endpoint'), DB_PORT: ref('AppDB', 'Port'), DB_PASSWORD: ref('AppDB', 'Password'), DB_USER: 'dbadmin', DB_NAME: 'postgres' };
 new Fn.Lambda(stack, 'ListItemsFn',   { runtime: 'nodejs20', handler: 'dist/listItems.handler',   code: '.', environment: dbEnv, ...vpcConfig });
 new Fn.Lambda(stack, 'GetItemFn',     { runtime: 'nodejs20', handler: 'dist/getItem.handler',     code: '.', environment: dbEnv, ...vpcConfig });
 new Fn.Lambda(stack, 'CreateItemFn',  { runtime: 'nodejs20', handler: 'dist/createItem.handler',  code: '.', environment: dbEnv, ...vpcConfig });
