@@ -61,7 +61,7 @@ describe('buildModel — construção do modelo C4 a partir de uma Stack', () =>
     expect(node.id).toMatch(/^[A-Za-z0-9_]+$/);
     expect(node.label).toBe('Assets');
     expect(node.constructType).toBe('Storage.Bucket');
-    expect(node.technology).toBe('Object Storage');
+    expect(node.technology).toBe('S3 Bucket');
     // props vêm direto do construct
     expect(node.props).toMatchObject({ versioning: true, publicAccess: false });
   });
@@ -100,7 +100,7 @@ describe('buildModel — construção do modelo C4 a partir de uma Stack', () =>
     expect(node.technology).toBe('Virtual Network');
   });
 
-  test('describeProps para Lambda inclui runtime, memory e handler (technology Serverless)', () => {
+  test('describeProps para Lambda inclui runtime, memory e handler (technology Lambda Function)', () => {
     const stack = new Stack('s');
     new Fn.Lambda(stack, 'Fn1', {
       runtime: 'nodejs20',
@@ -113,7 +113,7 @@ describe('buildModel — construção do modelo C4 a partir de uma Stack', () =>
     const node = findNode(model, 'Fn1')!;
 
     expect(node.description).toBe('runtime: nodejs20, memory: 512MB, handler: i.h');
-    expect(node.technology).toBe('Serverless');
+    expect(node.technology).toBe('Lambda Function');
   });
 
   test('describeProps para Database.SQL inclui engine, Multi-AZ e size', () => {
@@ -128,7 +128,7 @@ describe('buildModel — construção do modelo C4 a partir de uma Stack', () =>
     const node = findNode(model, 'Db')!;
 
     expect(node.description).toBe('engine: postgres, Multi-AZ, size: db.t3.medium');
-    expect(node.technology).toBe('Relational DB');
+    expect(node.technology).toBe('RDS');
   });
 
   test('describeProps para Database.SQL sem multiAz omite o "Multi-AZ"', () => {
@@ -523,7 +523,7 @@ describe('renderStructurizr — serialização DSL', () => {
     expect(out).toContain('group "main" {');
     expect(out).toContain('main_Vpc = container "Vpc" "cidr: 10.0.0.0/16, maxAzs: 2" "Virtual Network" {');
     expect(out).toContain('tags "Amazon Web Services - VPC Virtual private cloud VPC"');
-    expect(out).toContain('main_Assets = container "Assets" "versioning: on, private" "Object Storage" {');
+    expect(out).toContain('main_Assets = container "Assets" "versioning: on, private" "S3 Bucket" {');
     expect(out).toContain('tags "Amazon Web Services - Simple Storage Service"');
   });
 
@@ -560,7 +560,7 @@ describe('renderStructurizr — serialização DSL', () => {
     new Storage.Bucket(stack, 'Assets', { versioning: false, publicAccess: false });
     const out = renderStructurizr(buildModel('p', 'azure', 'eastus', [{ name: 'main', stack }]));
 
-    expect(out).toContain('tags "Microsoft Azure - Storage Accounts"');
+    expect(out).toContain('tags "Microsoft Azure - Blob Block"');
     expect(out).toContain('theme "https://static.structurizr.com/themes/microsoft-azure-2023.01.24/theme.json"');
   });
 
