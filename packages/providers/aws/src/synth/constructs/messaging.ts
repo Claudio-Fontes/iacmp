@@ -90,7 +90,7 @@ export function synthMessaging(
               Action: 'lambda:InvokeFunction',
               FunctionName: endpoint,
               Principal: 'sns.amazonaws.com',
-              SourceArn: { Ref: logicalId },
+              SourceArn: resourceRef(logicalId, 'Id'),
             },
           }]);
         }

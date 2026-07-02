@@ -10,6 +10,7 @@ import { type CloudFormationResource, type CloudFormationTemplate, type SynthCon
 export type { CloudFormationResource, CloudFormationTemplate, SynthContext } from './types';
 import { validateResourceReferences, validateNoNullValues } from './validation';
 import type { ResourceNode, StackExport, StackGraph } from './graph';
+import { resourceRef } from './graph';
 import { emitCloudFormation } from './emit/cloudformation';
 import { synthMonitoring } from './constructs/monitoring';
 import { synthWorkflow } from './constructs/workflow';
@@ -141,21 +142,21 @@ export function synthesize(stack: Stack, allStacks?: Stack[], profile: Environme
       // harness de teste lendo via describe-stacks) referenciar essa VPC pelo
       // ID real em vez de depender da VPC default da conta.
       outputs[`${logicalId}VpcId`] = {
-        Value: { Ref: logicalId },
+        Value: resourceRef(logicalId, 'Id'),
         Export: { Name: `${stack.name}-${construct.id}-VpcId` },
       };
     }
     if (construct.type === 'Network.Subnet') {
       const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
       outputs[`${logicalId}SubnetId`] = {
-        Value: { Ref: logicalId },
+        Value: resourceRef(logicalId, 'Id'),
         Export: { Name: `${stack.name}-${construct.id}-SubnetId` },
       };
     }
     if (construct.type === 'Network.SecurityGroup') {
       const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
       outputs[`${logicalId}GroupId`] = {
-        Value: { 'Fn::GetAtt': [logicalId, 'GroupId'] },
+        Value: resourceRef(logicalId, 'GroupId'),
         Export: { Name: `${stack.name}-${construct.id}-GroupId` },
       };
     }
@@ -163,7 +164,7 @@ export function synthesize(stack: Stack, allStacks?: Stack[], profile: Environme
       // Ref de AWS::SecretsManager::Secret retorna o ARN — exporta para cross-stack.
       const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
       outputs[`${logicalId}SecretArn`] = {
-        Value: { Ref: logicalId },
+        Value: resourceRef(logicalId, 'Id'),
         Export: { Name: `${stack.name}-${construct.id}-SecretArn` },
       };
     }
@@ -171,11 +172,11 @@ export function synthesize(stack: Stack, allStacks?: Stack[], profile: Environme
       // Nome (Ref) e ARN — para cross-stack (env var BUCKET, policy resources).
       const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
       outputs[`${logicalId}Name`] = {
-        Value: { Ref: logicalId },
+        Value: resourceRef(logicalId, 'Id'),
         Export: { Name: `${stack.name}-${construct.id}-Name` },
       };
       outputs[`${logicalId}Arn`] = {
-        Value: { 'Fn::GetAtt': [logicalId, 'Arn'] },
+        Value: resourceRef(logicalId, 'Arn'),
         Export: { Name: `${stack.name}-${construct.id}-Arn` },
       };
     }
@@ -183,12 +184,12 @@ export function synthesize(stack: Stack, allStacks?: Stack[], profile: Environme
       // ARN (+ URL para fila) — para cross-stack (eventSources, subscriptions, policies).
       const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
       outputs[`${logicalId}Arn`] = {
-        Value: { 'Fn::GetAtt': [logicalId, construct.type === 'Messaging.Topic' ? 'TopicArn' : 'Arn'] },
+        Value: resourceRef(logicalId, construct.type === 'Messaging.Topic' ? 'TopicArn' : 'Arn'),
         Export: { Name: `${stack.name}-${construct.id}-Arn` },
       };
       if (construct.type === 'Messaging.Queue') {
         outputs[`${logicalId}QueueUrl`] = {
-          Value: { Ref: logicalId },
+          Value: resourceRef(logicalId, 'Id'),
           Export: { Name: `${stack.name}-${construct.id}-QueueUrl` },
         };
       }
@@ -197,7 +198,7 @@ export function synthesize(stack: Stack, allStacks?: Stack[], profile: Environme
       // ARN do Kinesis stream — para eventSources e policies (kinesis:PutRecord) cross-stack.
       const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
       outputs[`${logicalId}Arn`] = {
-        Value: { 'Fn::GetAtt': [logicalId, 'Arn'] },
+        Value: resourceRef(logicalId, 'Arn'),
         Export: { Name: `${stack.name}-${construct.id}-Arn` },
       };
     }
@@ -206,7 +207,7 @@ export function synthesize(stack: Stack, allStacks?: Stack[], profile: Environme
       // OUTRA stack referenciar esta Lambda via Fn::ImportValue.
       const lambdaLogicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
       outputs[`${lambdaLogicalId}Arn`] = {
-        Value: { 'Fn::GetAtt': [lambdaLogicalId, 'Arn'] },
+        Value: resourceRef(lambdaLogicalId, 'Arn'),
         Export: { Name: `${stack.name}-${construct.id}-Arn` },
       };
     }
@@ -217,7 +218,7 @@ export function synthesize(stack: Stack, allStacks?: Stack[], profile: Environme
         // importá-la (resolveLambdaRole, caso cross-stack).
         const roleLogicalId = `${construct.id.replace(/[^a-zA-Z0-9]/g, '')}Role`;
         outputs[`${roleLogicalId}RoleArn`] = {
-          Value: { 'Fn::GetAtt': [roleLogicalId, 'Arn'] },
+          Value: resourceRef(roleLogicalId, 'Arn'),
           Export: { Name: `${stack.name}-${roleLogicalId}-RoleArn` },
         };
       }
@@ -229,30 +230,30 @@ export function synthesize(stack: Stack, allStacks?: Stack[], profile: Environme
       const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
       const endpointResource = isAurora ? `${logicalId}Cluster` : logicalId;
       outputs[`${logicalId}Endpoint`] = {
-        Value: { 'Fn::GetAtt': [endpointResource, 'Endpoint.Address'] },
+        Value: resourceRef(endpointResource, 'Endpoint.Address'),
         Export: { Name: `${stack.name}-${construct.id}-Endpoint` },
       };
       outputs[`${logicalId}Port`] = {
-        Value: { 'Fn::GetAtt': [endpointResource, 'Endpoint.Port'] },
+        Value: resourceRef(endpointResource, 'Endpoint.Port'),
         Export: { Name: `${stack.name}-${construct.id}-Port` },
       };
       outputs[`${logicalId}SecretArn`] = {
-        Value: { Ref: `${logicalId}Secret` },
+        Value: resourceRef(`${logicalId}Secret`, 'Id'),
         Export: { Name: `${stack.name}-${construct.id}-SecretArn` },
       };
     }
     if (construct.type === 'Database.DocumentDB') {
       const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
       outputs[`${logicalId}Endpoint`] = {
-        Value: { 'Fn::GetAtt': [`${logicalId}Cluster`, 'Endpoint'] },
+        Value: resourceRef(`${logicalId}Cluster`, 'Endpoint'),
         Export: { Name: `${stack.name}-${construct.id}-Endpoint` },
       };
       outputs[`${logicalId}Port`] = {
-        Value: { 'Fn::GetAtt': [`${logicalId}Cluster`, 'Port'] },
+        Value: resourceRef(`${logicalId}Cluster`, 'Port'),
         Export: { Name: `${stack.name}-${construct.id}-Port` },
       };
       outputs[`${logicalId}SecretArn`] = {
-        Value: { Ref: `${logicalId}Secret` },
+        Value: resourceRef(`${logicalId}Secret`, 'Id'),
         Export: { Name: `${stack.name}-${construct.id}-SecretArn` },
       };
     }
@@ -262,11 +263,11 @@ export function synthesize(stack: Stack, allStacks?: Stack[], profile: Environme
       // primary endpoint em PrimaryEndPoint.Address/Port.
       const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
       outputs[`${logicalId}Endpoint`] = {
-        Value: { 'Fn::GetAtt': [logicalId, 'PrimaryEndPoint.Address'] },
+        Value: resourceRef(logicalId, 'PrimaryEndPoint.Address'),
         Export: { Name: `${stack.name}-${construct.id}-Endpoint` },
       };
       outputs[`${logicalId}Port`] = {
-        Value: { 'Fn::GetAtt': [logicalId, 'PrimaryEndPoint.Port'] },
+        Value: resourceRef(logicalId, 'PrimaryEndPoint.Port'),
         Export: { Name: `${stack.name}-${construct.id}-Port` },
       };
     }
@@ -274,7 +275,7 @@ export function synthesize(stack: Stack, allStacks?: Stack[], profile: Environme
       // Exporta o ARN do WebACL pra um Fn.ApiGateway em OUTRA stack associar (wafAclId).
       const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
       outputs[`${logicalId}Arn`] = {
-        Value: { 'Fn::GetAtt': [logicalId, 'Arn'] },
+        Value: resourceRef(logicalId, 'Arn'),
         Export: { Name: `${stack.name}-${construct.id}-Arn` },
       };
     }
@@ -286,7 +287,7 @@ export function synthesize(stack: Stack, allStacks?: Stack[], profile: Environme
         const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
         const tgLogicalId = `${logicalId}TG${tgs[0].name.replace(/[^a-zA-Z0-9]/g, '')}`;
         outputs[`${logicalId}TargetGroupArn`] = {
-          Value: { Ref: tgLogicalId },
+          Value: resourceRef(tgLogicalId, 'Id'),
           Export: { Name: `${stack.name}-${construct.id}-TargetGroupArn` },
         };
       }

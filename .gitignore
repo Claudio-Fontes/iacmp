@@ -29,3 +29,4 @@ Thumbs.db
 
 # diretorio de testes locais — nao commitar
 tmp/
+.claude/worktrees/

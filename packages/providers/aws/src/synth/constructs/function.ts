@@ -12,6 +12,7 @@ import {
   resolveEnvVarValue,
   resolveRef,
 } from '../resolvers';
+import { resourceRef, importRef, subRef } from '../graph';
 
 export function synthFunction(
   construct: BaseConstruct,
@@ -70,7 +71,7 @@ export function synthFunction(
             Type: 'AWS::Lambda::EventSourceMapping',
             Properties: {
               EventSourceArn: resolveQueueArn(es.streamId as string, ctx),
-              FunctionName: { Ref: logicalId },
+              FunctionName: resourceRef(logicalId, 'Id'),
               BatchSize: (es.batchSize as number) ?? 100,
               StartingPosition: (es.startingPosition as string) ?? 'LATEST',
               ...(es.bisectBatchOnFunctionError !== undefined ? { BisectBatchOnFunctionError: es.bisectBatchOnFunctionError } : {}),
@@ -83,7 +84,7 @@ export function synthFunction(
           Type: 'AWS::Lambda::EventSourceMapping',
           Properties: {
             EventSourceArn: resolveQueueArn(es.queueId as string, ctx),
-            FunctionName: { Ref: logicalId },
+            FunctionName: resourceRef(logicalId, 'Id'),
             BatchSize: (es.batchSize as number) ?? 10,
             // BisectBatchOnFunctionError NÃO é suportado para SQS (só Kinesis/DynamoDB
             // streams) — ignorado de propósito para não quebrar o deploy.
@@ -149,9 +150,9 @@ export function synthFunction(
 
         const resolveResourceRef = (path: string): unknown => {
           const segments = path.split('/').filter(Boolean);
-          if (segments.length === 0) return { 'Fn::GetAtt': [logicalId, 'RootResourceId'] };
+          if (segments.length === 0) return resourceRef(logicalId, 'RootResourceId');
 
-          let parentRef: unknown = { 'Fn::GetAtt': [logicalId, 'RootResourceId'] };
+          let parentRef: unknown = resourceRef(logicalId, 'RootResourceId');
           let cumulative = '';
           for (const seg of segments) {
             cumulative += `/${seg}`;
@@ -160,13 +161,13 @@ export function synthFunction(
               segLogicalId = `${logicalId}Resource${cumulative.replace(/[^a-zA-Z0-9]/g, '')}`;
               entries.push([segLogicalId, {
                 Type: 'AWS::ApiGateway::Resource',
-                Properties: { RestApiId: { Ref: logicalId }, ParentId: parentRef, PathPart: seg },
+                Properties: { RestApiId: resourceRef(logicalId, 'Id'), ParentId: parentRef, PathPart: seg },
               }]);
               resourceIdByPath.set(cumulative, segLogicalId);
             }
-            parentRef = { Ref: segLogicalId };
+            parentRef = resourceRef(segLogicalId, 'Id');
           }
-          return { Ref: resourceIdByPath.get(cumulative)! };
+          return resourceRef(resourceIdByPath.get(cumulative)!, 'Id');
         };
 
         // Um AWS::ApiGateway::Authorizer por Lambda authorizer distinta.
@@ -174,7 +175,7 @@ export function synthFunction(
           entries.push([authLogicalId, {
             Type: 'AWS::ApiGateway::Authorizer',
             Properties: {
-              RestApiId: { Ref: logicalId },
+              RestApiId: resourceRef(logicalId, 'Id'),
               Type: 'REQUEST',
               Name: `${props.name as string}-${la}`,
               AuthorizerUri: buildInvocationUri(la, ctx),
@@ -187,7 +188,7 @@ export function synthFunction(
         for (const r of routes) {
           const path = r.path as string;
           const method = r.method as string;
-          const resourceRef = resolveResourceRef(path);
+          const resourceIdRef = resolveResourceRef(path);
           const methodLogicalId = `${logicalId}${method}${path.replace(/[^a-zA-Z0-9]/g, '')}Method`;
           // Auth por rota (mesma lógica do HTTP): 'NONE' força pública.
           const routeAuthLambda = (r.authType === 'NONE')
@@ -198,11 +199,11 @@ export function synthFunction(
           entries.push([methodLogicalId, {
             Type: 'AWS::ApiGateway::Method',
             Properties: {
-              RestApiId: { Ref: logicalId },
-              ResourceId: resourceRef,
+              RestApiId: resourceRef(logicalId, 'Id'),
+              ResourceId: resourceIdRef,
               HttpMethod: method,
               AuthorizationType: routeAuthId ? 'CUSTOM' : 'NONE',
-              ...(routeAuthId ? { AuthorizerId: { Ref: routeAuthId } } : {}),
+              ...(routeAuthId ? { AuthorizerId: resourceRef(routeAuthId, 'Id') } : {}),
               ...(r.lambdaId ? {
                 Integration: {
                   Type: 'AWS_PROXY',
@@ -216,18 +217,18 @@ export function synthFunction(
 
           if (props.cors) {
             const corsKey = path;
-            if (!corsResourceRefs.has(corsKey)) corsResourceRefs.set(corsKey, resourceRef);
+            if (!corsResourceRefs.has(corsKey)) corsResourceRefs.set(corsKey, resourceIdRef);
           }
         }
 
         // OPTIONS+MOCK por resource único que tenha rota com CORS habilitado.
-        for (const [path, resourceRef] of corsResourceRefs) {
+        for (const [path, resourceIdRef] of corsResourceRefs) {
           const optionsId = `${logicalId}Options${path.replace(/[^a-zA-Z0-9]/g, '')}Method`;
           entries.push([optionsId, {
             Type: 'AWS::ApiGateway::Method',
             Properties: {
-              RestApiId: { Ref: logicalId },
-              ResourceId: resourceRef,
+              RestApiId: resourceRef(logicalId, 'Id'),
+              ResourceId: resourceIdRef,
               HttpMethod: 'OPTIONS',
               AuthorizationType: 'NONE',
               Integration: {
@@ -270,14 +271,14 @@ export function synthFunction(
         entries.push([deploymentId, {
           Type: 'AWS::ApiGateway::Deployment',
           DependsOn: methodLogicalIds,
-          Properties: { RestApiId: { Ref: logicalId } },
+          Properties: { RestApiId: resourceRef(logicalId, 'Id') },
         }]);
 
         entries.push([`${logicalId}Stage`, {
           Type: 'AWS::ApiGateway::Stage',
           Properties: {
-            RestApiId: { Ref: logicalId },
-            DeploymentId: { Ref: deploymentId },
+            RestApiId: resourceRef(logicalId, 'Id'),
+            DeploymentId: resourceRef(deploymentId, 'Id'),
             StageName: stageName,
             ...(props.throttlingBurstLimit ? {
               MethodSettings: [{
@@ -296,14 +297,14 @@ export function synthFunction(
           const wafStack = ctx.registry.get(wafId)?.stackName;
           const wafArn = wafStack
             ? (wafStack === ctx.currentStackName
-                ? { 'Fn::GetAtt': [wafId.replace(/[^a-zA-Z0-9]/g, ''), 'Arn'] }
-                : { 'Fn::ImportValue': `${wafStack}-${wafId}-Arn` })
+                ? resourceRef(wafId.replace(/[^a-zA-Z0-9]/g, ''), 'Arn')
+                : importRef(`${wafStack}-${wafId}-Arn`))
             : wafId; // ARN literal
           entries.push([`${logicalId}WafAssociation`, {
             Type: 'AWS::WAFv2::WebACLAssociation',
             DependsOn: [`${logicalId}Stage`],
             Properties: {
-              ResourceArn: { 'Fn::Sub': [`arn:aws:apigateway:\${AWS::Region}::/restapis/\${ApiId}/stages/${stageName}`, { ApiId: { Ref: logicalId } }] },
+              ResourceArn: subRef(`arn:aws:apigateway:\${AWS::Region}::/restapis/\${ApiId}/stages/${stageName}`, { ApiId: resourceRef(logicalId, 'Id') }),
               WebACLArn: wafArn,
             },
           }]);
@@ -313,7 +314,7 @@ export function synthFunction(
         entries.push([`${logicalId}Stage`, {
           Type: 'AWS::ApiGatewayV2::Stage',
           Properties: {
-            ApiId: { Ref: logicalId },
+            ApiId: resourceRef(logicalId, 'Id'),
             StageName: stageName,
             AutoDeploy: true,
             ...(props.throttlingBurstLimit ? {
@@ -330,7 +331,7 @@ export function synthFunction(
           entries.push([authLogicalId, {
             Type: 'AWS::ApiGatewayV2::Authorizer',
             Properties: {
-              ApiId: { Ref: logicalId },
+              ApiId: resourceRef(logicalId, 'Id'),
               AuthorizerType: 'REQUEST',
               Name: `${props.name as string}-${la}`,
               AuthorizerUri: buildInvocationUri(la, ctx),
@@ -352,12 +353,12 @@ export function synthFunction(
           entries.push([routeId, {
             Type: 'AWS::ApiGatewayV2::Route',
             Properties: {
-              ApiId: { Ref: logicalId },
+              ApiId: resourceRef(logicalId, 'Id'),
               // WEBSOCKET: a RouteKey é só o nome da rota ($connect/$disconnect/$default
               // ou a action). HTTP: '<método> <path>' (ex: 'GET /items').
               RouteKey: apigwType === 'WEBSOCKET' ? (r.path as string) : `${r.method} ${r.path}`,
               ...(r.lambdaId ? { Target: { 'Fn::Sub': `integrations/\${${routeId}Integration}` } } : {}),
-              ...(routeAuthId ? { AuthorizationType: 'CUSTOM', AuthorizerId: { Ref: routeAuthId } } : {}),
+              ...(routeAuthId ? { AuthorizationType: 'CUSTOM', AuthorizerId: resourceRef(routeAuthId, 'Id') } : {}),
             },
           }]);
 
@@ -365,7 +366,7 @@ export function synthFunction(
             entries.push([`${routeId}Integration`, {
               Type: 'AWS::ApiGatewayV2::Integration',
               Properties: {
-                ApiId: { Ref: logicalId },
+                ApiId: resourceRef(logicalId, 'Id'),
                 IntegrationType: 'AWS_PROXY',
                 IntegrationUri: buildInvocationUri(r.lambdaId as string, ctx),
                 // WEBSOCKET exige IntegrationMethod POST e NÃO aceita
@@ -449,7 +450,7 @@ export function synthFunction(
           Type: 'AWS::IAM::InstanceProfile',
           Properties: {
             InstanceProfileName: { 'Fn::Sub': `${attachTo}-profile-\${AWS::StackName}` },
-            Roles: [{ Ref: roleLogicalId }],
+            Roles: [resourceRef(roleLogicalId, 'Id')],
           },
         }]];
       }

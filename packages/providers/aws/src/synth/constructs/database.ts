@@ -1,6 +1,7 @@
 import { BaseConstruct, databaseDefaultsForTier } from '@iacmp/core';
 import type { CloudFormationResource, SynthContext } from '../types';
 import { resolveSubnetId, resolveSecurityGroupId } from '../resolvers';
+import { resourceRef } from '../graph';
 
 const CACHE_NODE_TYPE_MAP: Record<string, string> = {
   small: 'cache.t3.micro',
@@ -65,7 +66,7 @@ export function synthDatabase(
             EngineVersion: auroraEngine.EngineVersion,
             MasterUsername: masterUser,
             MasterUserPassword: { 'Fn::Sub': `{{resolve:secretsmanager:\${${auroraSecretId}}:SecretString:password}}` },
-            DBSubnetGroupName: { Ref: subnetGroupId },
+            DBSubnetGroupName: resourceRef(subnetGroupId, 'Id'),
             StorageEncrypted: (props.storageEncrypted as boolean) ?? true,
             BackupRetentionPeriod: (props.backupRetentionDays as number) ?? 7,
             DeletionProtection: (props.deletionProtection as boolean) ?? false,
@@ -102,7 +103,7 @@ export function synthDatabase(
             Type: 'AWS::RDS::DBInstance',
             DeletionPolicy: deletionPolicy,
             Properties: {
-              DBClusterIdentifier: { Ref: clusterLogicalId },
+              DBClusterIdentifier: resourceRef(clusterLogicalId, 'Id'),
               DBInstanceClass: instanceClass,
               Engine: auroraEngine.Engine,
             },
@@ -173,7 +174,7 @@ export function synthDatabase(
             SubnetIds: sqlSubnetIds.map(id => resolveSubnetId(id, ctx)),
           },
         }]);
-        rdsProps['DBSubnetGroupName'] = { Ref: subnetGroupId };
+        rdsProps['DBSubnetGroupName'] = resourceRef(subnetGroupId, 'Id');
         if (props.securityGroupIds) rdsProps['VPCSecurityGroups'] = (props.securityGroupIds as string[]).map(id => resolveSecurityGroupId(id, ctx));
       }
 
@@ -221,7 +222,7 @@ export function synthDatabase(
             SubnetIds: docDbSubnetIds.map(id => resolveSubnetId(id, ctx)),
           },
         }]);
-        docDbClusterProps['DBSubnetGroupName'] = { Ref: subnetGroupId };
+        docDbClusterProps['DBSubnetGroupName'] = resourceRef(subnetGroupId, 'Id');
         if (props.securityGroupIds) docDbClusterProps['VpcSecurityGroupIds'] = (props.securityGroupIds as string[]).map(id => resolveSecurityGroupId(id, ctx));
       }
 
@@ -234,7 +235,7 @@ export function synthDatabase(
         entries.push([`${logicalId}Instance${i + 1}`, {
           Type: 'AWS::DocDB::DBInstance',
           Properties: {
-            DBClusterIdentifier: { Ref: clusterLogicalId },
+            DBClusterIdentifier: resourceRef(clusterLogicalId, 'Id'),
             DBInstanceClass: (props.instanceType as string) ?? 'db.t3.medium',
             DBInstanceIdentifier: `${construct.id.toLowerCase()}-${i + 1}`,
           },
@@ -306,7 +307,7 @@ export function synthDatabase(
             SubnetIds: redisSubnetIds.map(id => resolveSubnetId(id, ctx)),
           },
         }]);
-        cacheSubnetGroupName = { Ref: subnetGroupId };
+        cacheSubnetGroupName = resourceRef(subnetGroupId, 'Id');
       } else if (props.subnetGroupName) {
         cacheSubnetGroupName = props.subnetGroupName;
       }
@@ -348,7 +349,7 @@ export function synthDatabase(
             SubnetIds: memSubnetIds.map(id => resolveSubnetId(id, ctx)),
           },
         }]);
-        memProps['CacheSubnetGroupName'] = { Ref: subnetGroupId };
+        memProps['CacheSubnetGroupName'] = resourceRef(subnetGroupId, 'Id');
         if (props.securityGroupIds) memProps['VpcSecurityGroupIds'] = (props.securityGroupIds as string[]).map(id => resolveSecurityGroupId(id, ctx));
       } else {
         if (props.subnetGroupName) memProps['CacheSubnetGroupName'] = props.subnetGroupName;

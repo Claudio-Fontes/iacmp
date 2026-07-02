@@ -6,6 +6,7 @@ import {
   resolveSecurityGroupId,
   resolveTargetGroupArn,
 } from '../resolvers';
+import { resourceRef } from '../graph';
 
 function synthesizeVPCChildren(
   logicalId: string,
@@ -25,14 +26,14 @@ function synthesizeVPCChildren(
   resources[igwId] = { Type: 'AWS::EC2::InternetGateway', Properties: { Tags: [{ Key: 'Name', Value: igwId }] } };
   resources[`${igwId}Attachment`] = {
     Type: 'AWS::EC2::VPCGatewayAttachment',
-    Properties: { VpcId: { Ref: logicalId }, InternetGatewayId: { Ref: igwId } },
+    Properties: { VpcId: resourceRef(logicalId, 'Id'), InternetGatewayId: resourceRef(igwId, 'Id') },
   };
 
   const pubRTId = `${logicalId}PublicRT`;
-  resources[pubRTId] = { Type: 'AWS::EC2::RouteTable', Properties: { VpcId: { Ref: logicalId }, Tags: [{ Key: 'Name', Value: pubRTId }] } };
+  resources[pubRTId] = { Type: 'AWS::EC2::RouteTable', Properties: { VpcId: resourceRef(logicalId, 'Id'), Tags: [{ Key: 'Name', Value: pubRTId }] } };
   resources[`${pubRTId}DefaultRoute`] = {
     Type: 'AWS::EC2::Route',
-    Properties: { RouteTableId: { Ref: pubRTId }, DestinationCidrBlock: '0.0.0.0/0', GatewayId: { Ref: igwId } },
+    Properties: { RouteTableId: resourceRef(pubRTId, 'Id'), DestinationCidrBlock: '0.0.0.0/0', GatewayId: resourceRef(igwId, 'Id') },
   };
 
   azLetters.forEach((az, i) => {
@@ -41,7 +42,7 @@ function synthesizeVPCChildren(
     resources[pubSubnetId] = {
       Type: 'AWS::EC2::Subnet',
       Properties: {
-        VpcId: { Ref: logicalId },
+        VpcId: resourceRef(logicalId, 'Id'),
         CidrBlock: `${cidrBase}.${i * 2}.0/24`,
         AvailabilityZone: { 'Fn::Select': [i, { 'Fn::GetAZs': '' }] },
         MapPublicIpOnLaunch: true,
@@ -50,12 +51,12 @@ function synthesizeVPCChildren(
     };
     resources[`${pubSubnetId}RTAssoc`] = {
       Type: 'AWS::EC2::SubnetRouteTableAssociation',
-      Properties: { SubnetId: { Ref: pubSubnetId }, RouteTableId: { Ref: pubRTId } },
+      Properties: { SubnetId: resourceRef(pubSubnetId, 'Id'), RouteTableId: resourceRef(pubRTId, 'Id') },
     };
     resources[privSubnetId] = {
       Type: 'AWS::EC2::Subnet',
       Properties: {
-        VpcId: { Ref: logicalId },
+        VpcId: resourceRef(logicalId, 'Id'),
         CidrBlock: `${cidrBase}.${i * 2 + 1}.0/24`,
         AvailabilityZone: { 'Fn::Select': [i, { 'Fn::GetAZs': '' }] },
         Tags: [{ Key: 'Name', Value: privSubnetId }],
@@ -65,11 +66,11 @@ function synthesizeVPCChildren(
     // fora da própria stack (ex: harness de teste lendo via describe-stacks)
     // consegue saber o ID real pra usar em outro construct (EKS, RDS, EC2...).
     outputs[`${pubSubnetId}SubnetId`] = {
-      Value: { Ref: pubSubnetId },
+      Value: resourceRef(pubSubnetId, 'Id'),
       Export: { Name: `${stackName}-${constructId}-Public${az.toUpperCase()}-SubnetId` },
     };
     outputs[`${privSubnetId}SubnetId`] = {
-      Value: { Ref: privSubnetId },
+      Value: resourceRef(privSubnetId, 'Id'),
       Export: { Name: `${stackName}-${constructId}-Private${az.toUpperCase()}-SubnetId` },
     };
   });
@@ -106,19 +107,19 @@ export function synthNetwork(
         vpcEntries.push([igwId, { Type: 'AWS::EC2::InternetGateway', Properties: { Tags: [{ Key: 'Name', Value: igwId }] } }]);
         vpcEntries.push([`${igwId}Attachment`, {
           Type: 'AWS::EC2::VPCGatewayAttachment',
-          Properties: { VpcId: { Ref: logicalId }, InternetGatewayId: { Ref: igwId } },
+          Properties: { VpcId: resourceRef(logicalId, 'Id'), InternetGatewayId: resourceRef(igwId, 'Id') },
         }]);
         const pubRTId = `${logicalId}PublicRT`;
-        vpcEntries.push([pubRTId, { Type: 'AWS::EC2::RouteTable', Properties: { VpcId: { Ref: logicalId }, Tags: [{ Key: 'Name', Value: pubRTId }] } }]);
+        vpcEntries.push([pubRTId, { Type: 'AWS::EC2::RouteTable', Properties: { VpcId: resourceRef(logicalId, 'Id'), Tags: [{ Key: 'Name', Value: pubRTId }] } }]);
         vpcEntries.push([`${pubRTId}DefaultRoute`, {
           Type: 'AWS::EC2::Route',
           DependsOn: [`${igwId}Attachment`],
-          Properties: { RouteTableId: { Ref: pubRTId }, DestinationCidrBlock: '0.0.0.0/0', GatewayId: { Ref: igwId } },
+          Properties: { RouteTableId: resourceRef(pubRTId, 'Id'), DestinationCidrBlock: '0.0.0.0/0', GatewayId: resourceRef(igwId, 'Id') },
         }]);
         publicSubnets.forEach((s, i) => {
           vpcEntries.push([`${logicalId}PublicRTAssoc${i}`, {
             Type: 'AWS::EC2::SubnetRouteTableAssociation',
-            Properties: { SubnetId: { Ref: s.id.replace(/[^a-zA-Z0-9]/g, '') }, RouteTableId: { Ref: pubRTId } },
+            Properties: { SubnetId: resourceRef(s.id.replace(/[^a-zA-Z0-9]/g, ''), 'Id'), RouteTableId: resourceRef(pubRTId, 'Id') },
           }]);
         });
       }
@@ -159,7 +160,7 @@ export function synthNetwork(
           Type: 'AWS::EC2::SubnetRouteTableAssociation',
           Properties: {
             SubnetId: resolveSubnetId(sid, ctx),
-            RouteTableId: { Ref: rtId },
+            RouteTableId: resourceRef(rtId, 'Id'),
           },
         }]);
       });
@@ -171,7 +172,7 @@ export function synthNetwork(
             ServiceName: { 'Fn::Sub': `com.amazonaws.\${AWS::Region}.${svc}` },
             VpcId: resolveVpcId(props.vpcId as string, ctx),
             VpcEndpointType: 'Gateway',
-            RouteTableIds: [{ Ref: rtId }],
+            RouteTableIds: [resourceRef(rtId, 'Id')],
           },
         }]);
       }
@@ -327,12 +328,12 @@ export function synthNetwork(
         const defaultActions = (l.redirectToHttps as boolean)
           ? [{ Type: 'redirect', RedirectConfig: { Protocol: 'HTTPS', Port: '443', StatusCode: 'HTTP_301' } }]
           : defaultTgId
-            ? [{ Type: 'forward', TargetGroupArn: { Ref: defaultTgId } }]
+            ? [{ Type: 'forward', TargetGroupArn: resourceRef(defaultTgId, 'Id') }]
             : [{ Type: 'fixed-response', FixedResponseConfig: { StatusCode: '404', MessageBody: 'Not found', ContentType: 'text/plain' } }];
         entries.push([`${logicalId}Listener${listenerIdx}`, {
           Type: 'AWS::ElasticLoadBalancingV2::Listener',
           Properties: {
-            LoadBalancerArn: { Ref: logicalId },
+            LoadBalancerArn: resourceRef(logicalId, 'Id'),
             Port: l.port as number,
             Protocol: l.protocol as string,
             ...(l.certificateArn ? { Certificates: [{ CertificateArn: l.certificateArn }] } : {}),
@@ -373,7 +374,7 @@ export function synthNetwork(
           entries.push([`${bucketRef}PolicyCDN${logicalId}`, {
             Type: 'AWS::S3::BucketPolicy',
             Properties: {
-              Bucket: { Ref: bucketRef },
+              Bucket: resourceRef(bucketRef, 'Id'),
               PolicyDocument: {
                 Statement: [{
                   Effect: 'Allow',
@@ -411,10 +412,10 @@ export function synthNetwork(
                 const bucketRef = o.bucketRef as string;
                 return {
                   Id: o.id as string,
-                  DomainName: { 'Fn::GetAtt': [bucketRef, 'RegionalDomainName'] },
+                  DomainName: resourceRef(bucketRef, 'RegionalDomainName'),
                   OriginPath: (o.path as string) ?? '',
                   S3OriginConfig: { OriginAccessIdentity: '' },
-                  OriginAccessControlId: { Ref: `${logicalId}OAC${bucketRef}` },
+                  OriginAccessControlId: resourceRef(`${logicalId}OAC${bucketRef}`, 'Id'),
                 };
               }
               return {
@@ -471,7 +472,7 @@ export function synthNetwork(
         entries.push([recId, {
           Type: 'AWS::Route53::RecordSet',
           Properties: {
-            HostedZoneId: { Ref: hostedZoneId },
+            HostedZoneId: resourceRef(hostedZoneId, 'Id'),
             Name: r.name as string,
             Type: r.type as string,
             TTL: String(r.ttl ?? 300),

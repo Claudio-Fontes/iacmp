@@ -8,6 +8,7 @@ import {
   resolveTargetGroupArn,
   resolveRef,
 } from '../resolvers';
+import { resourceRef } from '../graph';
 
 const AMI_MAP: Record<string, string> = {
   'ubuntu': '{{resolve:ssm:/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id}}',
@@ -65,8 +66,8 @@ export function synthCompute(
         Type: 'AWS::AutoScaling::AutoScalingGroup',
         Properties: {
           LaunchTemplate: {
-            LaunchTemplateId: { Ref: ltId },
-            Version: { 'Fn::GetAtt': [ltId, 'LatestVersionNumber'] },
+            LaunchTemplateId: resourceRef(ltId, 'Id'),
+            Version: resourceRef(ltId, 'LatestVersionNumber'),
           },
           MinSize: String(props.minCapacity ?? 1),
           MaxSize: String(props.maxCapacity ?? 3),
@@ -84,7 +85,7 @@ export function synthCompute(
         entries.push([spId, {
           Type: 'AWS::AutoScaling::ScalingPolicy',
           Properties: {
-            AutoScalingGroupName: { Ref: asgId },
+            AutoScalingGroupName: resourceRef(asgId, 'Id'),
             PolicyType: 'TargetTrackingScaling',
             TargetTrackingConfiguration: {
               PredefinedMetricSpecification: { PredefinedMetricType: 'ASGAverageCPUUtilization' },
@@ -131,7 +132,7 @@ export function synthCompute(
             RequiresCompatibilities: ['FARGATE'],
             Cpu: String(props.cpu ?? 256),
             Memory: String(props.memory ?? 512),
-            ExecutionRoleArn: { 'Fn::GetAtt': [executionRoleLogicalId, 'Arn'] },
+            ExecutionRoleArn: resourceRef(executionRoleLogicalId, 'Arn'),
             ContainerDefinitions: [{
               Name: construct.id,
               Image: props.image as string,
@@ -158,8 +159,8 @@ export function synthCompute(
         const hasLb = props.targetGroupArn != null;
         const serviceProps: Record<string, unknown> = {
           ServiceName: construct.id,
-          Cluster: { Ref: clusterLogicalId },
-          TaskDefinition: { Ref: tdLogicalId },
+          Cluster: resourceRef(clusterLogicalId, 'Id'),
+          TaskDefinition: resourceRef(tdLogicalId, 'Id'),
           DesiredCount: props.desiredCount ?? 1,
           LaunchType: 'FARGATE',
           NetworkConfiguration: {
@@ -222,7 +223,7 @@ export function synthCompute(
             Properties: {
               PolicyName: `${construct.id}-cpu-scaling`,
               PolicyType: 'TargetTrackingScaling',
-              ScalingTargetId: { Ref: targetLogicalId },
+              ScalingTargetId: resourceRef(targetLogicalId, 'Id'),
               TargetTrackingScalingPolicyConfiguration: {
                 PredefinedMetricSpecification: { PredefinedMetricType: 'ECSServiceAverageCPUUtilization' },
                 TargetValue: (props.cpuTargetPercent as number) ?? 50,
@@ -269,14 +270,14 @@ export function synthCompute(
               EndpointPrivateAccess: (props.privateCluster as boolean) ?? false,
               EndpointPublicAccess: !(props.privateCluster as boolean),
             },
-            RoleArn: { 'Fn::GetAtt': [clusterRoleLogicalId, 'Arn'] },
+            RoleArn: resourceRef(clusterRoleLogicalId, 'Arn'),
           },
         }],
         [`${logicalId}NodeGroup`, {
           Type: 'AWS::EKS::Nodegroup',
           DependsOn: [logicalId],
           Properties: {
-            ClusterName: { Ref: logicalId },
+            ClusterName: resourceRef(logicalId, 'Id'),
             NodegroupName: `${construct.id}-ng`,
             ScalingConfig: {
               MinSize: props.minNodes ?? 1,
@@ -284,7 +285,7 @@ export function synthCompute(
               DesiredSize: props.desiredNodes ?? 2,
             },
             InstanceTypes: [K8S_NODE_TYPE_MAP[(props.nodeInstanceType as string) ?? 'medium'] ?? 'm5.large'],
-            NodeRole: { 'Fn::GetAtt': [nodeRoleLogicalId, 'Arn'] },
+            NodeRole: resourceRef(nodeRoleLogicalId, 'Arn'),
             Subnets: subnetIds.map(id => resolveSubnetId(id, ctx)),
           },
         }],
