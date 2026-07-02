@@ -17,7 +17,7 @@ constructs ──► StackGraph (recursos google_*/Microsoft.*) ──► emisso
 
 1. **`@iacmp/model`**: mover `graph.ts` (ResourceRef/ImportRef/SubRef/StackGraph) de `providers/aws` para um pacote neutro — pré-requisito para grafos não-AWS
 2. **GCP**: `buildGcpGraph(stack)` — mapeamentos `construct → recursos google_*` produzindo `StackGraph`; o `emitTerraform` (já existente, generalizado para tipos não-AWS) serializa. As decisões semânticas do `gcp-terraform.ts` atual são a especificação de partida.
-3. **Azure**: decisão em aberto — Bicep é formato texto, não encaixa no `emitTerraform`; precisará de `emitBicep(graph)` próprio. Avaliar se vale a pena vs manter o emissor direto (Azure segue sem validação real; decidir só quando houver demanda).
+3. **Azure**: decisão em aberto — Bicep é formato texto, não encaixa no `emitTerraform`; precisará de `emitBicep(graph)` próprio. Avaliar se vale a pena vs manter o emissor direto (Azure segue sem validação real; decidir só quando houver demanda). **Gap conhecido**: `bicep.ts` tem `resolveValue`/`resolveRef` (resolução de `Ref` tipadas do P1) escritos mas NÃO ligados ao fluxo de síntese — refs tipadas em props (ex: `environment: { X: db.endpoint }`) não são resolvidas pelo emissor Azure hoje.
 4. **Validação**: goldens `.tf.json` GCP + `terraform validate` no CI (padrão da fase B do P3); fase D GCP exige conta Google (pendência: usuário ainda não confirmou ter conta GCP para deploy real).
 
 ## Critério de troca (por provider)
