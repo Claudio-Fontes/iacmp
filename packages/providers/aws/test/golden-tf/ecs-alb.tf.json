@@ -1,0 +1,280 @@
+{
+  "terraform": {
+    "required_providers": {
+      "aws": {
+        "source": "hashicorp/aws",
+        "version": "~> 5.0"
+      }
+    }
+  },
+  "provider": {
+    "aws": {
+      "region": "${var.aws_region}"
+    }
+  },
+  "variable": {
+    "aws_region": {
+      "type": "string",
+      "default": "us-east-1"
+    }
+  },
+  "data": {
+    "aws_region": {
+      "current": {}
+    }
+  },
+  "resource": {
+    "aws_vpc": {
+      "appvpc": {
+        "cidr_block": "10.0.0.0/16",
+        "enable_dns_hostnames": true,
+        "enable_dns_support": true
+      }
+    },
+    "aws_internet_gateway": {
+      "appvpcigw": {}
+    },
+    "aws_internet_gateway_attachment": {
+      "appvpcigwattachment": {
+        "vpc_id": "${aws_vpc.appvpc.id}",
+        "internet_gateway_id": "${aws_internet_gateway.appvpcigw.id}"
+      }
+    },
+    "aws_route_table": {
+      "appvpcpublicrt": {
+        "vpc_id": "${aws_vpc.appvpc.id}"
+      }
+    },
+    "aws_route": {
+      "appvpcpublicrtdefaultroute": {
+        "route_table_id": "${aws_route_table.appvpcpublicrt.id}",
+        "destination_cidr_block": "0.0.0.0/0",
+        "gateway_id": "${aws_internet_gateway.appvpcigw.id}",
+        "depends_on": [
+          "aws_internet_gateway_attachment.appvpcigwattachment"
+        ]
+      }
+    },
+    "aws_route_table_association": {
+      "appvpcpublicrtassoc0": {
+        "subnet_id": "${aws_subnet.publicsubnet1.id}",
+        "route_table_id": "${aws_route_table.appvpcpublicrt.id}"
+      },
+      "appvpcpublicrtassoc1": {
+        "subnet_id": "${aws_subnet.publicsubnet2.id}",
+        "route_table_id": "${aws_route_table.appvpcpublicrt.id}"
+      }
+    },
+    "aws_subnet": {
+      "publicsubnet1": {
+        "vpc_id": "${aws_vpc.appvpc.id}",
+        "cidr_block": "10.0.1.0/24",
+        "availability_zone": "us-east-1a",
+        "map_public_ip_on_launch": true
+      },
+      "publicsubnet2": {
+        "vpc_id": "${aws_vpc.appvpc.id}",
+        "cidr_block": "10.0.2.0/24",
+        "availability_zone": "us-east-1b",
+        "map_public_ip_on_launch": true
+      }
+    },
+    "aws_security_group": {
+      "albsg": {
+        "description": "ALB security group",
+        "vpc_id": "${aws_vpc.appvpc.id}",
+        "ingress": [
+          {
+            "protocol": "tcp",
+            "from_port": 80,
+            "to_port": 80,
+            "cidr_blocks": [
+              "0.0.0.0/0"
+            ]
+          }
+        ],
+        "egress": [
+          {
+            "protocol": "-1",
+            "cidr_blocks": [
+              "0.0.0.0/0"
+            ],
+            "description": "Allow all egress"
+          }
+        ]
+      },
+      "appsg": {
+        "description": "App security group",
+        "vpc_id": "${aws_vpc.appvpc.id}",
+        "ingress": [
+          {
+            "protocol": "tcp",
+            "from_port": 8080,
+            "to_port": 8080,
+            "security_groups": [
+              "${aws_security_group.albsg.id}"
+            ]
+          }
+        ],
+        "egress": [
+          {
+            "protocol": "-1",
+            "cidr_blocks": [
+              "0.0.0.0/0"
+            ],
+            "description": "Allow all egress"
+          }
+        ]
+      }
+    },
+    "aws_lb": {
+      "alb": {
+        "name": "Alb",
+        "load_balancer_type": "application",
+        "internal": "internet-facing",
+        "subnets": [
+          "${aws_subnet.publicsubnet1.id}",
+          "${aws_subnet.publicsubnet2.id}"
+        ],
+        "security_groups": [
+          "${aws_security_group.albsg.id}"
+        ],
+        "access_logs": [
+          {
+            "Key": "deletion_protection.enabled",
+            "Value": "false"
+          }
+        ]
+      }
+    },
+    "aws_lb_target_group": {
+      "albtgapptg": {
+        "name": "app-tg",
+        "port": 8080,
+        "protocol": "HTTP",
+        "vpc_id": "${aws_vpc.appvpc.id}",
+        "health_check_path": "/health",
+        "health_check_port": "8080",
+        "target_type": "ip"
+      }
+    },
+    "aws_lb_listener": {
+      "alblistener1": {
+        "load_balancer_arn": "${aws_lb.alb.id}",
+        "port": 80,
+        "protocol": "HTTP",
+        "default_action": [
+          {
+            "type": "forward",
+            "target_group_arn": "${aws_lb_target_group.albtgapptg.id}"
+          }
+        ]
+      }
+    },
+    "aws_cloudwatch_log_group": {
+      "apploggroup": {
+        "name": "/ecs/App",
+        "retention_in_days": 7
+      }
+    },
+    "aws_ecs_cluster": {
+      "appcluster": {
+        "name": "App"
+      }
+    },
+    "aws_iam_role": {
+      "appexecutionrole": {
+        "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"ecs-tasks.amazonaws.com\"},\"Action\":\"sts:AssumeRole\"}]}",
+        "managed_policy_arns": [
+          "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+        ]
+      }
+    },
+    "aws_ecs_task_definition": {
+      "apptaskdef": {
+        "family": "App",
+        "network_mode": "awsvpc",
+        "requires_compatibilities": [
+          "FARGATE"
+        ],
+        "cpu": "256",
+        "memory": "512",
+        "execution_role_arn": "${aws_iam_role.appexecutionrole.arn}",
+        "container_definitions": "[{\"Name\":\"App\",\"Image\":\"nginx:latest\",\"PortMappings\":[],\"Environment\":[],\"LogConfiguration\":{\"LogDriver\":\"awslogs\",\"Options\":{\"awslogs-group\":\"/ecs/App\",\"awslogs-region\":\"${data.aws_region.current.name}\",\"awslogs-stream-prefix\":\"ecs\"}}}]"
+      }
+    },
+    "aws_ecs_service": {
+      "appservice": {
+        "name": "App",
+        "cluster": "${aws_ecs_cluster.appcluster.id}",
+        "task_definition": "${aws_ecs_task_definition.apptaskdef.arn}",
+        "desired_count": 1,
+        "launch_type": "FARGATE",
+        "network_configuration": {
+          "subnets": [
+            "${aws_subnet.publicsubnet1.id}",
+            "${aws_subnet.publicsubnet2.id}"
+          ],
+          "security_groups": [
+            "${aws_security_group.appsg.id}"
+          ],
+          "assign_public_ip": false
+        },
+        "depends_on": [
+          "aws_cloudwatch_log_group.apploggroup"
+        ]
+      }
+    },
+    "aws_appautoscaling_target": {
+      "appscalabletarget": {
+        "min_capacity": 1,
+        "max_capacity": 4,
+        "resource_id": "service/App/App",
+        "scalable_dimension": "ecs:service:DesiredCount",
+        "service_namespace": "ecs",
+        "depends_on": [
+          "aws_ecs_service.appservice"
+        ]
+      }
+    },
+    "aws_appautoscaling_policy": {
+      "appscalingpolicy": {
+        "name": "App-cpu-scaling",
+        "policy_type": "TargetTrackingScaling",
+        "resource_id": "${aws_appautoscaling_target.appscalabletarget.id}",
+        "target_tracking_scaling_policy_configuration": {
+          "PredefinedMetricSpecification": {
+            "PredefinedMetricType": "ECSServiceAverageCPUUtilization"
+          },
+          "TargetValue": 50
+        }
+      }
+    }
+  },
+  "output": {
+    "AppVpcVpcId": {
+      "value": "${aws_vpc.appvpc.id}",
+      "description": "ecs-alb-AppVpc-VpcId"
+    },
+    "PublicSubnet1SubnetId": {
+      "value": "${aws_subnet.publicsubnet1.id}",
+      "description": "ecs-alb-PublicSubnet1-SubnetId"
+    },
+    "PublicSubnet2SubnetId": {
+      "value": "${aws_subnet.publicsubnet2.id}",
+      "description": "ecs-alb-PublicSubnet2-SubnetId"
+    },
+    "AlbSgGroupId": {
+      "value": "${aws_security_group.albsg.id}",
+      "description": "ecs-alb-AlbSg-GroupId"
+    },
+    "AppSgGroupId": {
+      "value": "${aws_security_group.appsg.id}",
+      "description": "ecs-alb-AppSg-GroupId"
+    },
+    "AlbTargetGroupArn": {
+      "value": "${aws_lb_target_group.albtgapptg.id}",
+      "description": "ecs-alb-Alb-TargetGroupArn"
+    }
+  }
+}

@@ -1,0 +1,227 @@
+{
+  "ws-data": {
+    "terraform": {
+      "required_providers": {
+        "aws": {
+          "source": "hashicorp/aws",
+          "version": "~> 5.0"
+        }
+      }
+    },
+    "provider": {
+      "aws": {
+        "region": "${var.aws_region}"
+      }
+    },
+    "variable": {
+      "aws_region": {
+        "type": "string",
+        "default": "us-east-1"
+      }
+    },
+    "resource": {
+      "aws_dynamodb_table": {
+        "connections": {
+          "name": "Connections",
+          "billing_mode": "PAY_PER_REQUEST",
+          "attribute": [
+            {
+              "name": "connectionId",
+              "type": "S"
+            }
+          ],
+          "hash_key": "connectionId",
+          "point_in_time_recovery": {
+            "enabled": true
+          },
+          "lifecycle": {
+            "prevent_destroy": true
+          }
+        }
+      }
+    }
+  },
+  "ws-api": {
+    "terraform": {
+      "required_providers": {
+        "aws": {
+          "source": "hashicorp/aws",
+          "version": "~> 5.0"
+        }
+      }
+    },
+    "provider": {
+      "aws": {
+        "region": "${var.aws_region}"
+      }
+    },
+    "variable": {
+      "aws_region": {
+        "type": "string",
+        "default": "us-east-1"
+      },
+      "ws_data_connections_name": {
+        "type": "string"
+      }
+    },
+    "data": {
+      "aws_region": {
+        "current": {}
+      },
+      "aws_caller_identity": {
+        "current": {}
+      }
+    },
+    "resource": {
+      "aws_iam_role": {
+        "connectfndefaultrole": {
+          "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"lambda.amazonaws.com\"},\"Action\":\"sts:AssumeRole\"}]}",
+          "managed_policy_arns": [
+            "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+          ]
+        },
+        "disconnectfndefaultrole": {
+          "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"lambda.amazonaws.com\"},\"Action\":\"sts:AssumeRole\"}]}",
+          "managed_policy_arns": [
+            "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+          ]
+        },
+        "defaultfndefaultrole": {
+          "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"lambda.amazonaws.com\"},\"Action\":\"sts:AssumeRole\"}]}",
+          "managed_policy_arns": [
+            "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+          ]
+        }
+      },
+      "aws_lambda_function": {
+        "connectfn": {
+          "function_name": "ConnectFn",
+          "runtime": "nodejs20.x",
+          "handler": "connect.handler",
+          "filename": "dist/",
+          "memory_size": 128,
+          "timeout": 30,
+          "role": "${aws_iam_role.connectfndefaultrole.arn}",
+          "environment": {
+            "variables": {
+              "TABLE_NAME": "${var.ws_data_connections_name}"
+            }
+          }
+        },
+        "disconnectfn": {
+          "function_name": "DisconnectFn",
+          "runtime": "nodejs20.x",
+          "handler": "disconnect.handler",
+          "filename": "dist/",
+          "memory_size": 128,
+          "timeout": 30,
+          "role": "${aws_iam_role.disconnectfndefaultrole.arn}",
+          "environment": {
+            "variables": {
+              "TABLE_NAME": "${var.ws_data_connections_name}"
+            }
+          }
+        },
+        "defaultfn": {
+          "function_name": "DefaultFn",
+          "runtime": "nodejs20.x",
+          "handler": "default.handler",
+          "filename": "dist/",
+          "memory_size": 128,
+          "timeout": 30,
+          "role": "${aws_iam_role.defaultfndefaultrole.arn}",
+          "environment": {
+            "variables": {
+              "TABLE_NAME": "${var.ws_data_connections_name}"
+            }
+          }
+        }
+      },
+      "aws_apigatewayv2_api": {
+        "wsapi": {
+          "name": "websocket-api",
+          "protocol_type": "WEBSOCKET",
+          "route_selection_expression": "$request.body.action"
+        }
+      },
+      "aws_apigatewayv2_stage": {
+        "wsapistage": {
+          "api_id": "${aws_apigatewayv2_api.wsapi.id}",
+          "name": "$default",
+          "auto_deploy": true
+        }
+      },
+      "aws_apigatewayv2_route": {
+        "wsapianyconnectroute": {
+          "api_id": "${aws_apigatewayv2_api.wsapi.id}",
+          "route_key": "$connect",
+          "target": "integrations/${aws_apigatewayv2_integration.wsapianyconnectrouteintegration.id}"
+        },
+        "wsapianydisconnectroute": {
+          "api_id": "${aws_apigatewayv2_api.wsapi.id}",
+          "route_key": "$disconnect",
+          "target": "integrations/${aws_apigatewayv2_integration.wsapianydisconnectrouteintegration.id}"
+        },
+        "wsapianydefaultroute": {
+          "api_id": "${aws_apigatewayv2_api.wsapi.id}",
+          "route_key": "$default",
+          "target": "integrations/${aws_apigatewayv2_integration.wsapianydefaultrouteintegration.id}"
+        }
+      },
+      "aws_apigatewayv2_integration": {
+        "wsapianyconnectrouteintegration": {
+          "api_id": "${aws_apigatewayv2_api.wsapi.id}",
+          "integration_type": "AWS_PROXY",
+          "integration_uri": "arn:aws:apigateway:${data.aws_region.current.name}:lambda:path/2015-03-31/functions/${aws_lambda_function.connectfn.arn}/invocations",
+          "integration_method": "POST"
+        },
+        "wsapianydisconnectrouteintegration": {
+          "api_id": "${aws_apigatewayv2_api.wsapi.id}",
+          "integration_type": "AWS_PROXY",
+          "integration_uri": "arn:aws:apigateway:${data.aws_region.current.name}:lambda:path/2015-03-31/functions/${aws_lambda_function.disconnectfn.arn}/invocations",
+          "integration_method": "POST"
+        },
+        "wsapianydefaultrouteintegration": {
+          "api_id": "${aws_apigatewayv2_api.wsapi.id}",
+          "integration_type": "AWS_PROXY",
+          "integration_uri": "arn:aws:apigateway:${data.aws_region.current.name}:lambda:path/2015-03-31/functions/${aws_lambda_function.defaultfn.arn}/invocations",
+          "integration_method": "POST"
+        }
+      },
+      "aws_lambda_permission": {
+        "connectfnwsapipermission": {
+          "action": "lambda:InvokeFunction",
+          "function_name": "${aws_lambda_function.connectfn.arn}",
+          "principal": "apigateway.amazonaws.com",
+          "source_arn": "arn:aws:execute-api:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:${aws_apigatewayv2_api.wsapi.id}/*/*"
+        },
+        "disconnectfnwsapipermission": {
+          "action": "lambda:InvokeFunction",
+          "function_name": "${aws_lambda_function.disconnectfn.arn}",
+          "principal": "apigateway.amazonaws.com",
+          "source_arn": "arn:aws:execute-api:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:${aws_apigatewayv2_api.wsapi.id}/*/*"
+        },
+        "defaultfnwsapipermission": {
+          "action": "lambda:InvokeFunction",
+          "function_name": "${aws_lambda_function.defaultfn.arn}",
+          "principal": "apigateway.amazonaws.com",
+          "source_arn": "arn:aws:execute-api:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:${aws_apigatewayv2_api.wsapi.id}/*/*"
+        }
+      }
+    },
+    "output": {
+      "ConnectFnArn": {
+        "value": "${aws_lambda_function.connectfn.arn}",
+        "description": "ws-api-ConnectFn-Arn"
+      },
+      "DisconnectFnArn": {
+        "value": "${aws_lambda_function.disconnectfn.arn}",
+        "description": "ws-api-DisconnectFn-Arn"
+      },
+      "DefaultFnArn": {
+        "value": "${aws_lambda_function.defaultfn.arn}",
+        "description": "ws-api-DefaultFn-Arn"
+      }
+    }
+  }
+}

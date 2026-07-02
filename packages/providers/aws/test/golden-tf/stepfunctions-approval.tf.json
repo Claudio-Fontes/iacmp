@@ -1,0 +1,84 @@
+{
+  "terraform": {
+    "required_providers": {
+      "aws": {
+        "source": "hashicorp/aws",
+        "version": "~> 5.0"
+      }
+    }
+  },
+  "provider": {
+    "aws": {
+      "region": "${var.aws_region}"
+    }
+  },
+  "variable": {
+    "aws_region": {
+      "type": "string",
+      "default": "us-east-1"
+    }
+  },
+  "resource": {
+    "aws_iam_role": {
+      "notifyfndefaultrole": {
+        "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"lambda.amazonaws.com\"},\"Action\":\"sts:AssumeRole\"}]}",
+        "managed_policy_arns": [
+          "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        ]
+      },
+      "actionfndefaultrole": {
+        "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"lambda.amazonaws.com\"},\"Action\":\"sts:AssumeRole\"}]}",
+        "managed_policy_arns": [
+          "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        ]
+      },
+      "approvalflowexecutionrole": {
+        "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"states.amazonaws.com\"},\"Action\":\"sts:AssumeRole\"}]}",
+        "inline_policy": [
+          {
+            "name": "ApprovalFlowDefaultPolicy",
+            "policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"lambda:InvokeFunction\",\"ecs:RunTask\",\"ecs:StopTask\",\"ecs:DescribeTasks\",\"sns:Publish\",\"sqs:SendMessage\",\"events:PutTargets\",\"events:PutRule\",\"events:DescribeRule\",\"iam:PassRole\"],\"Resource\":\"*\"}]}"
+          }
+        ]
+      }
+    },
+    "aws_lambda_function": {
+      "notifyfn": {
+        "function_name": "NotifyFn",
+        "runtime": "nodejs20.x",
+        "handler": "notify.handler",
+        "filename": "dist/",
+        "memory_size": 128,
+        "timeout": 30,
+        "role": "${aws_iam_role.notifyfndefaultrole.arn}"
+      },
+      "actionfn": {
+        "function_name": "ActionFn",
+        "runtime": "nodejs20.x",
+        "handler": "action.handler",
+        "filename": "dist/",
+        "memory_size": 128,
+        "timeout": 30,
+        "role": "${aws_iam_role.actionfndefaultrole.arn}"
+      }
+    },
+    "aws_sfn_state_machine": {
+      "approvalflow": {
+        "name": "ApprovalFlow",
+        "type": "STANDARD",
+        "definition": "{\"Comment\":\"Workflow ApprovalFlow\",\"StartAt\":\"RequestApproval\",\"States\":{\"RequestApproval\":{\"Type\":\"Task\",\"Resource\":\"arn:aws:states:::lambda:invoke.waitForTaskToken\",\"Parameters\":{\"FunctionName\":\"${aws_lambda_function.notifyfn.arn}\",\"Payload\":{\"taskToken.$\":\"$$.Task.Token\",\"input.$\":\"$\"}},\"Next\":\"WaitForApproval\"},\"WaitForApproval\":{\"Type\":\"Wait\",\"Seconds\":3600,\"Next\":\"ExecuteAction\"},\"ExecuteAction\":{\"Type\":\"Task\",\"Resource\":\"${aws_lambda_function.actionfn.arn}\",\"End\":true}}}",
+        "role_arn": "${aws_iam_role.approvalflowexecutionrole.arn}"
+      }
+    }
+  },
+  "output": {
+    "NotifyFnArn": {
+      "value": "${aws_lambda_function.notifyfn.arn}",
+      "description": "stepfunctions-approval-NotifyFn-Arn"
+    },
+    "ActionFnArn": {
+      "value": "${aws_lambda_function.actionfn.arn}",
+      "description": "stepfunctions-approval-ActionFn-Arn"
+    }
+  }
+}

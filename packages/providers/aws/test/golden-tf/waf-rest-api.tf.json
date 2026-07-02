@@ -1,0 +1,182 @@
+{
+  "terraform": {
+    "required_providers": {
+      "aws": {
+        "source": "hashicorp/aws",
+        "version": "~> 5.0"
+      }
+    }
+  },
+  "provider": {
+    "aws": {
+      "region": "${var.aws_region}"
+    }
+  },
+  "variable": {
+    "aws_region": {
+      "type": "string",
+      "default": "us-east-1"
+    }
+  },
+  "data": {
+    "aws_region": {
+      "current": {}
+    },
+    "aws_caller_identity": {
+      "current": {}
+    }
+  },
+  "resource": {
+    "aws_wafv2_web_acl": {
+      "apiwaf": {
+        "name": "ApiWaf",
+        "scope": "REGIONAL",
+        "default_action": {
+          "Allow": {}
+        },
+        "description": "WAF ApiWaf",
+        "rule": [
+          {
+            "Name": "RateLimit",
+            "Priority": 1,
+            "Action": {
+              "Block": {}
+            },
+            "VisibilityConfig": {
+              "SampledRequestsEnabled": true,
+              "CloudWatchMetricsEnabled": true,
+              "MetricName": "RateLimit"
+            },
+            "Statement": {
+              "RateBasedStatement": {
+                "Limit": 1000,
+                "AggregateKeyType": "IP"
+              }
+            }
+          },
+          {
+            "Name": "CommonRules",
+            "Priority": 2,
+            "OverrideAction": {
+              "None": {}
+            },
+            "VisibilityConfig": {
+              "SampledRequestsEnabled": true,
+              "CloudWatchMetricsEnabled": true,
+              "MetricName": "CommonRules"
+            },
+            "Statement": {
+              "ManagedRuleGroupStatement": {
+                "VendorName": "AWS",
+                "Name": "AWSManagedRulesCommonRuleSet"
+              }
+            }
+          }
+        ],
+        "visibility_config": {
+          "SampledRequestsEnabled": true,
+          "CloudWatchMetricsEnabled": true,
+          "MetricName": "ApiWaf"
+        }
+      }
+    },
+    "aws_iam_role": {
+      "apihandlerdefaultrole": {
+        "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"lambda.amazonaws.com\"},\"Action\":\"sts:AssumeRole\"}]}",
+        "managed_policy_arns": [
+          "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        ]
+      }
+    },
+    "aws_lambda_function": {
+      "apihandler": {
+        "function_name": "ApiHandler",
+        "runtime": "nodejs20.x",
+        "handler": "index.handler",
+        "filename": "dist/",
+        "memory_size": 128,
+        "timeout": 30,
+        "role": "${aws_iam_role.apihandlerdefaultrole.arn}"
+      }
+    },
+    "aws_api_gateway_rest_api": {
+      "restapi": {
+        "name": "waf-api"
+      }
+    },
+    "aws_api_gateway_resource": {
+      "restapiresourceitems": {
+        "rest_api_id": "${aws_api_gateway_rest_api.restapi.id}",
+        "parent_id": "${aws_api_gateway_rest_api.restapi.root_resource_id}",
+        "path_part": "items"
+      }
+    },
+    "aws_api_gateway_method": {
+      "restapigetitemsmethod": {
+        "rest_api_id": "${aws_api_gateway_rest_api.restapi.id}",
+        "resource_id": "${aws_api_gateway_resource.restapiresourceitems.id}",
+        "http_method": "GET",
+        "authorization": "NONE",
+        "integration": {
+          "type": "AWS_PROXY",
+          "http_method": "POST",
+          "uri": "arn:aws:apigateway:${data.aws_region.current.name}:lambda:path/2015-03-31/functions/${aws_lambda_function.apihandler.arn}/invocations"
+        }
+      },
+      "restapipostitemsmethod": {
+        "rest_api_id": "${aws_api_gateway_rest_api.restapi.id}",
+        "resource_id": "${aws_api_gateway_resource.restapiresourceitems.id}",
+        "http_method": "POST",
+        "authorization": "NONE",
+        "integration": {
+          "type": "AWS_PROXY",
+          "http_method": "POST",
+          "uri": "arn:aws:apigateway:${data.aws_region.current.name}:lambda:path/2015-03-31/functions/${aws_lambda_function.apihandler.arn}/invocations"
+        }
+      }
+    },
+    "aws_api_gateway_deployment": {
+      "restapideploymente11612c6": {
+        "rest_api_id": "${aws_api_gateway_rest_api.restapi.id}",
+        "depends_on": [
+          "aws_api_gateway_method.restapigetitemsmethod",
+          "aws_api_gateway_method.restapipostitemsmethod"
+        ]
+      }
+    },
+    "aws_api_gateway_stage": {
+      "restapistage": {
+        "rest_api_id": "${aws_api_gateway_rest_api.restapi.id}",
+        "deployment_id": "${aws_api_gateway_deployment.restapideploymente11612c6.id}",
+        "stage_name": "prod"
+      }
+    },
+    "aws_wafv2_web_acl_association": {
+      "restapiwafassociation": {
+        "resource_arn": "arn:aws:apigateway:${data.aws_region.current.name}::/restapis/${aws_api_gateway_rest_api.restapi.id}/stages/prod",
+        "web_acl_arn": "${aws_wafv2_web_acl.apiwaf.arn}",
+        "depends_on": [
+          "aws_api_gateway_stage.restapistage"
+        ]
+      }
+    },
+    "aws_lambda_permission": {
+      "apihandlerrestapipermission": {
+        "action": "lambda:InvokeFunction",
+        "function_name": "${aws_lambda_function.apihandler.arn}",
+        "principal": "apigateway.amazonaws.com",
+        "source_arn": "arn:aws:execute-api:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:${aws_api_gateway_rest_api.restapi.id}/*/*"
+      }
+    }
+  },
+  "output": {
+    "ApiWafArn": {
+      "value": "${aws_wafv2_web_acl.apiwaf.arn}",
+      "description": "waf-rest-api-ApiWaf-Arn"
+    },
+    "ApiHandlerArn": {
+      "value": "${aws_lambda_function.apihandler.arn}",
+      "description": "waf-rest-api-ApiHandler-Arn"
+    }
+  }
+}

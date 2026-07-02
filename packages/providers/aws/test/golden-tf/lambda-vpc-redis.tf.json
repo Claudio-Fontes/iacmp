@@ -1,0 +1,300 @@
+{
+  "lvr-shared": {
+    "terraform": {
+      "required_providers": {
+        "aws": {
+          "source": "hashicorp/aws",
+          "version": "~> 5.0"
+        }
+      }
+    },
+    "provider": {
+      "aws": {
+        "region": "${var.aws_region}"
+      }
+    },
+    "variable": {
+      "aws_region": {
+        "type": "string",
+        "default": "us-east-1"
+      }
+    },
+    "data": {
+      "aws_region": {
+        "current": {}
+      }
+    },
+    "resource": {
+      "aws_vpc": {
+        "appvpc": {
+          "cidr_block": "10.0.0.0/16",
+          "enable_dns_hostnames": true,
+          "enable_dns_support": true
+        }
+      },
+      "aws_subnet": {
+        "privatesubnet1": {
+          "vpc_id": "${aws_vpc.appvpc.id}",
+          "cidr_block": "10.0.1.0/24",
+          "availability_zone": "us-east-1a",
+          "map_public_ip_on_launch": false
+        },
+        "privatesubnet2": {
+          "vpc_id": "${aws_vpc.appvpc.id}",
+          "cidr_block": "10.0.2.0/24",
+          "availability_zone": "us-east-1b",
+          "map_public_ip_on_launch": false
+        }
+      },
+      "aws_security_group": {
+        "lambdasg": {
+          "description": "lambda",
+          "vpc_id": "${aws_vpc.appvpc.id}",
+          "ingress": [],
+          "egress": [
+            {
+              "protocol": "-1",
+              "cidr_blocks": [
+                "0.0.0.0/0"
+              ],
+              "description": "Allow all egress"
+            }
+          ]
+        },
+        "redissg": {
+          "description": "redis",
+          "vpc_id": "${aws_vpc.appvpc.id}",
+          "ingress": [
+            {
+              "protocol": "tcp",
+              "from_port": 6379,
+              "to_port": 6379,
+              "security_groups": [
+                "${aws_security_group.lambdasg.id}"
+              ]
+            }
+          ],
+          "egress": [
+            {
+              "protocol": "-1",
+              "cidr_blocks": [
+                "0.0.0.0/0"
+              ],
+              "description": "Allow all egress"
+            }
+          ]
+        }
+      },
+      "aws_route_table": {
+        "dynamogwroutetable": {
+          "vpc_id": "${aws_vpc.appvpc.id}"
+        }
+      },
+      "aws_route_table_association": {
+        "dynamogwrtassoc0": {
+          "subnet_id": "${aws_subnet.privatesubnet1.id}",
+          "route_table_id": "${aws_route_table.dynamogwroutetable.id}"
+        },
+        "dynamogwrtassoc1": {
+          "subnet_id": "${aws_subnet.privatesubnet2.id}",
+          "route_table_id": "${aws_route_table.dynamogwroutetable.id}"
+        }
+      },
+      "aws_vpc_endpoint": {
+        "dynamogwdynamodbendpoint": {
+          "service_name": "com.amazonaws.${data.aws_region.current.name}.dynamodb",
+          "vpc_id": "${aws_vpc.appvpc.id}",
+          "vpc_endpoint_type": "Gateway",
+          "route_table_ids": [
+            "${aws_route_table.dynamogwroutetable.id}"
+          ]
+        }
+      }
+    },
+    "output": {
+      "AppVpcVpcId": {
+        "value": "${aws_vpc.appvpc.id}",
+        "description": "lvr-shared-AppVpc-VpcId"
+      },
+      "PrivateSubnet1SubnetId": {
+        "value": "${aws_subnet.privatesubnet1.id}",
+        "description": "lvr-shared-PrivateSubnet1-SubnetId"
+      },
+      "PrivateSubnet2SubnetId": {
+        "value": "${aws_subnet.privatesubnet2.id}",
+        "description": "lvr-shared-PrivateSubnet2-SubnetId"
+      },
+      "LambdaSgGroupId": {
+        "value": "${aws_security_group.lambdasg.id}",
+        "description": "lvr-shared-LambdaSg-GroupId"
+      },
+      "RedisSgGroupId": {
+        "value": "${aws_security_group.redissg.id}",
+        "description": "lvr-shared-RedisSg-GroupId"
+      }
+    }
+  },
+  "lvr-services": {
+    "terraform": {
+      "required_providers": {
+        "aws": {
+          "source": "hashicorp/aws",
+          "version": "~> 5.0"
+        }
+      }
+    },
+    "provider": {
+      "aws": {
+        "region": "${var.aws_region}"
+      }
+    },
+    "variable": {
+      "aws_region": {
+        "type": "string",
+        "default": "us-east-1"
+      },
+      "lvr_shared_privatesubnet1_subnetid": {
+        "type": "string"
+      },
+      "lvr_shared_privatesubnet2_subnetid": {
+        "type": "string"
+      }
+    },
+    "resource": {
+      "aws_elasticache_subnet_group": {
+        "cachesubnetgroup": {
+          "description": "Subnet group para Cache",
+          "subnet_ids": [
+            "${var.lvr_shared_privatesubnet1_subnetid}",
+            "${var.lvr_shared_privatesubnet2_subnetid}"
+          ]
+        }
+      },
+      "aws_elasticache_replication_group": {
+        "cache": {
+          "description": "Redis Cache",
+          "replication_group_id": "cache",
+          "node_type": "cache.t3.micro",
+          "engine": "redis",
+          "engine_version": "7.0",
+          "num_cache_clusters": 1,
+          "automatic_failover_enabled": false,
+          "at_rest_encryption_enabled": true,
+          "transit_encryption_enabled": true,
+          "subnet_group_name": "${aws_elasticache_subnet_group.cachesubnetgroup.id}"
+        }
+      },
+      "aws_dynamodb_table": {
+        "sessions": {
+          "name": "Sessions",
+          "billing_mode": "PAY_PER_REQUEST",
+          "attribute": [
+            {
+              "name": "sessionId",
+              "type": "S"
+            }
+          ],
+          "hash_key": "sessionId",
+          "point_in_time_recovery": {
+            "enabled": true
+          },
+          "lifecycle": {
+            "prevent_destroy": true
+          }
+        }
+      }
+    },
+    "output": {
+      "CacheEndpoint": {
+        "value": "${aws_elasticache_replication_group.cache.primary_endpoint_address}",
+        "description": "lvr-services-Cache-Endpoint"
+      },
+      "CachePort": {
+        "value": "${aws_elasticache_replication_group.cache.primary_end_point_port}",
+        "description": "lvr-services-Cache-Port"
+      }
+    }
+  },
+  "lvr-api": {
+    "terraform": {
+      "required_providers": {
+        "aws": {
+          "source": "hashicorp/aws",
+          "version": "~> 5.0"
+        }
+      }
+    },
+    "provider": {
+      "aws": {
+        "region": "${var.aws_region}"
+      }
+    },
+    "variable": {
+      "aws_region": {
+        "type": "string",
+        "default": "us-east-1"
+      },
+      "lvr_services_cache_endpoint": {
+        "type": "string"
+      },
+      "lvr_services_cache_port": {
+        "type": "string"
+      },
+      "lvr_services_sessions_name": {
+        "type": "string"
+      },
+      "lvr_shared_privatesubnet1_subnetid": {
+        "type": "string"
+      },
+      "lvr_shared_privatesubnet2_subnetid": {
+        "type": "string"
+      },
+      "lvr_shared_lambdasg_groupid": {
+        "type": "string"
+      }
+    },
+    "resource": {
+      "aws_iam_role": {
+        "apihandlerdefaultrole": {
+          "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"lambda.amazonaws.com\"},\"Action\":\"sts:AssumeRole\"}]}",
+          "managed_policy_arns": [
+            "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+          ]
+        }
+      },
+      "aws_lambda_function": {
+        "apihandler": {
+          "function_name": "ApiHandler",
+          "runtime": "nodejs20.x",
+          "handler": "index.handler",
+          "filename": "dist/",
+          "memory_size": 128,
+          "timeout": 30,
+          "role": "${aws_iam_role.apihandlerdefaultrole.arn}",
+          "environment": {
+            "variables": {
+              "REDIS_HOST": "${var.lvr_services_cache_endpoint}",
+              "REDIS_PORT": "${var.lvr_services_cache_port}",
+              "TABLE_NAME": "${var.lvr_services_sessions_name}"
+            }
+          },
+          "vpc_config": {
+            "subnet_ids": [
+              "${var.lvr_shared_privatesubnet1_subnetid}",
+              "${var.lvr_shared_privatesubnet2_subnetid}"
+            ],
+            "security_group_ids": [
+              "${var.lvr_shared_lambdasg_groupid}"
+            ]
+          }
+        }
+      }
+    },
+    "output": {
+      "ApiHandlerArn": {
+        "value": "${aws_lambda_function.apihandler.arn}",
+        "description": "lvr-api-ApiHandler-Arn"
+      }
+    }
+  }
+}
