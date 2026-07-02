@@ -61,12 +61,26 @@ export interface ConstructTypeInfo {
 export const CONSTRUCT_TYPES: Record<ConstructType, ConstructTypeInfo> = {
   'Cache.Redis': {
     layer: 'cache',
-    diagram: { emoji: '⚡', technology: 'Redis Cache' },
+    diagram: {
+      emoji: '⚡', technology: 'Redis Cache',
+      techByProvider: {
+        aws: 'ElastiCache (Redis)',
+        azure: 'Azure Cache for Redis',
+        gcp: 'Memorystore (Redis)',
+      },
+    },
     attributes: ['Endpoint', 'Port'],
   },
   'Cache.Memcached': {
     layer: 'cache',
-    diagram: { emoji: '⚡', technology: 'Memcached Cache' },
+    diagram: {
+      emoji: '⚡', technology: 'Memcached Cache',
+      techByProvider: {
+        aws: 'ElastiCache (Memcached)',
+        azure: 'Azure Cache',
+        gcp: 'Memorystore (Memcached)',
+      },
+    },
     attributes: [],
   },
   'Certificate.TLS': {
@@ -84,7 +98,14 @@ export const CONSTRUCT_TYPES: Record<ConstructType, ConstructTypeInfo> = {
   },
   'Compute.AutoScaling': {
     layer: 'compute',
-    diagram: { emoji: '⚙️', technology: 'Auto Scaling Group' },
+    diagram: {
+      emoji: '⚙️', technology: 'Auto Scaling Group',
+      techByProvider: {
+        aws: 'Auto Scaling Group',
+        azure: 'VM Scale Sets',
+        gcp: 'Managed Instance Groups',
+      },
+    },
     attributes: [],
   },
   'Compute.Container': {
@@ -102,7 +123,14 @@ export const CONSTRUCT_TYPES: Record<ConstructType, ConstructTypeInfo> = {
   },
   'Compute.Instance': {
     layer: 'compute',
-    diagram: { emoji: '⚙️', technology: 'Virtual Machine' },
+    diagram: {
+      emoji: '⚙️', technology: 'Virtual Machine',
+      techByProvider: {
+        aws: 'EC2 Instance',
+        azure: 'Azure Virtual Machine',
+        gcp: 'Compute Engine',
+      },
+    },
     attributes: [],
   },
   'Compute.Kubernetes': {
@@ -125,7 +153,14 @@ export const CONSTRUCT_TYPES: Record<ConstructType, ConstructTypeInfo> = {
   },
   'Database.DocumentDB': {
     layer: 'database',
-    diagram: { emoji: '📄', technology: 'Document DB' },
+    diagram: {
+      emoji: '📄', technology: 'Document DB',
+      techByProvider: {
+        aws: 'DocumentDB',
+        azure: 'Cosmos DB',
+        gcp: 'Firestore',
+      },
+    },
     attributes: ['Endpoint', 'Port', 'SecretArn', 'Password'],
   },
   'Database.DynamoDB': {
@@ -135,7 +170,7 @@ export const CONSTRUCT_TYPES: Record<ConstructType, ConstructTypeInfo> = {
       technology: 'NoSQL Database',
       techByProvider: {
         aws: 'DynamoDB',
-        azure: 'Table Storage',
+        azure: 'Cosmos DB (Table)',
         gcp: 'Bigtable',
       },
     },
@@ -143,12 +178,26 @@ export const CONSTRUCT_TYPES: Record<ConstructType, ConstructTypeInfo> = {
   },
   'Database.SQL': {
     layer: 'database',
-    diagram: { emoji: '🗄️', technology: 'Relational DB' },
+    diagram: {
+      emoji: '🗄️', technology: 'Relational DB',
+      techByProvider: {
+        aws: 'RDS',
+        azure: 'Azure SQL Database',
+        gcp: 'Cloud SQL',
+      },
+    },
     attributes: ['Endpoint', 'Port', 'SecretArn', 'Password', 'Username'],
   },
   'Events.EventBridge': {
     layer: 'messaging',
-    diagram: { emoji: '📡', technology: 'Event Bus' },
+    diagram: {
+      emoji: '📡', technology: 'Event Bus',
+      techByProvider: {
+        aws: 'EventBridge',
+        azure: 'Event Grid',
+        gcp: 'Eventarc',
+      },
+    },
     attributes: [],
   },
   'Function.ApiGateway': {
@@ -166,7 +215,14 @@ export const CONSTRUCT_TYPES: Record<ConstructType, ConstructTypeInfo> = {
   },
   'Function.Lambda': {
     layer: 'compute',
-    diagram: { emoji: '⚡', technology: 'Serverless' },
+    diagram: {
+      emoji: '⚡', technology: 'Serverless',
+      techByProvider: {
+        aws: 'Lambda Function',
+        azure: 'Azure Functions',
+        gcp: 'Cloud Functions',
+      },
+    },
     attributes: ['Arn'],
   },
   'Logging.Stream': {
@@ -274,12 +330,26 @@ export const CONSTRUCT_TYPES: Record<ConstructType, ConstructTypeInfo> = {
   },
   'Network.LoadBalancer': {
     layer: 'network',
-    diagram: { emoji: '⚖️', technology: 'Load Balancer' },
+    diagram: {
+      emoji: '⚖️', technology: 'Load Balancer',
+      techByProvider: {
+        aws: 'Load Balancer (ALB/NLB)',
+        azure: 'Azure Load Balancer',
+        gcp: 'Cloud Load Balancing',
+      },
+    },
     attributes: ['TargetGroupArn', 'DnsName'],
   },
   'Network.SecurityGroup': {
     layer: null,
-    diagram: { emoji: '🛡️', technology: 'Security Group' },
+    diagram: {
+      emoji: '🛡️', technology: 'Security Group',
+      techByProvider: {
+        aws: 'Security Group',
+        azure: 'Network Security Group (NSG)',
+        gcp: 'Firewall Rule',
+      },
+    },
     attributes: ['GroupId'],
   },
   'Network.Subnet': {
@@ -308,22 +378,50 @@ export const CONSTRUCT_TYPES: Record<ConstructType, ConstructTypeInfo> = {
   },
   'Network.VpcEndpoint': {
     layer: null,
-    diagram: { emoji: '□', technology: 'Network.VpcEndpoint' },
+    diagram: {
+      emoji: '□', technology: 'VPC Endpoint',
+      techByProvider: {
+        aws: 'VPC Endpoint',
+        azure: 'Private Endpoint',
+        gcp: 'Private Service Connect',
+      },
+    },
     attributes: [],
   },
   'Network.WAF': {
     layer: null,
-    diagram: { emoji: '🔒', technology: 'WAF' },
+    diagram: {
+      emoji: '🔒', technology: 'WAF',
+      techByProvider: {
+        aws: 'AWS WAF',
+        azure: 'Azure WAF',
+        gcp: 'Cloud Armor',
+      },
+    },
     attributes: ['Arn'],
   },
   'Policy.IAM': {
     layer: null,
-    diagram: { emoji: '🔑', technology: 'IAM Policy' },
+    diagram: {
+      emoji: '🔑', technology: 'IAM Policy',
+      techByProvider: {
+        aws: 'IAM Policy',
+        azure: 'RBAC / Managed Identity',
+        gcp: 'IAM Policy',
+      },
+    },
     attributes: [],
   },
   'Secret.Vault': {
     layer: 'security',
-    diagram: { emoji: '🔐', technology: 'Secrets Manager' },
+    diagram: {
+      emoji: '🔐', technology: 'Secrets Manager',
+      techByProvider: {
+        aws: 'Secrets Manager',
+        azure: 'Key Vault',
+        gcp: 'Secret Manager',
+      },
+    },
     attributes: ['SecretArn', 'Arn'],
   },
   'Storage.Archive': {
@@ -341,7 +439,14 @@ export const CONSTRUCT_TYPES: Record<ConstructType, ConstructTypeInfo> = {
   },
   'Storage.Bucket': {
     layer: 'storage',
-    diagram: { emoji: '🗂️', technology: 'Object Storage' },
+    diagram: {
+      emoji: '🗂️', technology: 'Object Storage',
+      techByProvider: {
+        aws: 'S3 Bucket',
+        azure: 'Blob Storage',
+        gcp: 'Cloud Storage',
+      },
+    },
     attributes: ['Arn', 'Name'],
   },
   'Storage.FileSystem': {
@@ -359,7 +464,14 @@ export const CONSTRUCT_TYPES: Record<ConstructType, ConstructTypeInfo> = {
   },
   'Workflow.StepFunctions': {
     layer: null,
-    diagram: { emoji: '🔄', technology: 'Step Functions' },
+    diagram: {
+      emoji: '🔄', technology: 'Step Functions',
+      techByProvider: {
+        aws: 'Step Functions',
+        azure: 'Logic Apps',
+        gcp: 'Cloud Workflows',
+      },
+    },
     attributes: [],
   },
 };

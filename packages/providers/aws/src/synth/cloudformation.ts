@@ -292,6 +292,15 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
         };
       }
     }
+    if (construct.type === 'Network.CDN') {
+      // Exporta o DomainName da distribuição CloudFront — é o que o usuário precisa
+      // para apontar o DNS ou testar o site após o deploy.
+      const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
+      outputs[`${logicalId}Url`] = {
+        Value: { 'Fn::GetAtt': [logicalId, 'DomainName'] },
+        Export: { Name: `${stack.name}-${construct.id}-Url` },
+      };
+    }
   }
 
   const nodes: ResourceNode[] = Object.entries(resources).map(([logicalId, res]) => ({

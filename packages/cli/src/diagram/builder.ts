@@ -67,7 +67,10 @@ function describeProps(c: BaseConstruct): string {
   }
   if (c.type === 'Policy.IAM') {
     if (p.attachTo) parts.push(`attachTo: ${p.attachTo}`);
-    if (p.attachType) parts.push(`type: ${p.attachType}`);
+    if (p.attachType) {
+      const attachTypeLabel: Record<string, string> = { lambda: 'function', ecs: 'container', ec2: 'instance' };
+      parts.push(`type: ${attachTypeLabel[p.attachType as string] ?? p.attachType}`);
+    }
   }
   if (c.type === 'Events.EventBridge') {
     const rules = (p.rules as Array<unknown>) ?? [];
