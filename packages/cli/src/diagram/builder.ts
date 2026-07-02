@@ -1,99 +1,23 @@
-import { Stack, BaseConstruct } from '@iacmp/core';
+import { Stack, BaseConstruct, CONSTRUCT_TYPES } from '@iacmp/core';
 import { DiagramModel, DiagramStack, DiagramNode, DiagramRelationship } from './model';
 
-const TYPE_META: Record<string, { emoji: string; technology: string }> = {
-  'Compute.Instance':         { emoji: '⚙️',  technology: 'Virtual Machine'        },
-  'Compute.AutoScaling':      { emoji: '⚙️',  technology: 'Auto Scaling Group'     },
-  'Compute.Container':        { emoji: '📦',  technology: 'Container'              },
-  'Compute.Kubernetes':       { emoji: '☸️',  technology: 'Kubernetes'             },
-  'Storage.Bucket':           { emoji: '🗂️',  technology: 'Object Storage'         },
-  'Storage.FileSystem':       { emoji: '🗄️',  technology: 'File System'            },
-  'Storage.Archive':          { emoji: '🗃️',  technology: 'Archive Storage'        },
-  'Network.VPC':              { emoji: '🌐',  technology: 'Virtual Network'        },
-  'Network.Subnet':           { emoji: '🔀',  technology: 'Subnet'                 },
-  'Network.SecurityGroup':    { emoji: '🛡️',  technology: 'Security Group'         },
-  'Network.WAF':              { emoji: '🔒',  technology: 'WAF'                    },
-  'Network.LoadBalancer':     { emoji: '⚖️',  technology: 'Load Balancer'          },
-  'Network.CDN':              { emoji: '🌍',  technology: 'CDN'                    },
-  'Network.Dns':              { emoji: '🌐',  technology: 'DNS'                    },
-  'Database.SQL':             { emoji: '🗄️',  technology: 'Relational DB'          },
-  'Database.DocumentDB':      { emoji: '📄',  technology: 'Document DB'            },
-  'Database.DynamoDB':        { emoji: '⚡',  technology: 'NoSQL Database'         },
-  'Cache.Redis':              { emoji: '⚡',  technology: 'Redis Cache'            },
-  'Cache.Memcached':          { emoji: '⚡',  technology: 'Memcached Cache'        },
-  'Function.Lambda':          { emoji: '⚡',  technology: 'Serverless'             },
-  'Function.ApiGateway':      { emoji: '🔌',  technology: 'API Gateway'            },
-  'Policy.IAM':               { emoji: '🔑',  technology: 'IAM Policy'             },
-  'Events.EventBridge':       { emoji: '📡',  technology: 'Event Bus'              },
-  'Workflow.StepFunctions':   { emoji: '🔄',  technology: 'Step Functions'         },
-  'Messaging.Queue':          { emoji: '📨',  technology: 'Queue'                  },
-  'Messaging.Topic':          { emoji: '📢',  technology: 'Topic'                  },
-  'Messaging.Stream':         { emoji: '🌊',  technology: 'Stream'                 },
-  'Secret.Vault':             { emoji: '🔐',  technology: 'Secrets Manager'        },
-  'Certificate.TLS':          { emoji: '🔏',  technology: 'TLS Certificate'        },
-  'Monitoring.Alarm':         { emoji: '🚨',  technology: 'Monitoring Alarm'       },
-  'Monitoring.Dashboard':     { emoji: '📊',  technology: 'Monitoring Dashboard'   },
-  'Logging.Stream':           { emoji: '📋',  technology: 'Log Stream'             },
-};
+const TYPE_META: Record<string, { emoji: string; technology: string }> = Object.fromEntries(
+  Object.entries(CONSTRUCT_TYPES).map(([k, v]) => [k, { emoji: v.diagram.emoji, technology: v.diagram.technology }]),
+);
 
 // Nomes de tecnologia nativos por provider — usados apenas para exibição no diagrama,
 // não afetam tags/ícones do theme (ver structurizr.ts)
-const PROVIDER_TECH_OVERRIDE: Record<string, Record<string, string>> = {
-  aws: {
-    'Compute.Container':      'Container (ECS/Fargate)',
-    'Compute.Kubernetes':     'Kubernetes (EKS)',
-    'Storage.FileSystem':     'File System (EFS)',
-    'Storage.Archive':        'Archive (Glacier)',
-    'Network.CDN':            'CDN (CloudFront)',
-    'Network.Dns':            'DNS (Route53)',
-    'Database.DynamoDB':      'DynamoDB',
-    'Function.ApiGateway':    'API Gateway',
-    'Messaging.Queue':        'Queue (SQS)',
-    'Messaging.Topic':        'Topic (SNS)',
-    'Messaging.Stream':       'Stream (Kinesis)',
-    'Certificate.TLS':        'TLS Certificate (ACM)',
-    'Monitoring.Alarm':       'CloudWatch Alarm',
-    'Monitoring.Dashboard':   'CloudWatch Dashboard',
-    'Logging.Stream':         'CloudWatch Logs',
-  },
-  azure: {
-    'Compute.Container':      'Container Instances',
-    'Compute.Kubernetes':     'Kubernetes Service (AKS)',
-    'Storage.FileSystem':     'Azure Files',
-    'Storage.Archive':        'Archive Storage',
-    'Network.VPC':            'Virtual Network (VNet)',
-    'Network.Subnet':         'Subnet',
-    'Network.CDN':            'CDN Profile',
-    'Network.Dns':            'DNS Zone',
-    'Database.DynamoDB':      'Table Storage',
-    'Function.ApiGateway':    'API Management',
-    'Messaging.Queue':        'Queue (Service Bus)',
-    'Messaging.Topic':        'Topic (Service Bus)',
-    'Messaging.Stream':       'Event Hub',
-    'Certificate.TLS':        'TLS Certificate (Key Vault)',
-    'Monitoring.Alarm':       'Monitor Alert',
-    'Monitoring.Dashboard':   'Monitor Dashboard',
-    'Logging.Stream':         'Log Analytics',
-  },
-  gcp: {
-    'Compute.Container':      'Cloud Run',
-    'Compute.Kubernetes':     'Kubernetes Engine (GKE)',
-    'Storage.FileSystem':     'Filestore',
-    'Storage.Archive':        'Archive Storage',
-    'Network.VPC':            'VPC Network',
-    'Network.Subnet':         'Subnet',
-    'Network.CDN':            'Cloud CDN',
-    'Network.Dns':            'Cloud DNS',
-    'Database.DynamoDB':      'Bigtable',
-    'Function.ApiGateway':    'Cloud Endpoints',
-    'Messaging.Queue':        'Pub/Sub Queue',
-    'Messaging.Topic':        'Pub/Sub Topic',
-    'Certificate.TLS':        'TLS Certificate',
-    'Monitoring.Alarm':       'Cloud Monitoring Alert',
-    'Monitoring.Dashboard':   'Cloud Monitoring Dashboard',
-    'Logging.Stream':         'Cloud Logging',
-  },
-};
+const PROVIDER_TECH_OVERRIDE: Record<string, Record<string, string>> = (() => {
+  const result: Record<string, Record<string, string>> = {};
+  for (const [type, info] of Object.entries(CONSTRUCT_TYPES)) {
+    if (!info.diagram.techByProvider) continue;
+    for (const [provider, tech] of Object.entries(info.diagram.techByProvider)) {
+      if (!result[provider]) result[provider] = {};
+      result[provider][type] = tech as string;
+    }
+  }
+  return result;
+})();
 
 function safeId(raw: string): string {
   return raw.replace(/[^a-zA-Z0-9_]/g, '_');

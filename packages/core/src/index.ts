@@ -2,6 +2,9 @@ export { ref, isRef } from './refs';
 export type { Ref, ConstructAttributeMap } from './refs';
 export { CONSTRUCT_ATTRIBUTES } from './refs';
 
+export type { ConstructType, AnchorLayer, DiagramMeta, ConstructTypeInfo } from './construct-types';
+export { CONSTRUCT_TYPES } from './construct-types';
+
 export { Stack } from './stack';
 export type { BaseConstruct } from './stack';
 

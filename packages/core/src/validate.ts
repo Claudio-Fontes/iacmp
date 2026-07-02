@@ -2,6 +2,7 @@ import { Stack, BaseConstruct } from './stack';
 import { SQLEngine } from './constructs/database';
 import { defaultPortForEngine, RDS_MIN_AZ_COUNT, isAuroraEngine } from './knowledge/database';
 import { EnvironmentProfile } from './profile';
+import { CONSTRUCT_TYPES } from './construct-types';
 
 /**
  * Validação semântica provider-agnóstica que roda em SYNTH-TIME, sobre os
@@ -332,13 +333,13 @@ export function validateSemantics(stacks: Stack[], profile?: EnvironmentProfile)
   // dificulta deploy/destroy por camada. 1-2 camadas pode ser legítimo (ex:
   // Lambda + DynamoDB), por isso o limiar é 3 — só pega o caso inequívoco.
   const ANCHOR_LAYER: Record<string, string> = {
-    'Network.VPC': 'network', 'Network.LoadBalancer': 'network', 'Network.CDN': 'network', 'Function.ApiGateway': 'network',
-    'Database.SQL': 'database', 'Database.DocumentDB': 'database', 'Database.DynamoDB': 'database',
-    'Fn.Lambda': 'compute', 'Function.Lambda': 'compute', 'Compute.Container': 'compute', 'Compute.Instance': 'compute', 'Compute.Kubernetes': 'compute', 'Compute.AutoScaling': 'compute',
-    'Storage.Bucket': 'storage', 'Storage.FileSystem': 'storage', 'Storage.Archive': 'storage',
-    'Secret.Vault': 'security', 'Certificate.TLS': 'security',
-    'Cache.Redis': 'cache', 'Cache.Memcached': 'cache',
-    'Messaging.Queue': 'messaging', 'Messaging.Topic': 'messaging', 'Messaging.Stream': 'messaging', 'Events.EventBridge': 'messaging',
+    ...Object.fromEntries(
+      Object.entries(CONSTRUCT_TYPES)
+        .filter(([, v]) => v.layer !== null)
+        .map(([k, v]) => [k, v.layer as string]),
+    ),
+    // Alias legado: código gerado antes de Function.Lambda existir usava Fn.Lambda
+    'Fn.Lambda': 'compute',
   };
   for (const s of stacks) {
     const layers = new Map<string, string[]>(); // camada → tipos encontrados

@@ -1,3 +1,5 @@
+import { CONSTRUCT_TYPES } from './construct-types';
+
 export interface Ref<A extends string = string> {
   readonly kind: 'iacmp:ref';
   readonly constructId: string;
@@ -39,20 +41,8 @@ export interface ConstructAttributeMap {
   'Network.SecurityGroup': 'GroupId';
 }
 
-export const CONSTRUCT_ATTRIBUTES = {
-  'Secret.Vault':          ['SecretArn', 'Arn'],
-  'Database.SQL':          ['Endpoint', 'Port', 'SecretArn', 'Password', 'Username'],
-  'Database.DocumentDB':   ['Endpoint', 'Port', 'SecretArn', 'Password'],
-  'Database.DynamoDB':     ['Arn', 'Name'],
-  'Cache.Redis':           ['Endpoint', 'Port'],
-  'Messaging.Queue':       ['Arn', 'QueueUrl', 'QueueArn'],
-  'Messaging.Topic':       ['Arn', 'TopicArn'],
-  'Messaging.Stream':      ['Arn', 'Name'],
-  'Function.Lambda':       ['Arn'],
-  'Network.LoadBalancer':  ['TargetGroupArn', 'DnsName'],
-  'Network.WAF':           ['Arn'],
-  'Storage.Bucket':        ['Arn', 'Name'],
-  'Network.VPC':           ['VpcId'],
-  'Network.Subnet':        ['SubnetId'],
-  'Network.SecurityGroup': ['GroupId'],
-} as const satisfies { [K in keyof ConstructAttributeMap]: ReadonlyArray<ConstructAttributeMap[K]> };
+export const CONSTRUCT_ATTRIBUTES = Object.fromEntries(
+  Object.entries(CONSTRUCT_TYPES)
+    .filter(([, v]) => v.attributes.length > 0)
+    .map(([k, v]) => [k, v.attributes]),
+) as { [K in keyof ConstructAttributeMap]: ReadonlyArray<ConstructAttributeMap[K]> };
