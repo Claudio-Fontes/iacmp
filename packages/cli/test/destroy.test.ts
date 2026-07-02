@@ -62,8 +62,8 @@ describe('destroy --dry-run', () => {
     dir = synthed('gcp', { name: 'test', provider: 'gcp', region: 'us-central1', projectId: 'meu-projeto' });
     const r = runCli(['destroy', '--provider', 'gcp', '--dry-run'], { cwd: dir });
     expect(r.status).toBe(0);
-    expect(r.stdout).toContain('gcloud deployment-manager deployments delete');
-    expect(r.stdout).toContain('--project meu-projeto');
+    expect(r.stdout).toContain('terraform destroy -auto-approve');
+    expect(r.stdout).toContain('project_id=meu-projeto');
   });
 
   test('--stack limita à stack indicada', () => {
@@ -117,7 +117,7 @@ describe('destroy — confirmação interativa (sem --force, sem --dry-run)', ()
     expect(r.all).not.toContain('cloudformation');
   });
 
-  test('input "y" prossegue e chega na checagem da CLI nativa (gcloud não instalada em CI)', () => {
+  test('input "y" prossegue e chega na checagem da CLI nativa (terraform não instalado em CI)', () => {
     dir = makeProject({
       provider: 'gcp',
       iacmpJson: { name: 'test', provider: 'gcp', region: 'us-central1', projectId: 'meu-projeto' },
@@ -129,12 +129,11 @@ describe('destroy — confirmação interativa (sem --force, sem --dry-run)', ()
     // determinística aqui significa que o fluxo de confirmação funcionou.
     expect(r.all).toContain('Tem certeza que deseja destruir esses recursos?');
     expect(r.all).not.toContain('Operação cancelada');
-    // Passou da confirmação e chegou na CLI nativa. O resultado exato depende do
-    // ambiente: em CI o gcloud não está instalado ("não encontrado no PATH"); numa
-    // máquina de dev com gcloud instalado mas sem auth, o próprio gcloud falha
-    // (active account / auth login / deployment-manager). Qualquer um prova o fluxo.
+    // Passou da confirmação e chegou na CLI nativa (terraform). O resultado
+    // exato depende do ambiente: terraform não instalado → "não encontrado no PATH";
+    // terraform instalado mas sem estado → falha na execução. Qualquer um prova o fluxo.
     expect(
-      /gcloud não encontrado no PATH|gcloud|deployment-manager|active account|auth login/i.test(r.all),
+      /terraform não encontrado no PATH|terraform|não encontrado/i.test(r.all),
     ).toBe(true);
   });
 });

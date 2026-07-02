@@ -38,26 +38,29 @@ describe('synth — comando (black-box)', () => {
       expect(Object.keys(parsed.Resources).length).toBeGreaterThan(0);
     });
 
-    test('azure → synth-out/azure/main-stack.json com JSON válido', () => {
+    test('azure → synth-out/azure/main-stack.bicep com Bicep válido', () => {
       dir = makeProject({ provider: 'azure' });
       const r = runCli(['synth', '--provider', 'azure'], { cwd: dir });
 
       expect(r.status).toBe(0);
-      expect(exists(dir, 'synth-out/azure/main-stack.json')).toBe(true);
-      const parsed = JSON.parse(read(dir, 'synth-out/azure/main-stack.json'));
-      expect(parsed).toBeTruthy();
-      expect(typeof parsed).toBe('object');
+      expect(r.stdout).toContain(path.join('synth-out', 'azure', 'main-stack.bicep'));
+      expect(exists(dir, 'synth-out/azure/main-stack.bicep')).toBe(true);
+      expect(exists(dir, 'synth-out/azure/main-stack.json')).toBe(false);
+      const content = read(dir, 'synth-out/azure/main-stack.bicep');
+      expect(content).toContain('resource');
     });
 
-    test('gcp → synth-out/gcp/main-stack.json com JSON válido', () => {
+    test('gcp → synth-out/gcp/main-stack.tf.json com JSON Terraform válido', () => {
       dir = makeProject({ provider: 'gcp' });
       const r = runCli(['synth', '--provider', 'gcp'], { cwd: dir });
 
       expect(r.status).toBe(0);
-      expect(exists(dir, 'synth-out/gcp/main-stack.json')).toBe(true);
-      const parsed = JSON.parse(read(dir, 'synth-out/gcp/main-stack.json'));
-      expect(parsed).toBeTruthy();
-      expect(typeof parsed).toBe('object');
+      expect(r.stdout).toContain(path.join('synth-out', 'gcp', 'main-stack.tf.json'));
+      expect(exists(dir, 'synth-out/gcp/main-stack.tf.json')).toBe(true);
+      expect(exists(dir, 'synth-out/gcp/main-stack.json')).toBe(false);
+      const parsed = JSON.parse(read(dir, 'synth-out/gcp/main-stack.tf.json'));
+      expect(parsed).toHaveProperty('terraform');
+      expect(parsed).toHaveProperty('resource');
     });
 
     test('terraform → synth-out/terraform/main-stack.tf.json com JSON válido', () => {

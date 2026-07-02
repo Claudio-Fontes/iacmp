@@ -33,11 +33,11 @@ function write(p: string, content: string): void {
 }
 
 describe('templateExt', () => {
-  test('terraform usa .tf.json, demais usam .json', () => {
+  test('terraform e gcp usam .tf.json, azure usa .bicep, demais usam .json', () => {
     expect(templateExt('terraform')).toBe('.tf.json');
+    expect(templateExt('gcp')).toBe('.tf.json');
+    expect(templateExt('azure')).toBe('.bicep');
     expect(templateExt('aws')).toBe('.json');
-    expect(templateExt('azure')).toBe('.json');
-    expect(templateExt('gcp')).toBe('.json');
   });
 });
 
@@ -122,10 +122,20 @@ describe('countResources', () => {
     expect(countResources(p, 'aws')).toBe(3);
   });
 
-  test('azure/gcp — array resources', () => {
-    const p = path.join(providerOutDir(cwd, 'azure'), 's.json');
-    write(p, JSON.stringify({ resources: [{ type: 't', name: 'n' }, { type: 't', name: 'm' }] }));
+  test('azure — conta declarações resource em Bicep', () => {
+    const p = path.join(providerOutDir(cwd, 'azure'), 's.bicep');
+    write(p, "resource vnet 'Microsoft.Network/virtualNetworks@2023-04-01' = {}\nresource blob 'Microsoft.Storage/storageAccounts@2023-01-01' = {}\n");
     expect(countResources(p, 'azure')).toBe(2);
+  });
+
+  test('gcp — formato .tf.json igual ao terraform', () => {
+    const p = path.join(providerOutDir(cwd, 'gcp'), 's.tf.json');
+    write(p, JSON.stringify({
+      resource: {
+        google_compute_network: { main: {} },
+        google_storage_bucket: { assets: {} },
+      },
+    }));
     expect(countResources(p, 'gcp')).toBe(2);
   });
 

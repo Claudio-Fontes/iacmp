@@ -1,0 +1,219 @@
+import { Stack, Compute, Storage, Network, Database, Fn, Messaging, Cache } from '@iacmp/core';
+import { AzureProvider } from '../src';
+
+function synth(stack: Stack): string {
+  return new AzureProvider().synthesize(stack);
+}
+
+describe('AzureProvider (Bicep)', () => {
+  test('Compute.Instance → resource com Microsoft.Compute/virtualMachines', () => {
+    const stack = new Stack('test');
+    new Compute.Instance(stack, 'VM', { instanceType: 'small', image: 'ubuntu-22.04' });
+    const out = synth(stack);
+    expect(out).toContain("'Microsoft.Compute/virtualMachines@2023-03-01'");
+    expect(out).toContain('Standard_B1s');
+  });
+
+  test('Compute.Instance windows → imagem windows', () => {
+    const stack = new Stack('test');
+    new Compute.Instance(stack, 'WinVM', { instanceType: 'small', image: 'windows-2022' });
+    const out = synth(stack);
+    expect(out).toContain('2022-Datacenter');
+  });
+
+  test('Storage.Bucket → Microsoft.Storage/storageAccounts', () => {
+    const stack = new Stack('test');
+    new Storage.Bucket(stack, 'Bucket', { versioning: false });
+    const out = synth(stack);
+    expect(out).toContain("'Microsoft.Storage/storageAccounts@2023-01-01'");
+  });
+
+  test('Storage.Bucket versioning true → recurso blobServices filho', () => {
+    const stack = new Stack('test');
+    new Storage.Bucket(stack, 'B', { versioning: true });
+    const out = synth(stack);
+    expect(out).toContain("'Microsoft.Storage/storageAccounts/blobServices@2023-01-01'");
+    expect(out).toContain('isVersioningEnabled: true');
+  });
+
+  test('Network.VPC → Microsoft.Network/virtualNetworks', () => {
+    const stack = new Stack('test');
+    new Network.VPC(stack, 'Rede', { cidr: '10.0.0.0/16' });
+    const out = synth(stack);
+    expect(out).toContain("'Microsoft.Network/virtualNetworks@2023-04-01'");
+    expect(out).toContain('10.0.0.0/16');
+  });
+
+  test('Network.SecurityGroup → Microsoft.Network/networkSecurityGroups', () => {
+    const stack = new Stack('test');
+    new Network.SecurityGroup(stack, 'SG', {
+      vpcId: 'myVnet',
+      ingressRules: [{ protocol: 'tcp', fromPort: 80, toPort: 80, cidr: '0.0.0.0/0' }],
+    });
+    const out = synth(stack);
+    expect(out).toContain("'Microsoft.Network/networkSecurityGroups@2023-04-01'");
+    expect(out).toContain('Inbound');
+  });
+
+  test('Network.SecurityGroup sem CIDR → console.warn e usa *', () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation();
+    const stack = new Stack('test');
+    new Network.SecurityGroup(stack, 'SG', {
+      vpcId: 'myVnet',
+      ingressRules: [{ protocol: 'tcp', fromPort: 22, toPort: 22 } as any],
+    });
+    const out = synth(stack);
+    expect(out).toContain("'*'");
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('sem CIDR'));
+    warnSpy.mockRestore();
+  });
+
+  test('Database.SQL mysql → Microsoft.DBforMySQL/flexibleServers', () => {
+    const stack = new Stack('test');
+    new Database.SQL(stack, 'MySQLDB', { engine: 'mysql' });
+    const out = synth(stack);
+    expect(out).toContain("'Microsoft.DBforMySQL/flexibleServers@2023-06-30'");
+    expect(out).toContain('adminPassword');
+  });
+
+  test('Database.SQL postgres → Microsoft.DBforPostgreSQL/flexibleServers', () => {
+    const stack = new Stack('test');
+    new Database.SQL(stack, 'PgDB', { engine: 'postgres' });
+    const out = synth(stack);
+    expect(out).toContain("'Microsoft.DBforPostgreSQL/flexibleServers@");
+  });
+
+  test('Database.SQL sqlserver → Microsoft.Sql/servers', () => {
+    const stack = new Stack('test');
+    new Database.SQL(stack, 'SqlDB', { engine: 'sqlserver' });
+    const out = synth(stack);
+    expect(out).toContain("'Microsoft.Sql/servers@2023-02-01-preview'");
+  });
+
+  test('Function.Lambda nodejs20 → Microsoft.Web/sites functionapp', () => {
+    const stack = new Stack('test');
+    new Fn.Lambda(stack, 'Handler', { runtime: 'nodejs20', handler: 'index.handler', code: 'dist/' });
+    const out = synth(stack);
+    expect(out).toContain("'Microsoft.Web/sites@2023-01-01'");
+    expect(out).toContain('functionapp');
+    expect(out).toContain('node');
+  });
+
+  test('Messaging.Queue → namespaces + queues', () => {
+    const stack = new Stack('test');
+    new Messaging.Queue(stack, 'MyQueue', {});
+    const out = synth(stack);
+    expect(out).toContain("'Microsoft.ServiceBus/namespaces@2022-10-01-preview'");
+    expect(out).toContain("'Microsoft.ServiceBus/namespaces/queues@2022-10-01-preview'");
+  });
+
+  test('Messaging.Topic → namespaces + topics', () => {
+    const stack = new Stack('test');
+    new Messaging.Topic(stack, 'MyTopic', {});
+    const out = synth(stack);
+    expect(out).toContain("'Microsoft.ServiceBus/namespaces/topics@2022-10-01-preview'");
+  });
+
+  test('Cache.Redis → Microsoft.Cache/redis', () => {
+    const stack = new Stack('test');
+    new Cache.Redis(stack, 'MyRedis', { nodeType: 'small' });
+    const out = synth(stack);
+    expect(out).toContain("'Microsoft.Cache/redis@2023-08-01'");
+  });
+
+  test('Secret.Vault → Microsoft.KeyVault/vaults com subscription().tenantId', () => {
+    const stack = new Stack('test');
+    stack.addConstruct({ id: 'MySecret', type: 'Secret.Vault', props: {} } as any);
+    const out = synth(stack);
+    expect(out).toContain("'Microsoft.KeyVault/vaults@2023-02-01'");
+    expect(out).toContain('subscription().tenantId');
+  });
+
+  test('param location presente com default resourceGroup().location', () => {
+    const stack = new Stack('test');
+    new Storage.Bucket(stack, 'B', {});
+    const out = synth(stack);
+    expect(out).toContain('param location string');
+    expect(out).toContain('resourceGroup().location');
+  });
+
+  test('Construct desconhecido → console.warn "nao suportado"', () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation();
+    const stack = new Stack('test');
+    stack.addConstruct({ id: 'X', type: 'Foo.Bar', props: {} } as any);
+    new AzureProvider().synthesize(stack);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('nao suportado'));
+    warnSpy.mockRestore();
+  });
+
+  test('output presente para Storage.Bucket', () => {
+    const stack = new Stack('test');
+    new Storage.Bucket(stack, 'MyBucket', {});
+    const out = synth(stack);
+    expect(out).toContain('output MyBucket');
+    expect(out).toContain('.id');
+  });
+
+  test('Storage.Bucket sem location → usa param location', () => {
+    const stack = new Stack('test');
+    new Storage.Bucket(stack, 'B', {});
+    const out = synth(stack);
+    expect(out).toMatch(/location: location\b/);
+  });
+
+  test('NSG tcp → Tcp', () => {
+    const stack = new Stack('test');
+    new Network.SecurityGroup(stack, 'NSG', {
+      vpcId: 'vnet-1',
+      ingressRules: [{ protocol: 'tcp', fromPort: 80, toPort: 80, cidr: '10.0.0.0/8' } as any],
+    });
+    const out = synth(stack);
+    expect(out).toContain("protocol: 'Tcp'");
+  });
+
+  test('NSG -1 → *', () => {
+    const stack = new Stack('test');
+    new Network.SecurityGroup(stack, 'NSG', {
+      vpcId: 'vnet-1',
+      ingressRules: [{ protocol: '-1', fromPort: 0, toPort: 0, cidr: '10.0.0.0/8' } as any],
+    });
+    const out = synth(stack);
+    expect(out).toContain("protocol: '*'");
+  });
+
+  test('Function.ApiGateway sem authorizerLambdaId → só serviço APIM', () => {
+    const stack = new Stack('test');
+    new Fn.ApiGateway(stack, 'Api', { name: 'my-api' });
+    const out = synth(stack);
+    const count = (out.match(/'Microsoft\.ApiManagement\/service@/g) ?? []).length;
+    expect(count).toBe(1);
+    expect(out).not.toContain("'Microsoft.ApiManagement/service/backends@");
+  });
+
+  test('Function.ApiGateway com authorizerLambdaId → cria backend filho', () => {
+    const stack = new Stack('test');
+    new Fn.ApiGateway(stack, 'Api', { name: 'my-api', authorizerLambdaId: 'OAuthFn' });
+    const out = synth(stack);
+    expect(out).toContain("'Microsoft.ApiManagement/service/backends@");
+    expect(out).toContain('OAuthFn');
+  });
+
+  test('Custom.Resource → gera resource a partir de props.arm', () => {
+    const stack = new Stack('test');
+    stack.addConstruct({
+      id: 'StaticWebApp',
+      type: 'Custom.Resource',
+      props: {
+        arm: {
+          type: 'Microsoft.Web/staticSites',
+          apiVersion: '2023-01-01',
+          properties: { repositoryUrl: 'https://github.com/example/repo' },
+          sku: { name: 'Free' },
+        },
+      },
+    } as any);
+    const out = synth(stack);
+    expect(out).toContain("'Microsoft.Web/staticSites@2023-01-01'");
+    expect(out).toContain('repositoryUrl');
+  });
+});

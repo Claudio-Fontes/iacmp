@@ -77,11 +77,11 @@ function synthStack(stack: Stack, provider: string): string {
     }
     case 'azure': {
       const p = new AzureProvider();
-      return JSON.stringify(p.synthesize(stack), null, 2) + '\n';
+      return p.synthesize(stack);
     }
     case 'gcp': {
       const p = new GCPProvider();
-      return JSON.stringify(p.synthesize(stack), null, 2) + '\n';
+      return p.synthesize(stack);
     }
     case 'terraform': {
       const p = new TerraformProvider();

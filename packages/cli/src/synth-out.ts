@@ -13,7 +13,9 @@ import * as path from 'path';
 
 /** Extensão do arquivo de template gerado para cada provider. */
 export function templateExt(provider: string): string {
-  return provider === 'terraform' ? '.tf.json' : '.json';
+  if (provider === 'terraform' || provider === 'gcp') return '.tf.json';
+  if (provider === 'azure') return '.bicep';
+  return '.json';
 }
 
 /** Raiz dos outputs de synth (`synth-out/`). */
@@ -185,7 +187,12 @@ export function countResources(filePath: string, provider: string): number {
     return 0;
   }
 
-  if (provider === 'terraform') {
+  if (provider === 'azure') {
+    // Formato Bicep: conta declarações `resource <sym> '<type>' = { ... }`
+    return (content.match(/^resource\s+/gm) ?? []).length;
+  }
+
+  if (provider === 'terraform' || provider === 'gcp') {
     // Formato .tf.json: { "resource": { "<type>": { "<name>": {...} } } }
     try {
       const tfJson = JSON.parse(content) as Record<string, unknown>;

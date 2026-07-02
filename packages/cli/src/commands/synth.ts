@@ -221,18 +221,18 @@ export default class Synth extends Command {
 
           case 'azure': {
             const p = new AzureProvider();
-            const template = p.synthesize(typedStack, allStacks);
-            const outPath = path.join(provOutDir, `${stackName}.json`);
-            fs.writeFileSync(outPath, JSON.stringify(template, null, 2) + '\n');
+            const bicep = p.synthesize(typedStack, allStacks);
+            const outPath = path.join(provOutDir, `${stackName}.bicep`);
+            fs.writeFileSync(outPath, bicep);
             this.log(`Sintetizado: ${outPath}`);
             break;
           }
 
           case 'gcp': {
             const p = new GCPProvider();
-            const deployment = p.synthesize(typedStack, allStacks);
-            const outPath = path.join(provOutDir, `${stackName}.json`);
-            fs.writeFileSync(outPath, JSON.stringify(deployment, null, 2) + '\n');
+            const tfJson = p.synthesize(typedStack, allStacks);
+            const outPath = path.join(provOutDir, `${stackName}.tf.json`);
+            fs.writeFileSync(outPath, tfJson);
             this.log(`Sintetizado: ${outPath}`);
             break;
           }

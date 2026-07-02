@@ -77,7 +77,7 @@ describe('deploy --dry-run — caso feliz por provider (synth antes)', () => {
     expect(r.all).toContain('Configure "resourceGroup" no iacmp.json');
   });
 
-  test('gcp: usa o projectId do iacmp.json e monta `deployments create`', () => {
+  test('gcp: usa o projectId do iacmp.json e monta `terraform apply`', () => {
     dir = makeProject({
       provider: 'gcp',
       iacmpJson: { name: 'test', provider: 'gcp', region: 'us-central1', projectId: 'meu-projeto' },
@@ -86,9 +86,9 @@ describe('deploy --dry-run — caso feliz por provider (synth antes)', () => {
 
     const r = runCli(['deploy', '--provider', 'gcp', '--dry-run'], { cwd: dir });
     expect(r.status).toBe(0);
-    expect(r.stdout).toContain('Stack: main-stack — 2 recurso(s)');
-    expect(r.stdout).toContain('gcloud deployment-manager deployments create');
-    expect(r.stdout).toContain('--project meu-projeto');
+    expect(r.stdout).toContain('terraform init');
+    expect(r.stdout).toContain('terraform apply -auto-approve');
+    expect(r.stdout).toContain('project_id=meu-projeto');
   });
 
   test('terraform: opera no diretório inteiro (terraform init + apply), não por stack', () => {
@@ -99,7 +99,7 @@ describe('deploy --dry-run — caso feliz por provider (synth antes)', () => {
 
     const r = runCli(['deploy', '--provider', 'terraform', '--dry-run'], { cwd: dir });
     expect(r.status).toBe(0);
-    expect(r.stdout).toContain('Stack: main-stack — 12 recurso(s)');
+    expect(r.stdout).toContain('Stack: main-stack — 14 recurso(s)');
     expect(r.stdout).toContain('terraform init');
     expect(r.stdout).toContain('terraform apply -auto-approve');
   });

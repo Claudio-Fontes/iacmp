@@ -22,5 +22,5 @@ export function getExecutor(provider: string): DeployExecutor {
 export * from './types';
 export * from './exec';
 export { resourceGroupExists } from './azure';
-export { resolveProjectId, deploymentExists } from './gcp';
+export { resolveProjectId } from './gcp';
 export { findExistingRetainedResources, deleteResourceAndWait } from './aws';

@@ -1,11 +1,11 @@
 import { Stack, Compute, Storage, Network, Database, Fn, Custom } from '@iacmp/core';
-import { GCPProvider } from '../src';
+import { synthesize as synthesizeDM } from '../src/synth/deployment-manager';
 
-describe('GCPProvider', () => {
+describe('Deployment Manager legado (synthesizeDM — mantido como referência; o provider emite Terraform)', () => {
   test('Compute.Instance ubuntu-22.04 → type compute.v1.instance e sourceImage contém ubuntu', () => {
     const stack = new Stack('test');
     new Compute.Instance(stack, 'VM', { instanceType: 'small', image: 'ubuntu-22.04' });
-    const tpl = new GCPProvider().synthesize(stack) as any;
+    const tpl = synthesizeDM(stack) as any;
     expect(tpl.resources[0].type).toBe('compute.v1.instance');
     expect(tpl.resources[0].properties.disks[0].initializeParams.sourceImage).toContain('ubuntu');
   });
@@ -13,21 +13,21 @@ describe('GCPProvider', () => {
   test('Compute.Instance windows-2022 → sourceImage contém windows', () => {
     const stack = new Stack('test');
     new Compute.Instance(stack, 'WinVM', { instanceType: 'small', image: 'windows-2022' });
-    const tpl = new GCPProvider().synthesize(stack) as any;
+    const tpl = synthesizeDM(stack) as any;
     expect(tpl.resources[0].properties.disks[0].initializeParams.sourceImage).toContain('windows');
   });
 
   test('Storage.Bucket → type storage.v1.bucket', () => {
     const stack = new Stack('test');
     new Storage.Bucket(stack, 'Bucket', { versioning: false });
-    const tpl = new GCPProvider().synthesize(stack) as any;
+    const tpl = synthesizeDM(stack) as any;
     expect(tpl.resources[0].type).toBe('storage.v1.bucket');
   });
 
   test('Database.SQL mysql → type sqladmin.v1beta4.instance e databaseVersion contém MYSQL', () => {
     const stack = new Stack('test');
     new Database.SQL(stack, 'MySQLDB', { engine: 'mysql' });
-    const tpl = new GCPProvider().synthesize(stack) as any;
+    const tpl = synthesizeDM(stack) as any;
     expect(tpl.resources[0].type).toBe('sqladmin.v1beta4.instance');
     expect(tpl.resources[0].properties.databaseVersion).toContain('MYSQL');
   });
@@ -35,28 +35,28 @@ describe('GCPProvider', () => {
   test('Database.SQL postgres → databaseVersion contém POSTGRES', () => {
     const stack = new Stack('test');
     new Database.SQL(stack, 'PgDB', { engine: 'postgres' });
-    const tpl = new GCPProvider().synthesize(stack) as any;
+    const tpl = synthesizeDM(stack) as any;
     expect(tpl.resources[0].properties.databaseVersion).toContain('POSTGRES');
   });
 
   test('Database.SQL sqlserver → databaseVersion contém SQLSERVER', () => {
     const stack = new Stack('test');
     new Database.SQL(stack, 'SqlDB', { engine: 'sqlserver' });
-    const tpl = new GCPProvider().synthesize(stack) as any;
+    const tpl = synthesizeDM(stack) as any;
     expect(tpl.resources[0].properties.databaseVersion).toContain('SQLSERVER');
   });
 
   test('Fn.Lambda → type cloudfunctions.v2.function', () => {
     const stack = new Stack('test');
     new Fn.Lambda(stack, 'Handler', { runtime: 'nodejs20', handler: 'index.handler', code: 'dist/' });
-    const tpl = new GCPProvider().synthesize(stack) as any;
+    const tpl = synthesizeDM(stack) as any;
     expect(tpl.resources[0].type).toBe('cloudfunctions.v2.function');
   });
 
   test('Network.VPC → type compute.v1.network', () => {
     const stack = new Stack('test');
     new Network.VPC(stack, 'Rede', { cidr: '10.0.0.0/16' });
-    const tpl = new GCPProvider().synthesize(stack) as any;
+    const tpl = synthesizeDM(stack) as any;
     expect(tpl.resources[0].type).toBe('compute.v1.network');
   });
 
@@ -65,21 +65,21 @@ describe('GCPProvider', () => {
     test('sem location → usa default US', () => {
       const stack = new Stack('test');
       new Storage.Bucket(stack, 'B', { versioning: false });
-      const tpl = new GCPProvider().synthesize(stack) as any;
+      const tpl = synthesizeDM(stack) as any;
       expect(tpl.resources[0].properties.location).toBe('US');
     });
 
     test('com location explicito → respeita o valor', () => {
       const stack = new Stack('test');
       new Storage.Bucket(stack, 'B', { versioning: false, location: 'EU' });
-      const tpl = new GCPProvider().synthesize(stack) as any;
+      const tpl = synthesizeDM(stack) as any;
       expect(tpl.resources[0].properties.location).toBe('EU');
     });
 
     test('com location regional → respeita', () => {
       const stack = new Stack('test');
       new Storage.Bucket(stack, 'B', { versioning: false, location: 'us-central1' });
-      const tpl = new GCPProvider().synthesize(stack) as any;
+      const tpl = synthesizeDM(stack) as any;
       expect(tpl.resources[0].properties.location).toBe('us-central1');
     });
   });
@@ -92,7 +92,7 @@ describe('GCPProvider', () => {
         versioning: false,
         lifecycleRules: [{ transitionToGlacierDays: 30, expireAfterDays: 365 }],
       });
-      const tpl = new GCPProvider().synthesize(stack) as any;
+      const tpl = synthesizeDM(stack) as any;
       const rules = tpl.resources[0].properties.lifecycle.rule;
       expect(rules).toHaveLength(2);
       const setClass = rules.find((r: any) => r.action.type === 'SetStorageClass');
@@ -110,7 +110,7 @@ describe('GCPProvider', () => {
         versioning: false,
         lifecycleRules: [{ expireAfterDays: 90 }],
       });
-      const tpl = new GCPProvider().synthesize(stack) as any;
+      const tpl = synthesizeDM(stack) as any;
       const rules = tpl.resources[0].properties.lifecycle.rule;
       expect(rules).toHaveLength(1);
       expect(rules[0].action.type).toBe('Delete');
@@ -123,7 +123,7 @@ describe('GCPProvider', () => {
         versioning: false,
         lifecycleRules: [{ transitionToGlacierDays: 60 }],
       });
-      const tpl = new GCPProvider().synthesize(stack) as any;
+      const tpl = synthesizeDM(stack) as any;
       const rules = tpl.resources[0].properties.lifecycle.rule;
       expect(rules).toHaveLength(1);
       expect(rules[0].action.type).toBe('SetStorageClass');
@@ -136,7 +136,7 @@ describe('GCPProvider', () => {
         versioning: false,
         lifecycleRules: [{ prefix: 'logs/', transitionToGlacierDays: 30, expireAfterDays: 365 }],
       });
-      const tpl = new GCPProvider().synthesize(stack) as any;
+      const tpl = synthesizeDM(stack) as any;
       const rules = tpl.resources[0].properties.lifecycle.rule;
       expect(rules).toHaveLength(2);
       for (const r of rules) {
@@ -153,7 +153,7 @@ describe('GCPProvider', () => {
       vpcId: 'vpc-1',
       ingressRules: [{ protocol: 'tcp', fromPort: 22, toPort: 22 } as any],
     });
-    const tpl = new GCPProvider().synthesize(stack) as any;
+    const tpl = synthesizeDM(stack) as any;
     const ingress = tpl.resources.find((r: any) => r.name === 'SG-ingress-0');
     expect(ingress.properties.sourceRanges).toEqual(['0.0.0.0/0']);
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('sem CIDR'));
@@ -164,7 +164,7 @@ describe('GCPProvider', () => {
     const warnSpy = jest.spyOn(console, 'warn').mockImplementation();
     const stack = new Stack('test');
     stack.addConstruct({ id: 'X', type: 'Foo.Bar', props: {} } as any);
-    new GCPProvider().synthesize(stack);
+    synthesizeDM(stack);
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("'Foo.Bar' nao suportado"));
     warnSpy.mockRestore();
   });
@@ -176,7 +176,7 @@ describe('GCPProvider', () => {
       authorizerLambdaId: 'OAuthAuthorizerFn',
       routes: [{ method: 'GET', path: '/hello', lambdaId: 'HelloFn' }],
     });
-    const tpl = new GCPProvider().synthesize(stack) as any;
+    const tpl = synthesizeDM(stack) as any;
     const configResource = tpl.resources.find((r: any) => r.type === 'apigateway.v1.apiConfig');
     const doc = configResource.properties.openapiDocuments[0].document;
     const openapi = JSON.parse(Buffer.from(doc.contents, 'base64').toString());
@@ -187,7 +187,7 @@ describe('GCPProvider', () => {
   test('Function.ApiGateway sem authorizerLambdaId → sem securityDefinitions', () => {
     const stack = new Stack('test');
     new Fn.ApiGateway(stack, 'Api', { name: 'my-api', routes: [{ method: 'GET', path: '/hello', lambdaId: 'HelloFn' }] });
-    const tpl = new GCPProvider().synthesize(stack) as any;
+    const tpl = synthesizeDM(stack) as any;
     const configResource = tpl.resources.find((r: any) => r.type === 'apigateway.v1.apiConfig');
     const doc = configResource.properties.openapiDocuments[0].document;
     const openapi = JSON.parse(Buffer.from(doc.contents, 'base64').toString());
@@ -203,7 +203,7 @@ describe('GCPProvider', () => {
         properties: { topic: 'projects/PROJECT_ID/topics/my-topic' },
       },
     });
-    const tpl = new GCPProvider().synthesize(stack) as any;
+    const tpl = synthesizeDM(stack) as any;
     const resource = tpl.resources.find((r: any) => r.type === 'pubsub.v1.topic');
     expect(resource).toBeDefined();
     expect(resource.properties.topic).toBe('projects/PROJECT_ID/topics/my-topic');
