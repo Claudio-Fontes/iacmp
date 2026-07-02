@@ -1,0 +1,391 @@
+{
+  "lvr-shared": {
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "Stack lvr-shared — gerada pelo iacmp",
+    "Resources": {
+      "AppVpc": {
+        "Type": "AWS::EC2::VPC",
+        "Properties": {
+          "CidrBlock": "10.0.0.0/16",
+          "EnableDnsHostnames": true,
+          "EnableDnsSupport": true,
+          "Tags": [
+            {
+              "Key": "Name",
+              "Value": "AppVpc"
+            }
+          ]
+        }
+      },
+      "PrivateSubnet1": {
+        "Type": "AWS::EC2::Subnet",
+        "Properties": {
+          "VpcId": {
+            "Ref": "AppVpc"
+          },
+          "CidrBlock": "10.0.1.0/24",
+          "AvailabilityZone": "us-east-1a",
+          "MapPublicIpOnLaunch": false,
+          "Tags": [
+            {
+              "Key": "Name",
+              "Value": "PrivateSubnet1"
+            },
+            {
+              "Key": "Type",
+              "Value": "private"
+            }
+          ]
+        }
+      },
+      "PrivateSubnet2": {
+        "Type": "AWS::EC2::Subnet",
+        "Properties": {
+          "VpcId": {
+            "Ref": "AppVpc"
+          },
+          "CidrBlock": "10.0.2.0/24",
+          "AvailabilityZone": "us-east-1b",
+          "MapPublicIpOnLaunch": false,
+          "Tags": [
+            {
+              "Key": "Name",
+              "Value": "PrivateSubnet2"
+            },
+            {
+              "Key": "Type",
+              "Value": "private"
+            }
+          ]
+        }
+      },
+      "LambdaSg": {
+        "Type": "AWS::EC2::SecurityGroup",
+        "Properties": {
+          "GroupDescription": "lambda",
+          "VpcId": {
+            "Ref": "AppVpc"
+          },
+          "SecurityGroupIngress": [],
+          "SecurityGroupEgress": [
+            {
+              "IpProtocol": "-1",
+              "CidrIp": "0.0.0.0/0",
+              "Description": "Allow all egress"
+            }
+          ],
+          "Tags": [
+            {
+              "Key": "Name",
+              "Value": "LambdaSg"
+            }
+          ]
+        }
+      },
+      "RedisSg": {
+        "Type": "AWS::EC2::SecurityGroup",
+        "Properties": {
+          "GroupDescription": "redis",
+          "VpcId": {
+            "Ref": "AppVpc"
+          },
+          "SecurityGroupIngress": [
+            {
+              "IpProtocol": "tcp",
+              "FromPort": 6379,
+              "ToPort": 6379,
+              "SourceSecurityGroupId": {
+                "Fn::GetAtt": [
+                  "LambdaSg",
+                  "GroupId"
+                ]
+              }
+            }
+          ],
+          "SecurityGroupEgress": [
+            {
+              "IpProtocol": "-1",
+              "CidrIp": "0.0.0.0/0",
+              "Description": "Allow all egress"
+            }
+          ],
+          "Tags": [
+            {
+              "Key": "Name",
+              "Value": "RedisSg"
+            }
+          ]
+        }
+      },
+      "DynamoGwRouteTable": {
+        "Type": "AWS::EC2::RouteTable",
+        "Properties": {
+          "VpcId": {
+            "Ref": "AppVpc"
+          },
+          "Tags": [
+            {
+              "Key": "Name",
+              "Value": "DynamoGwRouteTable"
+            }
+          ]
+        }
+      },
+      "DynamoGwRTAssoc0": {
+        "Type": "AWS::EC2::SubnetRouteTableAssociation",
+        "Properties": {
+          "SubnetId": {
+            "Ref": "PrivateSubnet1"
+          },
+          "RouteTableId": {
+            "Ref": "DynamoGwRouteTable"
+          }
+        }
+      },
+      "DynamoGwRTAssoc1": {
+        "Type": "AWS::EC2::SubnetRouteTableAssociation",
+        "Properties": {
+          "SubnetId": {
+            "Ref": "PrivateSubnet2"
+          },
+          "RouteTableId": {
+            "Ref": "DynamoGwRouteTable"
+          }
+        }
+      },
+      "DynamoGwDynamodbEndpoint": {
+        "Type": "AWS::EC2::VPCEndpoint",
+        "Properties": {
+          "ServiceName": {
+            "Fn::Sub": "com.amazonaws.${AWS::Region}.dynamodb"
+          },
+          "VpcId": {
+            "Ref": "AppVpc"
+          },
+          "VpcEndpointType": "Gateway",
+          "RouteTableIds": [
+            {
+              "Ref": "DynamoGwRouteTable"
+            }
+          ]
+        }
+      }
+    },
+    "Outputs": {
+      "AppVpcVpcId": {
+        "Value": {
+          "Ref": "AppVpc"
+        },
+        "Export": {
+          "Name": "lvr-shared-AppVpc-VpcId"
+        }
+      },
+      "PrivateSubnet1SubnetId": {
+        "Value": {
+          "Ref": "PrivateSubnet1"
+        },
+        "Export": {
+          "Name": "lvr-shared-PrivateSubnet1-SubnetId"
+        }
+      },
+      "PrivateSubnet2SubnetId": {
+        "Value": {
+          "Ref": "PrivateSubnet2"
+        },
+        "Export": {
+          "Name": "lvr-shared-PrivateSubnet2-SubnetId"
+        }
+      },
+      "LambdaSgGroupId": {
+        "Value": {
+          "Fn::GetAtt": [
+            "LambdaSg",
+            "GroupId"
+          ]
+        },
+        "Export": {
+          "Name": "lvr-shared-LambdaSg-GroupId"
+        }
+      },
+      "RedisSgGroupId": {
+        "Value": {
+          "Fn::GetAtt": [
+            "RedisSg",
+            "GroupId"
+          ]
+        },
+        "Export": {
+          "Name": "lvr-shared-RedisSg-GroupId"
+        }
+      }
+    }
+  },
+  "lvr-services": {
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "Stack lvr-services — gerada pelo iacmp",
+    "Resources": {
+      "CacheSubnetGroup": {
+        "Type": "AWS::ElastiCache::SubnetGroup",
+        "Properties": {
+          "Description": "Subnet group para Cache",
+          "SubnetIds": [
+            {
+              "Fn::ImportValue": "lvr-shared-PrivateSubnet1-SubnetId"
+            },
+            {
+              "Fn::ImportValue": "lvr-shared-PrivateSubnet2-SubnetId"
+            }
+          ]
+        }
+      },
+      "Cache": {
+        "Type": "AWS::ElastiCache::ReplicationGroup",
+        "Properties": {
+          "ReplicationGroupDescription": "Redis Cache",
+          "ReplicationGroupId": "cache",
+          "CacheNodeType": "cache.t3.micro",
+          "Engine": "redis",
+          "EngineVersion": "7.0",
+          "NumCacheClusters": 1,
+          "AutomaticFailoverEnabled": false,
+          "AtRestEncryptionEnabled": true,
+          "TransitEncryptionEnabled": true,
+          "CacheSubnetGroupName": {
+            "Ref": "CacheSubnetGroup"
+          }
+        }
+      },
+      "Sessions": {
+        "Type": "AWS::DynamoDB::Table",
+        "DeletionPolicy": "Retain",
+        "Properties": {
+          "TableName": "Sessions",
+          "BillingMode": "PAY_PER_REQUEST",
+          "AttributeDefinitions": [
+            {
+              "AttributeName": "sessionId",
+              "AttributeType": "S"
+            }
+          ],
+          "KeySchema": [
+            {
+              "AttributeName": "sessionId",
+              "KeyType": "HASH"
+            }
+          ],
+          "PointInTimeRecoverySpecification": {
+            "PointInTimeRecoveryEnabled": true
+          }
+        }
+      }
+    },
+    "Outputs": {
+      "CacheEndpoint": {
+        "Value": {
+          "Fn::GetAtt": [
+            "Cache",
+            "PrimaryEndPoint.Address"
+          ]
+        },
+        "Export": {
+          "Name": "lvr-services-Cache-Endpoint"
+        }
+      },
+      "CachePort": {
+        "Value": {
+          "Fn::GetAtt": [
+            "Cache",
+            "PrimaryEndPoint.Port"
+          ]
+        },
+        "Export": {
+          "Name": "lvr-services-Cache-Port"
+        }
+      }
+    }
+  },
+  "lvr-api": {
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "Stack lvr-api — gerada pelo iacmp",
+    "Resources": {
+      "ApiHandlerDefaultRole": {
+        "Type": "AWS::IAM::Role",
+        "Properties": {
+          "AssumeRolePolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Principal": {
+                  "Service": "lambda.amazonaws.com"
+                },
+                "Action": "sts:AssumeRole"
+              }
+            ]
+          },
+          "ManagedPolicyArns": [
+            "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+          ]
+        }
+      },
+      "ApiHandler": {
+        "Type": "AWS::Lambda::Function",
+        "Properties": {
+          "FunctionName": "ApiHandler",
+          "Runtime": "nodejs20.x",
+          "Handler": "index.handler",
+          "Code": "dist/",
+          "MemorySize": 128,
+          "Timeout": 30,
+          "Role": {
+            "Fn::GetAtt": [
+              "ApiHandlerDefaultRole",
+              "Arn"
+            ]
+          },
+          "Environment": {
+            "Variables": {
+              "REDIS_HOST": {
+                "Fn::ImportValue": "lvr-services-Cache-Endpoint"
+              },
+              "REDIS_PORT": {
+                "Fn::ImportValue": "lvr-services-Cache-Port"
+              },
+              "TABLE_NAME": {
+                "Fn::ImportValue": "lvr-services-Sessions-Name"
+              }
+            }
+          },
+          "VpcConfig": {
+            "SubnetIds": [
+              {
+                "Fn::ImportValue": "lvr-shared-PrivateSubnet1-SubnetId"
+              },
+              {
+                "Fn::ImportValue": "lvr-shared-PrivateSubnet2-SubnetId"
+              }
+            ],
+            "SecurityGroupIds": [
+              {
+                "Fn::ImportValue": "lvr-shared-LambdaSg-GroupId"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "Outputs": {
+      "ApiHandlerArn": {
+        "Value": {
+          "Fn::GetAtt": [
+            "ApiHandler",
+            "Arn"
+          ]
+        },
+        "Export": {
+          "Name": "lvr-api-ApiHandler-Arn"
+        }
+      }
+    }
+  }
+}

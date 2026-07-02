@@ -1,0 +1,9 @@
+ignore_checks:
+  # W3010: synth gera AZ names explícitos (us-east-1a/b/c) para subnets — comportamento intencional
+  - W3010
+  # W2531: nodejs20.x foi marcado deprecated em 2026-04; não é bug do synth, é preocupação de runtime futuro
+  - W2531
+  # W3002: Code: 'dist/' é o formato local-path intencional para `aws cloudformation package`
+  - W3002
+  # W3011: synth define DeletionPolicy sem UpdateReplacePolicy — omissão intencional no design atual
+  - W3011

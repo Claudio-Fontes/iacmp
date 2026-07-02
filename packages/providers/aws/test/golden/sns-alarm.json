@@ -1,0 +1,130 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Stack sns-alarm — gerada pelo iacmp",
+  "Resources": {
+    "AlertHandlerDefaultRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        ]
+      }
+    },
+    "AlertHandler": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": "AlertHandler",
+        "Runtime": "nodejs20.x",
+        "Handler": "alert.handler",
+        "Code": "dist/",
+        "MemorySize": 128,
+        "Timeout": 30,
+        "Role": {
+          "Fn::GetAtt": [
+            "AlertHandlerDefaultRole",
+            "Arn"
+          ]
+        }
+      }
+    },
+    "AlertsTopic": {
+      "Type": "AWS::SNS::Topic",
+      "Properties": {
+        "TopicName": "AlertsTopic",
+        "DisplayName": "Alerts"
+      }
+    },
+    "AlertsTopicSub1": {
+      "Type": "AWS::SNS::Subscription",
+      "Properties": {
+        "TopicArn": {
+          "Ref": "AlertsTopic"
+        },
+        "Protocol": "lambda",
+        "Endpoint": {
+          "Fn::GetAtt": [
+            "AlertHandler",
+            "Arn"
+          ]
+        }
+      }
+    },
+    "AlertsTopicInvokeLambda1": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "AlertHandler",
+            "Arn"
+          ]
+        },
+        "Principal": "sns.amazonaws.com",
+        "SourceArn": {
+          "Ref": "AlertsTopic"
+        }
+      }
+    },
+    "ErrorAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": "ErrorAlarm",
+        "MetricName": "Errors",
+        "Namespace": "AWS/Lambda",
+        "Threshold": 10,
+        "EvaluationPeriods": 2,
+        "Period": 300,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "Statistic": "Average",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "AlertsTopic"
+          }
+        ],
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": "AlertHandler"
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "AlertHandlerArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "AlertHandler",
+          "Arn"
+        ]
+      },
+      "Export": {
+        "Name": "sns-alarm-AlertHandler-Arn"
+      }
+    },
+    "AlertsTopicArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "AlertsTopic",
+          "TopicArn"
+        ]
+      },
+      "Export": {
+        "Name": "sns-alarm-AlertsTopic-Arn"
+      }
+    }
+  }
+}

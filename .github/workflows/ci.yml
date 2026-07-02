@@ -49,3 +49,31 @@ jobs:
 
       - name: Build
         run: npx turbo run build
+
+  cfn-lint:
+    name: cfn-lint (golden templates)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install cfn-lint
+        run: pip install cfn-lint
+
+      - name: Lint CloudFormation golden templates
+        # Multi-stack goldens (lambda-vpc-redis, rds-secret, websocket-api) são
+        # dicionários JSON com várias stacks — não são templates CFN válidos
+        # individualmente e por isso são excluídos aqui.
+        run: |
+          cfn-lint \
+            packages/providers/aws/test/golden/ecs-alb.json \
+            packages/providers/aws/test/golden/kinesis-stream.json \
+            packages/providers/aws/test/golden/s3-lambda-pipeline.json \
+            packages/providers/aws/test/golden/sns-alarm.json \
+            packages/providers/aws/test/golden/stepfunctions-approval.json \
+            packages/providers/aws/test/golden/waf-rest-api.json

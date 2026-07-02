@@ -1,0 +1,179 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Stack stepfunctions-approval — gerada pelo iacmp",
+  "Resources": {
+    "NotifyFnDefaultRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        ]
+      }
+    },
+    "NotifyFn": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": "NotifyFn",
+        "Runtime": "nodejs20.x",
+        "Handler": "notify.handler",
+        "Code": "dist/",
+        "MemorySize": 128,
+        "Timeout": 30,
+        "Role": {
+          "Fn::GetAtt": [
+            "NotifyFnDefaultRole",
+            "Arn"
+          ]
+        }
+      }
+    },
+    "ActionFnDefaultRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        ]
+      }
+    },
+    "ActionFn": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": "ActionFn",
+        "Runtime": "nodejs20.x",
+        "Handler": "action.handler",
+        "Code": "dist/",
+        "MemorySize": 128,
+        "Timeout": 30,
+        "Role": {
+          "Fn::GetAtt": [
+            "ActionFnDefaultRole",
+            "Arn"
+          ]
+        }
+      }
+    },
+    "ApprovalFlowExecutionRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "states.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "ApprovalFlowDefaultPolicy",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "lambda:InvokeFunction",
+                    "ecs:RunTask",
+                    "ecs:StopTask",
+                    "ecs:DescribeTasks",
+                    "sns:Publish",
+                    "sqs:SendMessage",
+                    "events:PutTargets",
+                    "events:PutRule",
+                    "events:DescribeRule",
+                    "iam:PassRole"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "ApprovalFlow": {
+      "Type": "AWS::StepFunctions::StateMachine",
+      "Properties": {
+        "StateMachineName": "ApprovalFlow",
+        "StateMachineType": "STANDARD",
+        "DefinitionString": {
+          "Fn::Sub": [
+            "{\"Comment\":\"Workflow ApprovalFlow\",\"StartAt\":\"RequestApproval\",\"States\":{\"RequestApproval\":{\"Type\":\"Task\",\"Resource\":\"arn:aws:states:::lambda:invoke.waitForTaskToken\",\"Parameters\":{\"FunctionName\":\"${RequestApprovalArn}\",\"Payload\":{\"taskToken.$\":\"$$.Task.Token\",\"input.$\":\"$\"}},\"Next\":\"WaitForApproval\"},\"WaitForApproval\":{\"Type\":\"Wait\",\"Seconds\":3600,\"Next\":\"ExecuteAction\"},\"ExecuteAction\":{\"Type\":\"Task\",\"Resource\":\"${ExecuteActionArn}\",\"End\":true}}}",
+            {
+              "RequestApprovalArn": {
+                "Fn::GetAtt": [
+                  "NotifyFn",
+                  "Arn"
+                ]
+              },
+              "ExecuteActionArn": {
+                "Fn::GetAtt": [
+                  "ActionFn",
+                  "Arn"
+                ]
+              }
+            }
+          ]
+        },
+        "RoleArn": {
+          "Fn::GetAtt": [
+            "ApprovalFlowExecutionRole",
+            "Arn"
+          ]
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "NotifyFnArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "NotifyFn",
+          "Arn"
+        ]
+      },
+      "Export": {
+        "Name": "stepfunctions-approval-NotifyFn-Arn"
+      }
+    },
+    "ActionFnArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "ActionFn",
+          "Arn"
+        ]
+      },
+      "Export": {
+        "Name": "stepfunctions-approval-ActionFn-Arn"
+      }
+    }
+  }
+}

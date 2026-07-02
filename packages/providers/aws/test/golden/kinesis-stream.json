@@ -1,0 +1,192 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Stack kinesis-stream — gerada pelo iacmp",
+  "Resources": {
+    "EventStream": {
+      "Type": "AWS::Kinesis::Stream",
+      "Properties": {
+        "Name": "EventStream",
+        "ShardCount": 1,
+        "RetentionPeriodHours": 24
+      }
+    },
+    "ProducerFn": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": "ProducerFn",
+        "Runtime": "nodejs20.x",
+        "Handler": "producer.handler",
+        "Code": "dist/",
+        "MemorySize": 128,
+        "Timeout": 30,
+        "Role": {
+          "Fn::GetAtt": [
+            "ProducerPolicyRole",
+            "Arn"
+          ]
+        },
+        "Environment": {
+          "Variables": {
+            "STREAM_NAME": {
+              "Ref": "EventStream"
+            }
+          }
+        }
+      }
+    },
+    "ProducerPolicyRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": {
+          "Fn::Sub": "ProducerFn-role-${AWS::StackName}"
+        },
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        ],
+        "Policies": [
+          {
+            "PolicyName": "ProducerPolicy",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "kinesis:PutRecord",
+                    "kinesis:PutRecords"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::GetAtt": [
+                        "EventStream",
+                        "Arn"
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "ProducerPolicyRole"
+          }
+        ]
+      }
+    },
+    "ConsumerFnDefaultRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+          "arn:aws:iam::aws:policy/service-role/AWSLambdaKinesisExecutionRole"
+        ]
+      }
+    },
+    "ConsumerFn": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": "ConsumerFn",
+        "Runtime": "nodejs20.x",
+        "Handler": "consumer.handler",
+        "Code": "dist/",
+        "MemorySize": 128,
+        "Timeout": 30,
+        "Role": {
+          "Fn::GetAtt": [
+            "ConsumerFnDefaultRole",
+            "Arn"
+          ]
+        }
+      }
+    },
+    "ConsumerFnEventSource1": {
+      "Type": "AWS::Lambda::EventSourceMapping",
+      "Properties": {
+        "EventSourceArn": {
+          "Fn::GetAtt": [
+            "EventStream",
+            "Arn"
+          ]
+        },
+        "FunctionName": {
+          "Ref": "ConsumerFn"
+        },
+        "BatchSize": 100,
+        "StartingPosition": "TRIM_HORIZON"
+      }
+    }
+  },
+  "Outputs": {
+    "EventStreamArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "EventStream",
+          "Arn"
+        ]
+      },
+      "Export": {
+        "Name": "kinesis-stream-EventStream-Arn"
+      }
+    },
+    "ProducerFnArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "ProducerFn",
+          "Arn"
+        ]
+      },
+      "Export": {
+        "Name": "kinesis-stream-ProducerFn-Arn"
+      }
+    },
+    "ProducerPolicyRoleRoleArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "ProducerPolicyRole",
+          "Arn"
+        ]
+      },
+      "Export": {
+        "Name": "kinesis-stream-ProducerPolicyRole-RoleArn"
+      }
+    },
+    "ConsumerFnArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "ConsumerFn",
+          "Arn"
+        ]
+      },
+      "Export": {
+        "Name": "kinesis-stream-ConsumerFn-Arn"
+      }
+    }
+  }
+}

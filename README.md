@@ -1,6 +1,17 @@
 # iacmp — IaC Multi Plataforma
 
-CLI unificado e inteligente para provisionamento de infraestrutura em AWS, Azure, GCP e Terraform, com geração de stacks via IA.
+CLI unificado e inteligente para provisionamento de infraestrutura em nuvem com geração de stacks via IA.
+
+**AWS é o provider de referência**, validado por uma bateria de 20 ciclos de deploy real cobrindo ECS/ALB, Lambda em VPC, RDS, ElastiCache Redis, DynamoDB, Step Functions, WAF, WebSocket API Gateway, Kinesis e SNS. Azure e GCP são **experimentais**: o synth gera templates, mas esses providers nunca passaram por deploy real e carregam as mesmas classes de bug que a bateria encontrou e corrigiu no AWS. Não use Azure ou GCP em produção.
+
+## Status dos providers
+
+| Provider | Status | Observação |
+|---|---|---|
+| `aws` | Estável — deploy real validado | Provider de referência; 20 ciclos de bateria com correções aplicadas |
+| `terraform` | Experimental — será reformulado | Será reposicionado como formato de saída (não provider), ver [docs/estudo-arquitetura-multicloud.md](docs/estudo-arquitetura-multicloud.md) |
+| `azure` | Experimental / congelado | Synth gera ARM templates mas nunca validado em deploy real; não recebe novas features |
+| `gcp` | Experimental / congelado | O Deployment Manager foi descontinuado pela Google; o synth atual será substituído por Terraform |
 
 ## Instalação
 
@@ -87,12 +98,12 @@ iacmp init meu-projeto --template rds
 
 ## Providers suportados
 
-| Provider | Output |
-|---|---|
-| `aws` | CloudFormation JSON |
-| `azure` | ARM Template JSON |
-| `gcp` | GCP Deployment Manager JSON |
-| `terraform` | HCL (`.tf`) |
+| Provider | Output | Status |
+|---|---|---|
+| `aws` | CloudFormation JSON | Estável |
+| `azure` | ARM Template JSON | Experimental / congelado |
+| `gcp` | GCP Deployment Manager JSON | Experimental / congelado |
+| `terraform` | HCL (`.tf`) | Experimental |
 
 ## Constructs disponíveis
 

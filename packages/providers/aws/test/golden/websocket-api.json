@@ -1,0 +1,345 @@
+{
+  "ws-data": {
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "Stack ws-data — gerada pelo iacmp",
+    "Resources": {
+      "Connections": {
+        "Type": "AWS::DynamoDB::Table",
+        "DeletionPolicy": "Retain",
+        "Properties": {
+          "TableName": "Connections",
+          "BillingMode": "PAY_PER_REQUEST",
+          "AttributeDefinitions": [
+            {
+              "AttributeName": "connectionId",
+              "AttributeType": "S"
+            }
+          ],
+          "KeySchema": [
+            {
+              "AttributeName": "connectionId",
+              "KeyType": "HASH"
+            }
+          ],
+          "PointInTimeRecoverySpecification": {
+            "PointInTimeRecoveryEnabled": true
+          }
+        }
+      }
+    }
+  },
+  "ws-api": {
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "Stack ws-api — gerada pelo iacmp",
+    "Resources": {
+      "ConnectFnDefaultRole": {
+        "Type": "AWS::IAM::Role",
+        "Properties": {
+          "AssumeRolePolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Principal": {
+                  "Service": "lambda.amazonaws.com"
+                },
+                "Action": "sts:AssumeRole"
+              }
+            ]
+          },
+          "ManagedPolicyArns": [
+            "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+          ]
+        }
+      },
+      "ConnectFn": {
+        "Type": "AWS::Lambda::Function",
+        "Properties": {
+          "FunctionName": "ConnectFn",
+          "Runtime": "nodejs20.x",
+          "Handler": "connect.handler",
+          "Code": "dist/",
+          "MemorySize": 128,
+          "Timeout": 30,
+          "Role": {
+            "Fn::GetAtt": [
+              "ConnectFnDefaultRole",
+              "Arn"
+            ]
+          },
+          "Environment": {
+            "Variables": {
+              "TABLE_NAME": {
+                "Fn::ImportValue": "ws-data-Connections-Name"
+              }
+            }
+          }
+        }
+      },
+      "DisconnectFnDefaultRole": {
+        "Type": "AWS::IAM::Role",
+        "Properties": {
+          "AssumeRolePolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Principal": {
+                  "Service": "lambda.amazonaws.com"
+                },
+                "Action": "sts:AssumeRole"
+              }
+            ]
+          },
+          "ManagedPolicyArns": [
+            "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+          ]
+        }
+      },
+      "DisconnectFn": {
+        "Type": "AWS::Lambda::Function",
+        "Properties": {
+          "FunctionName": "DisconnectFn",
+          "Runtime": "nodejs20.x",
+          "Handler": "disconnect.handler",
+          "Code": "dist/",
+          "MemorySize": 128,
+          "Timeout": 30,
+          "Role": {
+            "Fn::GetAtt": [
+              "DisconnectFnDefaultRole",
+              "Arn"
+            ]
+          },
+          "Environment": {
+            "Variables": {
+              "TABLE_NAME": {
+                "Fn::ImportValue": "ws-data-Connections-Name"
+              }
+            }
+          }
+        }
+      },
+      "DefaultFnDefaultRole": {
+        "Type": "AWS::IAM::Role",
+        "Properties": {
+          "AssumeRolePolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Principal": {
+                  "Service": "lambda.amazonaws.com"
+                },
+                "Action": "sts:AssumeRole"
+              }
+            ]
+          },
+          "ManagedPolicyArns": [
+            "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+          ]
+        }
+      },
+      "DefaultFn": {
+        "Type": "AWS::Lambda::Function",
+        "Properties": {
+          "FunctionName": "DefaultFn",
+          "Runtime": "nodejs20.x",
+          "Handler": "default.handler",
+          "Code": "dist/",
+          "MemorySize": 128,
+          "Timeout": 30,
+          "Role": {
+            "Fn::GetAtt": [
+              "DefaultFnDefaultRole",
+              "Arn"
+            ]
+          },
+          "Environment": {
+            "Variables": {
+              "TABLE_NAME": {
+                "Fn::ImportValue": "ws-data-Connections-Name"
+              }
+            }
+          }
+        }
+      },
+      "WsApi": {
+        "Type": "AWS::ApiGatewayV2::Api",
+        "Properties": {
+          "Name": "websocket-api",
+          "ProtocolType": "WEBSOCKET",
+          "RouteSelectionExpression": "$request.body.action"
+        }
+      },
+      "WsApiStage": {
+        "Type": "AWS::ApiGatewayV2::Stage",
+        "Properties": {
+          "ApiId": {
+            "Ref": "WsApi"
+          },
+          "StageName": "$default",
+          "AutoDeploy": true
+        }
+      },
+      "WsApiANYconnectRoute": {
+        "Type": "AWS::ApiGatewayV2::Route",
+        "Properties": {
+          "ApiId": {
+            "Ref": "WsApi"
+          },
+          "RouteKey": "$connect",
+          "Target": {
+            "Fn::Sub": "integrations/${WsApiANYconnectRouteIntegration}"
+          }
+        }
+      },
+      "WsApiANYconnectRouteIntegration": {
+        "Type": "AWS::ApiGatewayV2::Integration",
+        "Properties": {
+          "ApiId": {
+            "Ref": "WsApi"
+          },
+          "IntegrationType": "AWS_PROXY",
+          "IntegrationUri": {
+            "Fn::Sub": "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ConnectFn.Arn}/invocations"
+          },
+          "IntegrationMethod": "POST"
+        }
+      },
+      "WsApiANYdisconnectRoute": {
+        "Type": "AWS::ApiGatewayV2::Route",
+        "Properties": {
+          "ApiId": {
+            "Ref": "WsApi"
+          },
+          "RouteKey": "$disconnect",
+          "Target": {
+            "Fn::Sub": "integrations/${WsApiANYdisconnectRouteIntegration}"
+          }
+        }
+      },
+      "WsApiANYdisconnectRouteIntegration": {
+        "Type": "AWS::ApiGatewayV2::Integration",
+        "Properties": {
+          "ApiId": {
+            "Ref": "WsApi"
+          },
+          "IntegrationType": "AWS_PROXY",
+          "IntegrationUri": {
+            "Fn::Sub": "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${DisconnectFn.Arn}/invocations"
+          },
+          "IntegrationMethod": "POST"
+        }
+      },
+      "WsApiANYdefaultRoute": {
+        "Type": "AWS::ApiGatewayV2::Route",
+        "Properties": {
+          "ApiId": {
+            "Ref": "WsApi"
+          },
+          "RouteKey": "$default",
+          "Target": {
+            "Fn::Sub": "integrations/${WsApiANYdefaultRouteIntegration}"
+          }
+        }
+      },
+      "WsApiANYdefaultRouteIntegration": {
+        "Type": "AWS::ApiGatewayV2::Integration",
+        "Properties": {
+          "ApiId": {
+            "Ref": "WsApi"
+          },
+          "IntegrationType": "AWS_PROXY",
+          "IntegrationUri": {
+            "Fn::Sub": "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${DefaultFn.Arn}/invocations"
+          },
+          "IntegrationMethod": "POST"
+        }
+      },
+      "ConnectFnWsApiPermission": {
+        "Type": "AWS::Lambda::Permission",
+        "Properties": {
+          "Action": "lambda:InvokeFunction",
+          "FunctionName": {
+            "Fn::GetAtt": [
+              "ConnectFn",
+              "Arn"
+            ]
+          },
+          "Principal": "apigateway.amazonaws.com",
+          "SourceArn": {
+            "Fn::Sub": "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WsApi}/*/*"
+          }
+        }
+      },
+      "DisconnectFnWsApiPermission": {
+        "Type": "AWS::Lambda::Permission",
+        "Properties": {
+          "Action": "lambda:InvokeFunction",
+          "FunctionName": {
+            "Fn::GetAtt": [
+              "DisconnectFn",
+              "Arn"
+            ]
+          },
+          "Principal": "apigateway.amazonaws.com",
+          "SourceArn": {
+            "Fn::Sub": "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WsApi}/*/*"
+          }
+        }
+      },
+      "DefaultFnWsApiPermission": {
+        "Type": "AWS::Lambda::Permission",
+        "Properties": {
+          "Action": "lambda:InvokeFunction",
+          "FunctionName": {
+            "Fn::GetAtt": [
+              "DefaultFn",
+              "Arn"
+            ]
+          },
+          "Principal": "apigateway.amazonaws.com",
+          "SourceArn": {
+            "Fn::Sub": "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WsApi}/*/*"
+          }
+        }
+      }
+    },
+    "Outputs": {
+      "ConnectFnArn": {
+        "Value": {
+          "Fn::GetAtt": [
+            "ConnectFn",
+            "Arn"
+          ]
+        },
+        "Export": {
+          "Name": "ws-api-ConnectFn-Arn"
+        }
+      },
+      "DisconnectFnArn": {
+        "Value": {
+          "Fn::GetAtt": [
+            "DisconnectFn",
+            "Arn"
+          ]
+        },
+        "Export": {
+          "Name": "ws-api-DisconnectFn-Arn"
+        }
+      },
+      "DefaultFnArn": {
+        "Value": {
+          "Fn::GetAtt": [
+            "DefaultFn",
+            "Arn"
+          ]
+        },
+        "Export": {
+          "Name": "ws-api-DefaultFn-Arn"
+        }
+      }
+    }
+  }
+}

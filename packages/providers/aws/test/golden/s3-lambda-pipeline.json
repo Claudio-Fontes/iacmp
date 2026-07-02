@@ -1,0 +1,163 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Stack s3-lambda-pipeline — gerada pelo iacmp",
+  "Resources": {
+    "ProcessFnDefaultRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        ]
+      }
+    },
+    "ProcessFn": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": "ProcessFn",
+        "Runtime": "nodejs20.x",
+        "Handler": "index.handler",
+        "Code": "dist/",
+        "MemorySize": 128,
+        "Timeout": 30,
+        "Role": {
+          "Fn::GetAtt": [
+            "ProcessFnDefaultRole",
+            "Arn"
+          ]
+        },
+        "Environment": {
+          "Variables": {
+            "DEST_BUCKET": {
+              "Ref": "OutputBucket"
+            }
+          }
+        }
+      }
+    },
+    "InputBucket": {
+      "Type": "AWS::S3::Bucket",
+      "DeletionPolicy": "Retain",
+      "Properties": {
+        "VersioningConfiguration": {
+          "Status": "Enabled"
+        },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true
+        },
+        "NotificationConfiguration": {
+          "LambdaConfigurations": [
+            {
+              "Event": "s3:ObjectCreated:*",
+              "Function": {
+                "Fn::GetAtt": [
+                  "ProcessFn",
+                  "Arn"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "DependsOn": [
+        "InputBucketInvokePermission0"
+      ]
+    },
+    "InputBucketInvokePermission0": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "ProcessFn",
+            "Arn"
+          ]
+        },
+        "Principal": "s3.amazonaws.com",
+        "SourceAccount": {
+          "Ref": "AWS::AccountId"
+        }
+      }
+    },
+    "OutputBucket": {
+      "Type": "AWS::S3::Bucket",
+      "DeletionPolicy": "Retain",
+      "Properties": {
+        "VersioningConfiguration": {
+          "Status": "Suspended"
+        },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "ProcessFnArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "ProcessFn",
+          "Arn"
+        ]
+      },
+      "Export": {
+        "Name": "s3-lambda-pipeline-ProcessFn-Arn"
+      }
+    },
+    "InputBucketName": {
+      "Value": {
+        "Ref": "InputBucket"
+      },
+      "Export": {
+        "Name": "s3-lambda-pipeline-InputBucket-Name"
+      }
+    },
+    "InputBucketArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "InputBucket",
+          "Arn"
+        ]
+      },
+      "Export": {
+        "Name": "s3-lambda-pipeline-InputBucket-Arn"
+      }
+    },
+    "OutputBucketName": {
+      "Value": {
+        "Ref": "OutputBucket"
+      },
+      "Export": {
+        "Name": "s3-lambda-pipeline-OutputBucket-Name"
+      }
+    },
+    "OutputBucketArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "OutputBucket",
+          "Arn"
+        ]
+      },
+      "Export": {
+        "Name": "s3-lambda-pipeline-OutputBucket-Arn"
+      }
+    }
+  }
+}
