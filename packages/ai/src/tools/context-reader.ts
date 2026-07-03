@@ -4,6 +4,7 @@ import { buildIndexes, IndexerOptions } from '../rag/indexer';
 import { retrieve, formatRetrievedContext, RetrieverIndexes } from '../rag/retriever';
 import { SYSTEM_PROMPT_TEMPLATE } from '../prompts/system-prompt';
 import { fetchLive, shouldFetchLive } from '../rag/live-retriever';
+import { routeQuery } from '../rag/query-router';
 
 // Cache de índices em memória por projectDir (evita reindexar em cada mensagem)
 const indexCache = new Map<string, RetrieverIndexes>();
@@ -179,11 +180,9 @@ export function readProjectContext(projectDir: string): string {
         const stat = fs.statSync(filePath);
         lines.push(`- ${rel} (${(stat.size / 1024).toFixed(1)} KB)`);
         const content = fs.readFileSync(filePath, 'utf-8');
-        if (content.split('\n').length <= 200) {
-          lines.push('```typescript');
-          lines.push(content);
-          lines.push('```');
-        }
+        lines.push('```typescript');
+        lines.push(content);
+        lines.push('```');
       }
       lines.push('');
     } else {
@@ -223,10 +222,11 @@ export async function readProjectContextRAG(
     const indexes = await buildIndexes(indexerOptions);
     indexCache.set(projectDir, indexes);
 
+    const route = routeQuery(userQuery);
     const results = retrieve(indexes, userQuery, {
-      projectK: 5,
-      docsK: 3,
-      knowledgeK: 5,
+      projectK: route.useProjectStacks ? 5 : 0,
+      docsK: route.useIacmpDocs ? 3 : 0,
+      knowledgeK: route.usePlatformKnowledge ? 5 : 0,
       sourceK: 5,
       minScore: 0.05,
     });

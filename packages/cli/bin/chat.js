@@ -148,7 +148,19 @@ function createContextualProvider(base, projectContext, responseLang) {
   };
 }
 
-async function runGeneration(provider, session, lastPrompt, projectContext) {
+// Cria um provider de revisão com temperatura 0 para reduzir viés de confirmação.
+// O modelo revisa a própria saída — temperatura baixa force avaliação mais crítica.
+function createReviewProvider(base, projectContext, responseLang) {
+  let reviewBase = base;
+  if (base.name === 'anthropic' && process.env.ANTHROPIC_API_KEY) {
+    reviewBase = new AnthropicProvider(process.env.ANTHROPIC_API_KEY, process.env.IACMP_MODEL, 0);
+  } else if (base.name === 'openai' && process.env.OPENAI_API_KEY) {
+    reviewBase = new OpenAIProvider(process.env.OPENAI_API_KEY, process.env.IACMP_MODEL, 0);
+  }
+  return createContextualProvider(reviewBase, projectContext, responseLang);
+}
+
+async function runGeneration(provider, session, lastPrompt, projectContext, aiProvider, responseLang) {
   const t = MESSAGES[currentLang].chat;
   let acted = false;
   // Chave do cache inclui hash do contexto para evitar resposta stale quando o projeto muda
@@ -228,6 +240,8 @@ async function runGeneration(provider, session, lastPrompt, projectContext) {
   // ── Auto-revisão semântica ────────────────────────────────────────────────
   // A IA revisa a própria resposta contra o pedido (construct certo, CRUD
   // completo, schema/SQL), pegando erros de intenção que TS/synth não pegam.
+  // Usa temperatura 0 para reduzir viés de confirmação — o modelo tende a
+  // validar a própria saída quando revisa com temperatura alta.
   if (!fromCache && parsed.files.length > 0) {
     process.stderr.write('Auto-revisão da geração...\n');
     const reviewPrompt =
@@ -242,8 +256,11 @@ async function runGeneration(provider, session, lastPrompt, projectContext) {
       `Se houver QUALQUER defeito, retorne o JSON COMPLETO CORRIGIDO com os ${parsed.files.length} arquivo(s). Se estiver perfeito, retorne o mesmo JSON. Responda APENAS com o JSON.`;
     session.addUserMessage(reviewPrompt);
     const reviewChunks = [];
+    const reviewProvider = (aiProvider && responseLang)
+      ? createReviewProvider(aiProvider, projectContext, responseLang)
+      : provider;
     try {
-      await provider.stream(session.getMessages(), chunk => reviewChunks.push(chunk));
+      await reviewProvider.stream(session.getMessages(), chunk => reviewChunks.push(chunk));
       const reviewRaw = reviewChunks.join('');
       session.addAssistantMessage(reviewRaw);
       try {
@@ -570,12 +587,18 @@ async function main() {
 
     const freshContext = await readProjectContextRAG(cwd, input);
 
-    // Na primeira mensagem da sessão, inclui o contexto das stacks na mensagem
-    // para garantir que o modelo leia o estado atual do projeto mesmo com histórico longo
     const isFirstMessage = session.getMessages().length === 0;
     const hasStacks = freshContext.includes('Stacks existentes');
-    const userMessageContent = (isFirstMessage && hasStacks)
-      ? `${input}\n\n[Contexto do projeto]\n${freshContext}`
+
+    function extractStacksSection(ctx) {
+      const start = ctx.indexOf('## Stacks existentes');
+      if (start === -1) return '';
+      return ctx.slice(start);
+    }
+
+    const stacksSection = hasStacks ? extractStacksSection(freshContext) : '';
+    const userMessageContent = (hasStacks && stacksSection)
+      ? `${input}\n\n[Estado atual do projeto]\n${stacksSection}`
       : input;
 
     session.addUserMessage(userMessageContent);
@@ -583,7 +606,7 @@ async function main() {
     const responseLang = voiceLanguageForThisTurn || currentLang;
     const provider = createContextualProvider(aiProvider, freshContext, responseLang);
 
-    const responded = await runGeneration(provider, session, input, freshContext);
+    const responded = await runGeneration(provider, session, input, freshContext, aiProvider, responseLang);
     if (responded) {
       saveSession(cwd, session.getMessages());
     } else {

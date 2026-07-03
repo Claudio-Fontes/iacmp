@@ -559,8 +559,25 @@ export const LIVE_SIGNALS = [
   'cloud run preço', 'bigquery custo', 'gke preço', 'cloud sql gcp',
 ];
 
-// Verifica se a query contém sinais que ativam o live retriever
+// Frases que indicam intenção explícita de busca ao vivo.
+// Exigidas em conjunto com LIVE_SIGNALS para evitar disparos acidentais
+// em queries que mencionam "terraform" ou "preço" sem querer dados externos.
+const EXPLICIT_INTENT_PHRASES = [
+  'ao vivo', 'agora', 'atualizado', 'últimas novidades', 'ultimas novidades',
+  'preço atual', 'preco atual', 'novo serviço', 'lançou', 'lancou',
+  'recém lançado', 'recem lancado', 'em tempo real', 'live',
+  'latest', 'current price', 'just released', 'new service',
+  'versão atual', 'versao atual', "what's new", 'whats new',
+  'release notes', 'release note', 'novidade',
+];
+
+// Verifica se a query contém sinais que ativam o live retriever.
+// Requer AMBOS: um sinal genérico (LIVE_SIGNALS) E uma frase de intenção explícita
+// (EXPLICIT_INTENT_PHRASES) — evita até 3 chamadas HTTP desnecessárias por geração.
 export function shouldFetchLive(query: string): boolean {
   const lower = query.toLowerCase();
-  return LIVE_SIGNALS.some(s => lower.includes(s));
+  const hasSignal = LIVE_SIGNALS.some(s => lower.includes(s));
+  if (!hasSignal) return false;
+  const hasIntent = EXPLICIT_INTENT_PHRASES.some(p => lower.includes(p));
+  return hasIntent;
 }

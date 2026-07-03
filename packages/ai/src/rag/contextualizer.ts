@@ -33,10 +33,18 @@ export class Contextualizer {
     this.client = new Anthropic({ apiKey });
   }
 
+  private extractWindow(fullDocument: string, chunkContent: string, windowSize: number = 500): string {
+    const pos = fullDocument.indexOf(chunkContent.slice(0, 100));
+    if (pos === -1) return fullDocument.slice(0, 1000);
+    const start = Math.max(0, pos - windowSize);
+    const end = Math.min(fullDocument.length, pos + chunkContent.length + windowSize);
+    return fullDocument.slice(start, end);
+  }
+
   // Enriquece um único chunk com contexto gerado pelo Claude
   async enrichChunk(chunk: Chunk, fullDocument: string): Promise<Chunk> {
     const prompt = CONTEXTUALIZER_PROMPT
-      .replace('{DOCUMENT}', fullDocument.slice(0, 8000)) // limita o doc para evitar context overflow
+      .replace('{DOCUMENT}', this.extractWindow(fullDocument, chunk.content))
       .replace('{CHUNK}', chunk.content.slice(0, 2000));
 
     try {

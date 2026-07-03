@@ -4,7 +4,20 @@ import * as crypto from 'crypto';
 import { AIMessage } from '../providers/base';
 
 const SESSION_FILE = '.iacmp/session.json';
-const MAX_MESSAGES = 20;
+const TOKEN_BUDGET = 40_000;
+
+function estimateTokens(messages: AIMessage[]): number {
+  return messages.reduce((sum, m) => sum + Math.ceil(m.content.length / 4), 0);
+}
+
+function trimToTokenBudget(messages: AIMessage[]): AIMessage[] {
+  if (messages.length <= 2) return messages;
+  let trimmed = [...messages];
+  while (trimmed.length > 2 && estimateTokens(trimmed) > TOKEN_BUDGET) {
+    trimmed = trimmed.slice(1);
+  }
+  return trimmed;
+}
 
 interface SessionData {
   messages: AIMessage[];
@@ -17,7 +30,6 @@ function sessionPath(projectDir: string): string {
 }
 
 function hashProject(projectDir: string): string {
-  // Hash baseado nos nomes dos arquivos de stack — muda quando stacks são adicionadas/removidas
   const stacksDir = path.join(projectDir, 'stacks');
   if (!fs.existsSync(stacksDir)) return 'empty';
   const findFiles = (dir: string): string[] => {
@@ -26,11 +38,17 @@ function hashProject(projectDir: string): string {
     for (const e of entries) {
       const full = path.join(dir, e.name);
       if (e.isDirectory()) files.push(...findFiles(full));
-      else if (e.name.endsWith('.ts')) files.push(path.relative(projectDir, full));
+      else if (e.name.endsWith('.ts')) files.push(full);
     }
     return files.sort();
   };
-  return crypto.createHash('sha256').update(findFiles(stacksDir).join('\n')).digest('hex').slice(0, 8);
+  const hash = crypto.createHash('sha256');
+  for (const filePath of findFiles(stacksDir)) {
+    const rel = path.relative(projectDir, filePath);
+    const content = fs.readFileSync(filePath, 'utf-8');
+    hash.update(rel + content);
+  }
+  return hash.digest('hex').slice(0, 8);
 }
 
 export function loadSession(projectDir: string): AIMessage[] {
@@ -60,7 +78,7 @@ export function saveSession(projectDir: string, messages: AIMessage[]): void {
   const dir = path.dirname(sessionPath(projectDir));
   fs.mkdirSync(dir, { recursive: true });
   const data: SessionData = {
-    messages: messages.slice(-MAX_MESSAGES),
+    messages: trimToTokenBudget(messages),
     updatedAt: new Date().toISOString(),
     projectHash: hashProject(projectDir),
   };

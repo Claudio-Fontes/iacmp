@@ -23,6 +23,8 @@ const B = 0.75;
 
 function tokenize(text: string): string[] {
   return text
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
     .toLowerCase()
     .replace(/[^a-z0-9\s._-]/g, ' ')
     .split(/\s+/)

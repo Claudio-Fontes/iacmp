@@ -44,6 +44,7 @@ export { buildIndexes, IndexerOptions } from './rag/indexer';
 // i18n
 export { Language, SUPPORTED_LANGUAGES, DEFAULT_LANGUAGE, resolveLanguage } from './i18n/languages';
 export { MESSAGES, Messages } from './i18n/messages';
+export { analyzeDiagramImage, DiagramKeys } from './tools/diagram-reader';
 // Voz
 export {
   startRecording,

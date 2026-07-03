@@ -7,10 +7,12 @@ export class OpenAIProvider implements AIProvider {
   name = 'openai';
   private client: OpenAI;
   private model: string;
+  private temperature: number;
 
-  constructor(apiKey: string, model = 'gpt-4o') {
+  constructor(apiKey: string, model = 'gpt-4o', temperature = 1) {
     this.client = new OpenAI({ apiKey });
     this.model = model;
+    this.temperature = temperature;
   }
 
   async chat(messages: AIMessage[]): Promise<AIResponse> {
@@ -26,6 +28,7 @@ export class OpenAIProvider implements AIProvider {
     const response = await withRetry(() => this.client.chat.completions.create({
       model: this.model,
       max_tokens: 16384,
+      temperature: this.temperature,
       messages: openaiMessages,
       response_format: { type: 'json_object' },
     }));
@@ -56,6 +59,7 @@ export class OpenAIProvider implements AIProvider {
       const stream = await this.client.chat.completions.create({
         model: this.model,
         max_tokens: 16384,
+        temperature: this.temperature,
         messages: openaiMessages,
         response_format: { type: 'json_object' },
         stream: true,

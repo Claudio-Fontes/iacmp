@@ -7,10 +7,12 @@ export class AnthropicProvider implements AIProvider {
   name = 'anthropic';
   private client: Anthropic;
   private model: string;
+  private temperature: number;
 
-  constructor(apiKey: string, model = 'claude-sonnet-4-6') {
+  constructor(apiKey: string, model = 'claude-sonnet-4-6', temperature = 1) {
     this.client = new Anthropic({ apiKey });
     this.model = model;
+    this.temperature = temperature;
   }
 
   async chat(messages: AIMessage[]): Promise<AIResponse> {
@@ -22,6 +24,7 @@ export class AnthropicProvider implements AIProvider {
     const response = await withRetry(() => this.client.messages.create({
       model: this.model,
       max_tokens: 8192,
+      temperature: this.temperature,
       system,
       messages: filtered,
     }));
@@ -51,6 +54,7 @@ export class AnthropicProvider implements AIProvider {
       const stream = this.client.messages.stream({
         model: this.model,
         max_tokens: 8192,
+        temperature: this.temperature,
         system,
         messages: filtered,
       });

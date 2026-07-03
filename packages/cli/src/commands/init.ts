@@ -2,6 +2,8 @@ import { Command, Args, Flags } from '@oclif/core';
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import ora from 'ora';
+import { analyzeDiagramImage } from '@iacmp/ai';
 
 // ---------------------------------------------------------------------------
 // Templates de stack — embutidos no CLI, funcionam após npm install -g iacmp
@@ -272,7 +274,7 @@ test('${projectName} stack tem pelo menos um construct', () => {
 `;
 }
 
-function packageJson(projectName: string, coreVersion: string): string {
+function packageJson(projectName: string, coreRef: string): string {
   return JSON.stringify({
     name: projectName,
     version: '0.1.0',
@@ -285,7 +287,7 @@ function packageJson(projectName: string, coreVersion: string): string {
       deploy: 'iacmp deploy',
     },
     dependencies: {
-      '@iacmp/core': `^${coreVersion}`,
+      '@iacmp/core': coreRef,
     },
     devDependencies: {
       '@types/jest': '^30',
@@ -429,6 +431,9 @@ export default class Init extends Command {
       default: 'blank',
     }),
     list: Flags.boolean({ description: 'Lista os templates disponíveis', default: false }),
+    diagram: Flags.string({
+      description: 'Caminho para imagem de diagrama de arquitetura — analisa via IA e gera stacks automaticamente',
+    }),
   };
 
   static examples = [
@@ -438,6 +443,7 @@ export default class Init extends Command {
     '$ iacmp init meu-projeto --template serverless',
     '$ iacmp init meu-projeto --template fullstack',
     '$ iacmp init --list',
+    '$ iacmp init meu-projeto --diagram ~/Downloads/arquitetura.png',
   ];
 
   async run(): Promise<void> {
@@ -497,8 +503,11 @@ export default class Init extends Command {
     // .gitignore
     fs.writeFileSync(path.join(projectDir, '.gitignore'), gitignore());
 
-    // .env
-    fs.writeFileSync(path.join(projectDir, '.env'), dotenv());
+    // .env — só cria se não existir para não sobrescrever keys já configuradas
+    const envPath = path.join(projectDir, '.env');
+    if (!fs.existsSync(envPath)) {
+      fs.writeFileSync(envPath, dotenv());
+    }
 
     // stacks/
     const stacksDir = path.join(projectDir, 'stacks');
@@ -507,16 +516,22 @@ export default class Init extends Command {
     const stackFileName = `${projectName}-stack.ts`;
 
     if (flags.language === 'typescript') {
-      // package.json — referencia @iacmp/core por versão de registry (publicado)
-      const coreVersion = (() => {
+      // package.json — usa file: quando rodando do monorepo local; usa ^versão quando instalado do npm
+      const coreRef = (() => {
         try {
           const corePkgJson = require.resolve('@iacmp/core/package.json');
-          return (JSON.parse(fs.readFileSync(corePkgJson, 'utf-8')) as { version: string }).version;
+          const coreDir = path.dirname(corePkgJson);
+          // Monorepo local: o pacote está em packages/core dentro do repositório iacmp
+          if (coreDir.includes(`${path.sep}packages${path.sep}core`)) {
+            return `file:${path.relative(projectDir, coreDir)}`;
+          }
+          const version = (JSON.parse(fs.readFileSync(corePkgJson, 'utf-8')) as { version: string }).version;
+          return `^${version}`;
         } catch {
-          return '1.0.0';
+          return '^1.0.0';
         }
       })();
-      fs.writeFileSync(path.join(projectDir, 'package.json'), packageJson(projectName, coreVersion));
+      fs.writeFileSync(path.join(projectDir, 'package.json'), packageJson(projectName, coreRef));
 
       // tsconfig.json
       const hasAppCode = !!template.extraFiles?.some(f => f.path.startsWith('src/'));
@@ -597,10 +612,58 @@ export default class Init extends Command {
       }
     }
 
+    // --diagram: analisa imagem via visão e gera stacks no projeto recém-criado
+    if (flags.diagram) {
+      const diagramPath = path.resolve(flags.diagram);
+      if (!fs.existsSync(diagramPath)) {
+        this.error(`Diagrama não encontrado: ${diagramPath}`);
+      }
+
+      const anthropicKey = process.env['ANTHROPIC_API_KEY'];
+      const openaiKey = process.env['OPENAI_API_KEY'];
+      if (!anthropicKey && !openaiKey) {
+        this.warn('Nenhuma API key encontrada. Configure ANTHROPIC_API_KEY ou OPENAI_API_KEY no .env do projeto.');
+      } else {
+        this.log('');
+        const spinner = ora('Analisando diagrama via IA...').start();
+        try {
+          const rawModel = process.env['IACMP_MODEL'] ?? '';
+          const claudeModel = rawModel.startsWith('claude-') ? rawModel : 'claude-sonnet-4-6';
+          const result = await analyzeDiagramImage(
+            diagramPath,
+            { anthropic: anthropicKey, openai: openaiKey },
+            anthropicKey ? claudeModel : undefined,
+          );
+          spinner.succeed('Diagrama analisado');
+
+          if (result.explanation) {
+            this.log(`\n${result.explanation}\n`);
+          }
+
+          for (const file of result.files) {
+            const filePath = path.join(projectDir, file.path);
+            fs.mkdirSync(path.dirname(filePath), { recursive: true });
+            fs.writeFileSync(filePath, file.content);
+            this.log(`  ✓ ${file.path}`);
+          }
+
+          if (result.warnings.length > 0) {
+            this.log('');
+            for (const w of result.warnings) this.warn(w);
+          }
+        } catch (err) {
+          spinner.fail('Falha ao analisar o diagrama');
+          this.warn(err instanceof Error ? err.message : String(err));
+          this.log('  Rode `iacmp ai "descreva a arquitetura"` para gerar stacks manualmente.');
+        }
+      }
+    }
+
     this.log('\nPróximos passos:');
     if (args.name) this.log(`  cd ${args.name}`);
     this.log('  npm install');
-    if (isBlank) this.log('  iacmp ai "descreva a infraestrutura que você quer"');
+    if (flags.diagram) this.log('  iacmp synth');
+    else if (isBlank) this.log('  iacmp ai "descreva a infraestrutura que você quer"');
     else this.log('  iacmp synth');
   }
 }
