@@ -80,6 +80,9 @@ export function synthFunction(
           }]);
           return;
         }
+        if (!es.queueId) {
+          throw new Error(`Function.Lambda "${construct.id}": eventSources[${i}] deve ter queueId ou streamId.`);
+        }
         entries.push([esmId, {
           Type: 'AWS::Lambda::EventSourceMapping',
           Properties: {
@@ -400,6 +403,9 @@ export function synthFunction(
     case 'Policy.IAM': {
       const statements = (props.statements as Array<Record<string, unknown>>) ?? [];
       const attachType = props.attachType as string;
+      if (!props.attachTo) {
+        throw new Error(`Policy.IAM "${construct.id}" requer a propriedade attachTo.`);
+      }
       const attachTo = (props.attachTo as string).replace(/[^a-zA-Z0-9]/g, '');
       const principalService = attachType === 'lambda' ? 'lambda.amazonaws.com' : 'ec2.amazonaws.com';
       const lambdaInVpc = attachType === 'lambda' && ctx.vpcLambdas.has(props.attachTo as string);

@@ -1129,6 +1129,137 @@ export const TERRAFORM_MAPPING: Record<string, TFMapping> = {
       return result;
     },
   },
+
+  'AWS::CloudFront::Distribution': {
+    tfType: 'aws_cloudfront_distribution',
+    refAttr: 'id',
+    attrMap: { Arn: 'arn', DomainName: 'domain_name' },
+    mapProps: (props, resolve) => {
+      const config = (props['DistributionConfig'] as Record<string, unknown>) ?? {};
+      const result: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(config)) {
+        switch (k) {
+          case 'Tags': break;
+          default: result[toSnake(k)] = resolve(v);
+        }
+      }
+      return result;
+    },
+  },
+
+  'AWS::CloudFront::OriginAccessControl': {
+    tfType: 'aws_cloudfront_origin_access_control',
+    refAttr: 'id',
+    attrMap: { Id: 'id' },
+    mapProps: (props, resolve) => {
+      const config = (props['OriginAccessControlConfig'] as Record<string, unknown>) ?? props;
+      const result: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(config)) {
+        result[toSnake(k)] = resolve(v);
+      }
+      return result;
+    },
+  },
+
+  'AWS::Events::EventBus': {
+    tfType: 'aws_cloudwatch_event_bus',
+    refAttr: 'id',
+    attrMap: { Arn: 'arn' },
+    mapProps: (props, resolve) => {
+      const result: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(props)) {
+        switch (k) {
+          case 'Name': result['name'] = resolve(v); break;
+          case 'Tags': break;
+          default: result[toSnake(k)] = resolve(v);
+        }
+      }
+      return result;
+    },
+  },
+
+  'AWS::Events::Rule': {
+    tfType: 'aws_cloudwatch_event_rule',
+    refAttr: 'id',
+    attrMap: { Arn: 'arn' },
+    mapProps: (props, resolve) => {
+      const result: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(props)) {
+        switch (k) {
+          case 'Name': result['name'] = resolve(v); break;
+          case 'EventBusName': result['event_bus_name'] = resolve(v); break;
+          case 'ScheduleExpression': result['schedule_expression'] = resolve(v); break;
+          case 'EventPattern': result['event_pattern'] = typeof v === 'object' ? JSON.stringify(resolve(v)) : resolve(v); break;
+          case 'State': result['is_enabled'] = v === 'ENABLED'; break;
+          case 'Targets': break;
+          case 'Tags': break;
+          default: result[toSnake(k)] = resolve(v);
+        }
+      }
+      return result;
+    },
+  },
+
+  'AWS::DocDB::DBCluster': {
+    tfType: 'aws_docdb_cluster',
+    refAttr: 'id',
+    attrMap: { Endpoint: 'endpoint', Port: 'port' },
+    mapProps: (props, resolve) => {
+      const result: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(props)) {
+        switch (k) {
+          case 'DBClusterIdentifier': result['cluster_identifier'] = resolve(v); break;
+          case 'MasterUsername': result['master_username'] = resolve(v); break;
+          case 'MasterUserPassword': result['master_password'] = resolve(v); break;
+          case 'DBSubnetGroupName': result['db_subnet_group_name'] = resolve(v); break;
+          case 'VpcSecurityGroupIds': result['vpc_security_group_ids'] = resolve(v); break;
+          case 'StorageEncrypted': result['storage_encrypted'] = resolve(v); break;
+          case 'BackupRetentionPeriod': result['backup_retention_period'] = resolve(v); break;
+          case 'DeletionProtection': result['deletion_protection'] = resolve(v); break;
+          case 'Tags': break;
+          default: result[toSnake(k)] = resolve(v);
+        }
+      }
+      return result;
+    },
+  },
+
+  'AWS::DocDB::DBInstance': {
+    tfType: 'aws_docdb_cluster_instance',
+    refAttr: 'id',
+    attrMap: {},
+    mapProps: (props, resolve) => {
+      const result: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(props)) {
+        switch (k) {
+          case 'DBClusterIdentifier': result['cluster_id'] = resolve(v); break;
+          case 'DBInstanceClass': result['instance_class'] = resolve(v); break;
+          case 'DBInstanceIdentifier': result['identifier'] = resolve(v); break;
+          case 'Tags': break;
+          default: result[toSnake(k)] = resolve(v);
+        }
+      }
+      return result;
+    },
+  },
+
+  'AWS::DocDB::DBSubnetGroup': {
+    tfType: 'aws_docdb_subnet_group',
+    refAttr: 'id',
+    attrMap: {},
+    mapProps: (props, resolve) => {
+      const result: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(props)) {
+        switch (k) {
+          case 'DBSubnetGroupDescription': result['description'] = resolve(v); break;
+          case 'SubnetIds': result['subnet_ids'] = resolve(v); break;
+          case 'Tags': break;
+          default: result[toSnake(k)] = resolve(v);
+        }
+      }
+      return result;
+    },
+  },
 };
 
 export function getTFMapping(awsType: string): TFMapping | undefined {

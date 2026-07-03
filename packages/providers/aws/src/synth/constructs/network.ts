@@ -349,6 +349,10 @@ export function synthNetwork(
       const origins = (props.origins as Array<Record<string, unknown>>) ?? [];
       const cachePolicies = (props.cachePolicies as Array<Record<string, unknown>>) ?? [];
 
+      if (origins.length === 0) {
+        throw new Error(`Network.CDN "${construct.id}" requer pelo menos uma entrada em origins.`);
+      }
+
       const entries: Array<[string, CloudFormationResource]> = [];
 
       // Detecta origins S3 (com bucketRef) para usar OAC em vez de CustomOriginConfig

@@ -66,6 +66,7 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
   const lambdaRoles = new Map<string, { stackName: string; roleLogicalId: string }>();
   const vpcLambdas = new Set<string>();
   const dbSecretSuffix = new Map<string, string>();
+  const dbMasterUsername = new Map<string, string>();
   const sqsEventSourceLambdas = new Set<string>();
   const kinesisEventSourceLambdas = new Set<string>();
   const albDefaultTg = new Map<string, { stackName: string; tgLogicalId: string; listenerLogicalId?: string }>();
@@ -121,13 +122,15 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
         const engine = p.engine as string;
         const isAurora = engine === 'aurora-mysql' || engine === 'aurora-postgresql';
         dbSecretSuffix.set(c.id, isAurora ? 'aurora-password' : 'db-password');
+        dbMasterUsername.set(c.id, engine === 'sqlserver' ? 'sqladmin' : 'dbadmin');
       }
       if (c.type === 'Database.DocumentDB') {
         dbSecretSuffix.set(c.id, 'docdb-password');
+        dbMasterUsername.set(c.id, 'docdbadmin');
       }
     }
   }
-  const ctx: SynthContext = { currentStackName: stack.name, registry, lambdaRoles, vpcLambdas, dbSecretSuffix, sqsEventSourceLambdas, kinesisEventSourceLambdas, albDefaultTg, publicSubnetsByVpc, profile };
+  const ctx: SynthContext = { currentStackName: stack.name, registry, lambdaRoles, vpcLambdas, dbSecretSuffix, dbMasterUsername, sqsEventSourceLambdas, kinesisEventSourceLambdas, albDefaultTg, publicSubnetsByVpc, profile };
 
   for (const construct of stack.constructs) {
     const entries = synthesizeConstruct(construct, ctx);

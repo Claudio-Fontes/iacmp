@@ -32,6 +32,8 @@ export interface SynthContext {
   lambdaRoles: Map<string, { stackName: string; roleLogicalId: string }>;
   /** constructId de Database → sufixo do nome do secret (ex: 'AppDB' → 'db-password' ou 'aurora-password'). */
   dbSecretSuffix: Map<string, string>;
+  /** constructId de Database.SQL/DocumentDB → masterUsername real usado no recurso. */
+  dbMasterUsername: Map<string, string>;
   /** IDs de Fn.Lambda com eventSources SQS — a role precisa da SQSQueueExecutionRole. */
   sqsEventSourceLambdas: Set<string>;
   /** IDs de Fn.Lambda com eventSources Kinesis — a role precisa da KinesisExecutionRole. */

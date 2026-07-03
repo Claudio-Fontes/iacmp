@@ -55,7 +55,7 @@ const {
   extractResponse, validateTypeScript, writeGeneratedFiles, deleteFiles,
   runSynth, runSynthCapture, readProjectContextRAG, printExplanation, printWarnings,
   printNextSteps, buildSystemPrompt,
-  loadSession, saveSession, clearSession, getCached, setCache, clearCache,
+  loadSession, saveSession, clearSession, getCached, setCache, clearCache, invalidateIndexCache,
   resolveLanguage, SUPPORTED_LANGUAGES, MESSAGES,
   startRecording, transcribeAudio, checkVoicePrerequisites,
 } = require('@iacmp/ai');
@@ -335,6 +335,7 @@ async function runGeneration(provider, session, lastPrompt, projectContext, aiPr
     // sobras em vez de esperar o y/n real do usuário.
     while (_lineQueue.length > 0) _lineQueue.shift();
     await writeGeneratedFiles(parsed.files, cwd, dryRun, ask, currentLang);
+    invalidateIndexCache(cwd);
     acted = true;
 
     // Após aplicar os arquivos, detecta e instala pacotes referenciados nos
@@ -397,6 +398,7 @@ async function runGeneration(provider, session, lastPrompt, projectContext, aiPr
           const retryParsed = extractResponse(retryRaw);
           parsed = retryParsed;
           await writeGeneratedFiles(parsed.files, cwd, false, ask, currentLang);
+          invalidateIndexCache(cwd);
         } catch { /* mantém parsed anterior */ }
       } catch (err) {
         process.stderr.write(chalk.red(`  ✗ Erro no retry: ${err.message}\n`));

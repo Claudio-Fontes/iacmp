@@ -28,7 +28,7 @@ const RESOLVE_MAP: Record<string, Record<string, ResolutionEntry>> = {
       },
       exportSuffix: '', // dynamic ref — usa sameStack para cross-stack também
     },
-    'Username': { sameStack: () => 'dbadmin', exportSuffix: 'Username' },
+    'Username': { sameStack: (_, cid, __, ctx) => ctx.dbMasterUsername.get(cid) ?? 'dbadmin', exportSuffix: 'Username' },
   },
   'Database.DocumentDB': {
     'Endpoint':  { sameStack: (l) => resourceRef(`${l}Cluster`, 'Endpoint'), exportSuffix: 'Endpoint' },
@@ -216,7 +216,8 @@ export function buildInvocationUri(lambdaId: string, ctx: SynthContext): unknown
     throw new Error(`Lambda "${lambdaId}" referenciada em Function.ApiGateway não foi encontrada em nenhuma stack do projeto.`);
   }
   if (ownerStack === ctx.currentStackName) {
-    return { 'Fn::Sub': `arn:aws:apigateway:\${AWS::Region}:lambda:path/2015-03-31/functions/\${${lambdaId}.Arn}/invocations` };
+    const logicalId = lambdaId.replace(/[^a-zA-Z0-9]/g, '');
+    return { 'Fn::Sub': `arn:aws:apigateway:\${AWS::Region}:lambda:path/2015-03-31/functions/\${${logicalId}.Arn}/invocations` };
   }
   return { 'Fn::Sub': [template, { LambdaArn: { 'Fn::ImportValue': `${ownerStack}-${lambdaId}-Arn` } }] };
 }
