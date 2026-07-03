@@ -4,13 +4,17 @@ import * as path from 'path';
 import { shouldFetchLive, LIVE_SIGNALS, fetchLive } from '../src/rag/live-retriever';
 
 describe('shouldFetchLive', () => {
-  test('preço → true', () => expect(shouldFetchLive('qual o preço do lambda?')).toBe(true));
-  test('custo → true', () => expect(shouldFetchLive('qual o custo do cloud run?')).toBe(true));
+  // Exige sinal (LIVE_SIGNALS) + frase de intenção explícita (EXPLICIT_INTENT_PHRASES).
+  test('preço atual → true', () => expect(shouldFetchLive('qual o preço atual do lambda?')).toBe(true));
+  test('custo agora → true', () => expect(shouldFetchLive('qual o custo do cloud run agora?')).toBe(true));
   test('recente → true', () => expect(shouldFetchLive('o que lançou recentemente?')).toBe(true));
   test('lançou → true', () => expect(shouldFetchLive('a aws lançou algo novo?')).toBe(true));
-  test('terraform provider → true', () => expect(shouldFetchLive('versão do terraform provider aws')).toBe(true));
-  test('pricing → true', () => expect(shouldFetchLive('azure functions pricing')).toBe(true));
+  test('terraform provider versão atual → true', () => expect(shouldFetchLive('versão atual do terraform provider aws')).toBe(true));
+  test('pricing latest → true', () => expect(shouldFetchLive('azure functions latest pricing')).toBe(true));
 
+  // Sinal SEM intenção explícita não dispara (evita HTTP desnecessário por geração).
+  test('preço sem intenção → false', () => expect(shouldFetchLive('qual o preço do lambda?')).toBe(false));
+  test('terraform sem intenção → false', () => expect(shouldFetchLive('versão do terraform provider aws')).toBe(false));
   test('query genérica → false', () => expect(shouldFetchLive('crie uma lambda')).toBe(false));
   test('query sobre arquitetura → false', () => expect(shouldFetchLive('diferença entre sqs e sns')).toBe(false));
   test('string vazia → false', () => expect(shouldFetchLive('')).toBe(false));

@@ -52,14 +52,29 @@ describe('loadSession — sessão válida', () => {
     expect(loadSession(dir)).toHaveLength(4);
   });
 
-  test('limita a MAX_MESSAGES (20) mensagens', () => {
+  test('mensagens curtas dentro do budget de tokens são todas mantidas', () => {
     const dir = makeDir({ 'compute/fn.ts': 'export default {};' });
     const msgs = Array.from({ length: 30 }, (_, i) => [
       { role: 'user' as const, content: `msg ${i}` },
       { role: 'assistant' as const, content: `{"explanation":"r${i}","files":[],"deletions":[],"nextSteps":[],"warnings":[]}` },
     ]).flat();
     saveSession(dir, msgs);
-    expect(loadSession(dir).length).toBeLessThanOrEqual(20);
+    expect(loadSession(dir)).toHaveLength(60);
+  });
+
+  test('sessão acima do budget de 40k tokens é aparada preservando as recentes', () => {
+    const dir = makeDir({ 'compute/fn.ts': 'export default {};' });
+    // ~50k chars por resposta ≈ estoura o budget com poucas mensagens.
+    const big = 'x'.repeat(50_000);
+    const msgs = Array.from({ length: 10 }, (_, i) => [
+      { role: 'user' as const, content: `msg ${i}` },
+      { role: 'assistant' as const, content: `{"explanation":"${big}","files":[],"deletions":[],"nextSteps":[],"warnings":[]}` },
+    ]).flat();
+    saveSession(dir, msgs);
+    const loaded = loadSession(dir);
+    expect(loaded.length).toBeLessThan(20);
+    expect(loaded.length).toBeGreaterThanOrEqual(2);
+    expect(loaded[loaded.length - 2].content).toBe('msg 9'); // par mais recente preservado
   });
 });
 

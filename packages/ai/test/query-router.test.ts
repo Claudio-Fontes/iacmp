@@ -71,16 +71,21 @@ describe('routeQuery', () => {
   });
 
   describe('sinais de live retriever', () => {
-    test('preço → useLive', () => {
-      expect(routeQuery('qual o preço do lambda?').useLive).toBe(true);
+    // useLive exige sinal + frase de intenção explícita (ver shouldFetchLive).
+    test('preço atual → useLive', () => {
+      expect(routeQuery('qual o preço atual do lambda?').useLive).toBe(true);
     });
 
     test('recente → useLive', () => {
       expect(routeQuery('o que a aws lançou recentemente?').useLive).toBe(true);
     });
 
-    test('terraform provider → useLive', () => {
-      expect(routeQuery('qual a versão do terraform provider aws?').useLive).toBe(true);
+    test('terraform provider versão atual → useLive', () => {
+      expect(routeQuery('qual a versão atual do terraform provider aws?').useLive).toBe(true);
+    });
+
+    test('preço sem intenção → useLive false', () => {
+      expect(routeQuery('qual o preço do lambda?').useLive).toBe(false);
     });
 
     test('query genérica → useLive false', () => {

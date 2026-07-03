@@ -80,20 +80,24 @@ describe('init — package.json e tsconfig gerados (regressões importantes)', (
   let cwd: string;
   afterEach(() => cwd && rmrf(cwd));
 
-  test('package.json referencia @iacmp/core por versão de registry (^x.y.z), NÃO file:', () => {
+  test('package.json referencia @iacmp/core resolvível: file: para o monorepo em dev, ^x.y.z instalado do npm', () => {
     cwd = makeEmptyDir();
     runCli(['init', 'pkgtest'], { cwd });
 
     const pkg = JSON.parse(read(cwd, 'pkgtest/package.json'));
-    const coreDep = pkg.dependencies['@iacmp/core'];
+    const coreDep = pkg.dependencies['@iacmp/core'] as string;
 
     expect(coreDep).toBeDefined();
-    // não pode ser um link de filesystem (regressão: file:../core quebra npm install -g)
-    expect(coreDep).not.toMatch(/^file:/);
-    expect(coreDep).not.toContain('..');
-    expect(coreDep).not.toContain('/');
-    // deve ser um range de registry semver: ^x.y.z
-    expect(coreDep).toMatch(/^\^\d+\.\d+\.\d+$/);
+    if (coreDep.startsWith('file:')) {
+      // Dev/monorepo (este teste roda o CLI do fonte): o path DEVE existir e apontar
+      // pro core do monorepo — mata o setup manual de trocar ^1.2.0 (não publicado).
+      const target = coreDep.slice('file:'.length);
+      const resolved = path.isAbsolute(target) ? target : path.join(cwd, 'pkgtest', target);
+      expect(fs.existsSync(path.join(resolved, 'package.json'))).toBe(true);
+    } else {
+      // Instalado do npm: range de registry semver (file: quebraria npm install -g).
+      expect(coreDep).toMatch(/^\^\d+\.\d+\.\d+$/);
+    }
   });
 
   test('package.json tem nome do projeto e scripts úteis', () => {
