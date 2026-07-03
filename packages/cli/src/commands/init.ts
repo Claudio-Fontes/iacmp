@@ -591,6 +591,17 @@ export default class Init extends Command {
       execSync('git init', { cwd: projectDir, stdio: 'pipe' });
     } catch {}
 
+    // npm install automático (TypeScript only)
+    if (flags.language === 'typescript') {
+      const installSpinner = ora('Instalando dependências...').start();
+      try {
+        execSync('npm install', { cwd: projectDir, stdio: 'pipe' });
+        installSpinner.succeed('Dependências instaladas');
+      } catch {
+        installSpinner.warn('npm install falhou — rode manualmente na pasta do projeto');
+      }
+    }
+
     const rel = args.name ?? '.';
     const isBlank = !template.stackContent;
     const templateLabel = flags.template === 'blank' ? '' : ` (template: ${flags.template})`;
@@ -670,7 +681,6 @@ export default class Init extends Command {
 
     this.log('\nPróximos passos:');
     if (args.name) this.log(`  cd ${args.name}`);
-    this.log('  npm install');
     if (flags.diagram) this.log('  iacmp synth');
     else if (isBlank) this.log('  iacmp ai "descreva a infraestrutura que você quer"');
     else this.log('  iacmp synth');
