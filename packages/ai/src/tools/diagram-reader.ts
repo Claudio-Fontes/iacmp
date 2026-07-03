@@ -40,6 +40,18 @@ Regras de validação semântica OBRIGATÓRIAS (o synth rejeita se violadas):
 - RDS sem publicAccess: banco de dados sempre com publiclyAccessible: false (subnet privada).
 - API Gateway authType: use 'NONE' a não ser que o diagrama mostre autenticação explícita.
 
+Regras de segurança SEMPRE obrigatórias mesmo que NÃO apareçam visualmente no diagrama:
+- POLICY IAM: toda Fn.Lambda que acessa qualquer serviço AWS (RDS via secret, S3, DynamoDB, SQS,
+  SNS, Secrets Manager) DEVE ter um Policy.IAM correspondente com attachTo e as actions mínimas.
+  Gere uma Policy.IAM por Lambda (ou uma compartilhada se todas tiverem o mesmo escopo).
+  Sem Policy.IAM a Lambda recebe AccessDenied em runtime — não é opcional.
+- SECRET VAULT: se houver Database.SQL (RDS), SEMPRE gere um Secret.Vault para a senha do banco.
+  A senha do RDS nunca deve ser hardcoded — use Secret.Vault e ref() na propriedade password do DB.
+- MANAGED POLICIES Lambda básicas: toda Fn.Lambda precisa de pelo menos
+  'AWSLambdaBasicExecutionRole'. Se estiver em VPC, adicionar 'AWSLambdaVPCAccessExecutionRole'.
+  Declare via managedPolicies: [...] no Policy.IAM.
+- Estas regras aplicam independente do provider (AWS, Azure, GCP) — adapte para RBAC/IAM Binding.
+
 Retorne APENAS o JSON abaixo (sem markdown, sem texto fora do JSON):
 {
   "explanation": "o que foi identificado no diagrama",
