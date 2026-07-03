@@ -161,3 +161,30 @@ test('vpcId/subnetIds/securityGroupIds aceitam Ref sem crashar (guards nos resol
   // referência não encontrada (não TypeError de .startsWith em objeto).
   expect(() => provider.synthesize(s, [s])).toThrow(/não foi encontrada|not found|Referência/);
 });
+
+// ── 8. streamId/queueId com tipo errado → erro de SYNTH (caso p03e2eb: SQS via
+//    streamId caía no branch Kinesis → StartingPosition → 400 só no deploy) ──
+
+test('eventSources.streamId apontando para Messaging.Queue → erro claro no synth', () => {
+  const s = new Stack('worker', { region: 'us-east-1' });
+  const q = new Messaging.Queue(s, 'TaskQueue', {});
+  new Fn.Lambda(s, 'WorkerFn', {
+    runtime: 'nodejs20', handler: 'i.h', code: 'dist/',
+    eventSources: [{ streamId: q.arn }],
+  });
+  expect(() => provider.synthesize(s, [s])).toThrow(/streamId.*Messaging\.Queue.*queueId/s);
+});
+
+test('eventSources.queueId via getter (queue.arn) → EventSourceMapping SQS correto', () => {
+  const s = new Stack('worker', { region: 'us-east-1' });
+  const q = new Messaging.Queue(s, 'TaskQueue', {});
+  new Fn.Lambda(s, 'WorkerFn', {
+    runtime: 'nodejs20', handler: 'i.h', code: 'dist/',
+    eventSources: [{ queueId: q.arn, batchSize: 5 }],
+  });
+  const tpl = provider.synthesize(s, [s]) as any;
+  const esm = tpl.Resources.WorkerFnEventSource1.Properties;
+  expect(esm.EventSourceArn).toEqual({ 'Fn::GetAtt': ['TaskQueue', 'Arn'] });
+  expect(esm.StartingPosition).toBeUndefined(); // SQS NUNCA leva StartingPosition
+  expect(esm.BisectBatchOnFunctionError).toBeUndefined();
+});

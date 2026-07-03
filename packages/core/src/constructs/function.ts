@@ -20,8 +20,8 @@ export interface FunctionLambdaProps {
   /** Aciona esta Lambda a partir de uma fila SQS ou stream Kinesis (event source mapping).
    *  queueId = id de um Messaging.Queue; streamId = id de um Messaging.Stream (Kinesis). */
   eventSources?: Array<{
-    queueId?: string;
-    streamId?: string;
+    queueId?: string | Ref<'Arn'>;
+    streamId?: string | Ref<'Arn'>;
     batchSize?: number;
     /** Kinesis: de onde começar a ler. Default 'LATEST'. */
     startingPosition?: 'LATEST' | 'TRIM_HORIZON';

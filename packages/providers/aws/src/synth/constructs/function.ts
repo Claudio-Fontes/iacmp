@@ -62,11 +62,24 @@ export function synthFunction(
 
       // Event source mappings: aciona a Lambda a partir de filas SQS ou streams Kinesis.
       const eventSources = (props.eventSources as Array<Record<string, unknown>> | undefined) ?? [];
+      // Id do construct alvo de um streamId/queueId (aceita string ou Ref tipado).
+      const targetId = (v: unknown): string | undefined => {
+        if (isRef(v)) return v.constructId;
+        if (typeof v === 'string' && !v.startsWith('arn:')) return v.replace(/\.(arn|Arn|QueueArn)$/, '');
+        return undefined; // ARN literal — sem validação de tipo possível
+      };
       eventSources.forEach((es, i) => {
         const esmId = `${logicalId}EventSource${i + 1}`;
         if (es.streamId) {
-          // Kinesis: exige StartingPosition; suporta BisectBatchOnFunctionError e
-          // batchSize maior (até 10000). O ARN do stream resolve como os demais (-Arn).
+          // streamId é EXCLUSIVO de Messaging.Stream (Kinesis). A IA às vezes passa
+          // uma fila SQS aqui — o branch Kinesis emite StartingPosition/Bisect, que a
+          // AWS rejeita para SQS com 400 SÓ NO DEPLOY. Barrar no synth dá erro claro
+          // que o loop de auto-correção da geração consegue consertar (usar queueId).
+          const sid = targetId(es.streamId);
+          const stype = sid ? ctx.registry.get(sid)?.type : undefined;
+          if (sid && stype && stype !== 'Messaging.Stream') {
+            throw new Error(`Function.Lambda "${construct.id}": eventSources[${i}].streamId aponta para "${sid}" (${stype}). streamId é só para Messaging.Stream (Kinesis) — para fila SQS use queueId.`);
+          }
           entries.push([esmId, {
             Type: 'AWS::Lambda::EventSourceMapping',
             Properties: {
@@ -82,6 +95,11 @@ export function synthFunction(
         }
         if (!es.queueId) {
           throw new Error(`Function.Lambda "${construct.id}": eventSources[${i}] deve ter queueId ou streamId.`);
+        }
+        const qid = targetId(es.queueId);
+        const qtype = qid ? ctx.registry.get(qid)?.type : undefined;
+        if (qid && qtype && qtype !== 'Messaging.Queue') {
+          throw new Error(`Function.Lambda "${construct.id}": eventSources[${i}].queueId aponta para "${qid}" (${qtype}). queueId é só para Messaging.Queue (SQS) — para Kinesis use streamId.`);
         }
         entries.push([esmId, {
           Type: 'AWS::Lambda::EventSourceMapping',
