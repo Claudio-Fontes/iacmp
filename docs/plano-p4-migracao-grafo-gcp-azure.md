@@ -30,6 +30,14 @@ O deploy Azure de `Function.Lambda` (validado funcional em 2026-07-03) requer Do
 
 Alternativa sem Docker avaliada e **adiada por fragilidade**: blob em Storage Account de bootstrap + SAS URL + startup command do container baixando e executando o código (`node -e "...https.get(CODE_URL)..."`). Problemas: restart do container depende da SAS válida (SAS de 1 ano ou blob público), cold start, executar código baixado no boot. Se um dia for implementado: `bicep.ts` troca `imageParamName` por `codeUrlParamName` (image fixa `node:20-alpine` + `command`/`args`); `deploy/azure.ts` troca ACR/Docker por Storage Account + upload + SAS.
 
+## Gap registrado: handlers são AWS-specific (o maior gap multi-cloud restante)
+
+Descoberto no ciclo iacmp32 (2026-07-03): a INFRA é portável (constructs → Bicep/TF), mas o CÓDIGO dos handlers não — o `iacmp ai` gera handlers com `@aws-sdk/*` (DynamoDB DocumentClient etc.); num Container App Azure eles buildam e sobem, mas em runtime falham (não existe DynamoDB; o datastore é Cosmos Table API). Deployar o mesmo projeto em outra cloud exige handlers daquela cloud.
+
+Opções (decidir quando o multi-cloud de runtime virar prioridade):
+1. **Geração por provider**: `iacmp ai` gera handlers para o provider do `iacmp.json` (system-prompt precisa de guidance Azure/GCP: `@azure/data-tables`, etc.). Simples, mas o projeto fica preso ao provider da geração.
+2. **Facade de runtime** (`@iacmp/runtime`): API única de datastore/queue/etc. com adapters por cloud; os handlers programam contra a facade. Mais profundo, verdadeiro multi-cloud de runtime — combina com o P4/grafo.
+
 ## Não fazer
 
 - Não iniciar sem plano de execução detalhado aprovado (este documento é o registro da dívida, não o plano de execução)
