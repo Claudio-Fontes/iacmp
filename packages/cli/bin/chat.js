@@ -458,6 +458,8 @@ function autoInitProject() {
     name: projectName,
     provider: 'aws',
     region: 'us-east-1',
+    resourceGroup: `${projectName}-rg`,
+    azureRegion: 'eastus',
   }, null, 2) + '\n', 'utf-8');
 
   const tsconfigPath = path.join(cwd, 'tsconfig.json');
