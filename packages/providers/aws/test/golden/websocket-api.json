@@ -26,6 +26,27 @@
           }
         }
       }
+    },
+    "Outputs": {
+      "ConnectionsName": {
+        "Value": {
+          "Ref": "Connections"
+        },
+        "Export": {
+          "Name": "ws-data-Connections-Name"
+        }
+      },
+      "ConnectionsArn": {
+        "Value": {
+          "Fn::GetAtt": [
+            "Connections",
+            "Arn"
+          ]
+        },
+        "Export": {
+          "Name": "ws-data-Connections-Arn"
+        }
+      }
     }
   },
   "ws-api": {

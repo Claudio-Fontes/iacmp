@@ -49,6 +49,9 @@
     "InputBucket": {
       "Type": "AWS::S3::Bucket",
       "DeletionPolicy": "Retain",
+      "DependsOn": [
+        "InputBucketInvokePermission0"
+      ],
       "Properties": {
         "VersioningConfiguration": {
           "Status": "Enabled"
@@ -72,10 +75,7 @@
             }
           ]
         }
-      },
-      "DependsOn": [
-        "InputBucketInvokePermission0"
-      ]
+      }
     },
     "InputBucketInvokePermission0": {
       "Type": "AWS::Lambda::Permission",

@@ -39,6 +39,16 @@
           }
         }
       }
+    },
+    "output": {
+      "ConnectionsName": {
+        "value": "${aws_dynamodb_table.connections.id}",
+        "description": "ws-data-Connections-Name"
+      },
+      "ConnectionsArn": {
+        "value": "${aws_dynamodb_table.connections.arn}",
+        "description": "ws-data-Connections-Arn"
+      }
     }
   },
   "ws-api": {

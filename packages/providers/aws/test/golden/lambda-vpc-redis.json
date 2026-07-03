@@ -301,6 +301,25 @@
         "Export": {
           "Name": "lvr-services-Cache-Port"
         }
+      },
+      "SessionsName": {
+        "Value": {
+          "Ref": "Sessions"
+        },
+        "Export": {
+          "Name": "lvr-services-Sessions-Name"
+        }
+      },
+      "SessionsArn": {
+        "Value": {
+          "Fn::GetAtt": [
+            "Sessions",
+            "Arn"
+          ]
+        },
+        "Export": {
+          "Name": "lvr-services-Sessions-Arn"
+        }
       }
     }
   },

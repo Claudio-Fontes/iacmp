@@ -205,6 +205,18 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
         Export: { Name: `${stack.name}-${construct.id}-Arn` },
       };
     }
+    if (construct.type === 'Database.DynamoDB') {
+      // Nome (Ref) e ARN — para cross-stack (env var TABLE_NAME, policy resources).
+      const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
+      outputs[`${logicalId}Name`] = {
+        Value: resourceRef(logicalId, 'Id'),
+        Export: { Name: `${stack.name}-${construct.id}-Name` },
+      };
+      outputs[`${logicalId}Arn`] = {
+        Value: resourceRef(logicalId, 'Arn'),
+        Export: { Name: `${stack.name}-${construct.id}-Arn` },
+      };
+    }
     if (construct.type === 'Function.Lambda') {
       // Exporta sempre — custo zero, e é o que permite Function.ApiGateway em
       // OUTRA stack referenciar esta Lambda via Fn::ImportValue.

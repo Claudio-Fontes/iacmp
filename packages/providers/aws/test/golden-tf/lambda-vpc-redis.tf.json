@@ -230,6 +230,14 @@
       "CachePort": {
         "value": "${aws_elasticache_replication_group.cache.port}",
         "description": "lvr-services-Cache-Port"
+      },
+      "SessionsName": {
+        "value": "${aws_dynamodb_table.sessions.id}",
+        "description": "lvr-services-Sessions-Name"
+      },
+      "SessionsArn": {
+        "value": "${aws_dynamodb_table.sessions.arn}",
+        "description": "lvr-services-Sessions-Arn"
       }
     }
   },
