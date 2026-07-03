@@ -24,6 +24,12 @@ constructs ──► StackGraph (recursos google_*/Microsoft.*) ──► emisso
 
 A versão via grafo só substitui a artesanal quando: (a) goldens equivalentes gerados dos dois caminhos; (b) `terraform validate`/`az bicep build` verdes; (c) ao menos 1 cenário com deploy real validado. Até lá, os dois caminhos coexistem — **o artesanal não é apagado**.
 
+## Gap registrado: deploy Azure sem Docker local (aberto, adiado)
+
+O deploy Azure de `Function.Lambda` (validado funcional em 2026-07-03) requer Docker Desktop: `docker build --platform linux/amd64` + push pro ACR de bootstrap (`iacmpacr<subscriptionId[:12]>`), com imagem/credenciais injetadas via params Bicep. `az acr build` (build remoto, dispensaria Docker) está bloqueado em subscription free tier (`TasksOperationsNotAllowed`); zip/`WEBSITE_RUN_FROM_PACKAGE` não é suportado em Container Apps.
+
+Alternativa sem Docker avaliada e **adiada por fragilidade**: blob em Storage Account de bootstrap + SAS URL + startup command do container baixando e executando o código (`node -e "...https.get(CODE_URL)..."`). Problemas: restart do container depende da SAS válida (SAS de 1 ano ou blob público), cold start, executar código baixado no boot. Se um dia for implementado: `bicep.ts` troca `imageParamName` por `codeUrlParamName` (image fixa `node:20-alpine` + `command`/`args`); `deploy/azure.ts` troca ACR/Docker por Storage Account + upload + SAS.
+
 ## Não fazer
 
 - Não iniciar sem plano de execução detalhado aprovado (este documento é o registro da dívida, não o plano de execução)
