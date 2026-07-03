@@ -259,10 +259,16 @@ export const azureExecutor: DeployExecutor = {
     if (ctx.templatePath) {
       const crossParams = getCrossStackParams(ctx.templatePath);
       const provided = new Set(paramValues.map(p => p.split('=')[0]));
+      // A API do Azure devolve as chaves de outputs em camelCase mesmo quando o
+      // Bicep declara PascalCase (`output ItemsTableName` → chave `itemsTableName`)
+      // — o match do param com o output precisa ser case-insensitive.
+      const outputsByLower = new Map(
+        Object.entries(ctx.outputParams ?? {}).map(([k, v]) => [k.toLowerCase(), v]),
+      );
       const missing: string[] = [];
       for (const p of crossParams) {
         if (provided.has(p)) continue;
-        const value = ctx.outputParams?.[p];
+        const value = outputsByLower.get(p.toLowerCase());
         if (value !== undefined) {
           paramValues.push(`${p}=${value}`);
         } else {

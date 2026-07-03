@@ -1,6 +1,9 @@
 jest.mock('child_process');
 
 import * as cp from 'child_process';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { azureExecutor, resourceGroupExists, describeStackStatus } from '../../src/deploy/azure';
 import { DeployContext, DestroyContext } from '../../src/deploy/types';
 
@@ -77,6 +80,33 @@ describe('azureExecutor.planDeploy', () => {
   test('lança erro claro quando resourceGroup não está configurado', async () => {
     const ctx: DeployContext = { cwd: '/tmp', stackName: 'main-stack', templatePath: '/tmp/x.json', region: 'eastus' };
     await expect(azureExecutor.planDeploy(ctx)).rejects.toThrow('resourceGroup');
+  });
+
+  test('param cross-stack casa com output em camelCase (Azure devolve itemsTableName p/ ItemsTableName)', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'iacmp-az-'));
+    const templatePath = path.join(dir, 'api-stack.bicep');
+    fs.writeFileSync(templatePath, 'param location string = resourceGroup().location\nparam ItemsTableName string\n');
+    const ctx: DeployContext = {
+      cwd: dir, stackName: 'api-stack', templatePath, region: 'westus', resourceGroup: 'rg',
+      outputParams: { itemsTableName: 'itemstable' }, // camelCase, como o `az stack group show` devolve
+    };
+
+    const commands = await azureExecutor.planDeploy(ctx);
+    const az = commands.find(c => c.bin === 'az')!;
+    expect(az.args).toEqual(expect.arrayContaining(['--parameters', 'ItemsTableName=itemstable']));
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('param cross-stack SEM output correspondente → erro claro (nunca prompt interativo)', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'iacmp-az-'));
+    const templatePath = path.join(dir, 'api-stack.bicep');
+    fs.writeFileSync(templatePath, 'param ItemsTableName string\n');
+    const ctx: DeployContext = {
+      cwd: dir, stackName: 'api-stack', templatePath, region: 'westus', resourceGroup: 'rg',
+      outputParams: {},
+    };
+    await expect(azureExecutor.planDeploy(ctx)).rejects.toThrow('ItemsTableName');
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 });
 
