@@ -209,11 +209,11 @@ describe('validateSemantics — Load Balancer', () => {
 });
 
 describe('validateSemantics — separação por camada', () => {
-  test('monolito com 3+ camadas (security+compute+network) é pego (caso openai28)', () => {
+  test('monolito com 3+ camadas (network+compute+database) é pego', () => {
     const s = new Stack('api-backend');
-    new Secret.Vault(s, 'JwtSecret', { description: 'jwt' });
+    new Network.VPC(s, 'Vpc', { cidr: '10.0.0.0/16', maxAzs: 0 });
     new Fn.Lambda(s, 'AuthFn', { runtime: 'nodejs20', handler: 'h.handler', code: '.' });
-    new Fn.ApiGateway(s, 'Api', { name: 'API', routes: [{ method: 'GET', path: '/x', lambdaId: 'AuthFn' }] });
+    new Database.DynamoDB(s, 'Table', { partitionKey: 'id' });
     const errors = validateSemantics([s]);
     expect(errors.some(e => e.includes('monolito') && e.includes('api-backend'))).toBe(true);
   });

@@ -201,7 +201,7 @@ export const CONSTRUCT_TYPES: Record<ConstructType, ConstructTypeInfo> = {
     attributes: [],
   },
   'Function.ApiGateway': {
-    layer: 'network',
+    layer: null,
     diagram: {
       emoji: '🔌',
       technology: 'API Gateway',
