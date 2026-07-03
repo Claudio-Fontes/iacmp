@@ -105,6 +105,67 @@ iacmp init meu-projeto --template rds
 | `gcp` | GCP Deployment Manager JSON | Experimental / congelado |
 | `terraform` | Terraform JSON (`.tf.json`) | Estável (2 cenários validados) |
 
+## Configuração de deploy por provider
+
+### AWS
+
+```bash
+# Instala e configura o AWS CLI
+brew install awscli        # macOS
+aws configure              # pede Access Key ID, Secret, região e formato
+```
+
+Ou com múltiplos perfis:
+
+```bash
+aws configure --profile meu-perfil
+export AWS_PROFILE=meu-perfil
+```
+
+### Azure
+
+```bash
+# Instala o Azure CLI
+brew install azure-cli     # macOS
+
+# Login interativo (abre o browser)
+az login
+
+# Confirma as subscriptions disponíveis
+az account list --output table
+
+# Seleciona a subscription correta (se houver mais de uma)
+az account set --subscription "Nome ou ID da subscription"
+```
+
+Para CI/CD com service principal:
+
+```bash
+az ad sp create-for-rbac --name iacmp-deploy --role Contributor \
+  --scopes /subscriptions/<subscription-id>
+```
+
+Adicione as credenciais retornadas no `.env` do projeto:
+
+```
+AZURE_CLIENT_ID=<appId>
+AZURE_CLIENT_SECRET=<password>
+AZURE_TENANT_ID=<tenant>
+AZURE_SUBSCRIPTION_ID=<subscription-id>
+```
+
+### GCP
+
+```bash
+# Instala o Google Cloud CLI
+brew install --cask google-cloud-sdk   # macOS
+
+# Login e configura projeto
+gcloud auth login
+gcloud config set project <project-id>
+gcloud auth application-default login  # credenciais para SDKs
+```
+
 ## Constructs disponíveis
 
 ```typescript
