@@ -57,20 +57,29 @@ const AZURE_ATTR_MAP: Record<string, Record<string, string>> = {
   'Network.LoadBalancer':  { TargetGroupArn: 'id', DnsName: 'properties.dnsName' },
 };
 
-function resolveRef(r: Ref, idx: Map<string, BaseConstruct>): string {
+function crossParamName(constructId: string, attribute: string): string {
+  return `${constructId.replace(/[^a-zA-Z0-9]/g, '')}${attribute}`;
+}
+
+function resolveRef(r: Ref, idx: Map<string, BaseConstruct>, crossParams: Map<string, string>): string {
   const c = idx.get(r.constructId);
-  if (!c) return expr(`'UNRESOLVED_${r.constructId}'`);
+  if (!c) {
+    // Referência cross-stack — vira parâmetro no template
+    const pName = crossParamName(r.constructId, r.attribute);
+    crossParams.set(pName, 'string');
+    return expr(pName);
+  }
   const sym = toSym(r.constructId);
   const attr = AZURE_ATTR_MAP[c.type]?.[r.attribute] ?? 'id';
   return expr(`${sym}.${attr}`);
 }
 
-function resolveValue(v: unknown, idx: Map<string, BaseConstruct>): unknown {
-  if (isRef(v)) return resolveRef(v as Ref, idx);
-  if (Array.isArray(v)) return v.map(i => resolveValue(i, idx));
+function resolveValue(v: unknown, idx: Map<string, BaseConstruct>, crossParams: Map<string, string>): unknown {
+  if (isRef(v)) return resolveRef(v as Ref, idx, crossParams);
+  if (Array.isArray(v)) return v.map(i => resolveValue(i, idx, crossParams));
   if (v !== null && typeof v === 'object') {
     return Object.fromEntries(
-      Object.entries(v as Record<string, unknown>).map(([k, val]) => [k, resolveValue(val, idx)]),
+      Object.entries(v as Record<string, unknown>).map(([k, val]) => [k, resolveValue(val, idx, crossParams)]),
     );
   }
   return v;
@@ -192,6 +201,7 @@ function synthesizeConstruct(
   resources: BicepResource[],
   outputs: BicepOutput[],
   needsAdminPassword: { value: boolean },
+  crossParams: Map<string, string>,
 ): void {
   const props = construct.props as Record<string, unknown>;
   const sym = toSym(construct.id);
@@ -693,6 +703,8 @@ function synthesizeConstruct(
         },
       });
       outputs.push({ name: `${construct.id}Endpoint`, type: 'string', value: `${sym}.properties.documentEndpoint` });
+      outputs.push({ name: crossParamName(construct.id, 'Name'), type: 'string', value: `${sym}.name` });
+      outputs.push({ name: crossParamName(construct.id, 'Arn'), type: 'string', value: `${sym}.id` });
       break;
     }
 
@@ -711,37 +723,48 @@ function synthesizeConstruct(
 
     case 'Function.Lambda': {
       const environment = (props.environment as Record<string, string>) ?? {};
-      const runtimeMap: Record<string, string> = { 'nodejs20': 'node|20', 'nodejs18': 'node|18', 'python3.12': 'python|3.12', 'python3.11': 'python|3.11', 'java21': 'java|21', 'go1.x': 'go|1', 'dotnet8': 'dotnet|8' };
-      const workerRuntime = (props.runtime as string)?.startsWith('nodejs') ? 'node' : (props.runtime as string)?.startsWith('python') ? 'python' : 'dotnet';
-      // Storage Account obrigatório para Azure Functions
-      const storageSym = `${sym}Storage`;
-      const storageName = safeStorageName(`fn${construct.id}`);
-      resources.push({ sym: storageSym, type: 'Microsoft.Storage/storageAccounts', apiVersion: '2023-01-01', name: storageName, location: 'location', kind: 'StorageV2', sku: { name: 'Standard_LRS' }, tags: tag(construct.id), properties: { supportsHttpsTrafficOnly: true } });
-      // Consumption App Service Plan (Y1) obrigatório para Function App
-      const planSym = `${sym}Plan`;
-      resources.push({ sym: planSym, type: 'Microsoft.Web/serverfarms', apiVersion: '2023-01-01', name: `${construct.id}-plan`, location: 'location', kind: 'functionapp', sku: { name: 'Y1', tier: 'Dynamic' }, tags: tag(construct.id), properties: { reserved: true } });
-      const baseSettings = [
-        { name: 'FUNCTIONS_EXTENSION_VERSION', value: '~4' },
-        { name: 'FUNCTIONS_WORKER_RUNTIME', value: workerRuntime },
-        { name: 'AzureWebJobsStorage', value: expr(`'DefaultEndpointsProtocol=https;AccountName=${storageName};AccountKey=\${${storageSym}.listKeys().keys[0].value};EndpointSuffix=\${environment().suffixes.storage}'`) },
-      ];
-      const envSettings = Object.entries(environment).map(([k, v]) => ({ name: k, value: v }));
+      // Lambda → Azure Container Apps (escala a zero, sem quota de VM)
+      // Um único ManagedEnvironment compartilhado por stack + um ContainerApp por Lambda.
+      const envSym = `${sym}Env`;
+      const envName = `${construct.id.toLowerCase().replace(/[^a-z0-9-]/g, '-')}-env`;
+      resources.push({
+        sym: envSym,
+        type: 'Microsoft.App/managedEnvironments',
+        apiVersion: '2023-05-01',
+        name: envName,
+        location: 'location',
+        tags: tag(construct.id),
+        properties: { zoneRedundant: false },
+      });
+      const runtimeImageMap: Record<string, string> = {
+        'nodejs20': 'mcr.microsoft.com/azure-functions/node:4-node20',
+        'nodejs18': 'mcr.microsoft.com/azure-functions/node:4-node18',
+        'python3.12': 'mcr.microsoft.com/azure-functions/python:4-python3.12',
+        'python3.11': 'mcr.microsoft.com/azure-functions/python:4-python3.11',
+        'dotnet8':   'mcr.microsoft.com/azure-functions/dotnet-isolated:4-dotnet-isolated8.0',
+      };
+      const image = runtimeImageMap[(props.runtime as string) ?? 'nodejs20'] ?? 'mcr.microsoft.com/azure-functions/node:4-node20';
+      const envVars = Object.entries(environment).map(([k, v]) => ({ name: k, value: resolveValue(v, idx, crossParams) }));
       resources.push({
         sym,
-        type: 'Microsoft.Web/sites',
-        apiVersion: '2023-01-01',
-        name: construct.id,
+        type: 'Microsoft.App/containerApps',
+        apiVersion: '2023-05-01',
+        name: construct.id.toLowerCase().replace(/[^a-z0-9-]/g, '-'),
         location: 'location',
-        kind: 'functionapp,linux',
         tags: tag(construct.id),
         identity: { type: 'SystemAssigned' },
         properties: {
-          serverFarmId: expr(`${planSym}.id`),
-          siteConfig: {
-            linuxFxVersion: runtimeMap[(props.runtime as string) ?? 'nodejs20'] ?? 'node|20',
-            appSettings: [...baseSettings, ...envSettings],
+          managedEnvironmentId: expr(`${envSym}.id`),
+          configuration: { ingress: { external: true, targetPort: 80 } },
+          template: {
+            containers: [{
+              name: construct.id.toLowerCase(),
+              image,
+              resources: { cpu: 0.25, memory: '0.5Gi' },
+              env: envVars,
+            }],
+            scale: { minReplicas: 0, maxReplicas: 10 },
           },
-          httpsOnly: true,
         },
       });
       outputs.push({ name: `${construct.id}Id`, type: 'string', value: `${sym}.id` });
@@ -913,9 +936,11 @@ export function emitBicep(stack: Stack): string {
   const resources: BicepResource[] = [];
   const outputs: BicepOutput[] = [];
   const needsAdminPassword = { value: false };
+  // crossParams: referências a constructs de outro stack viram parâmetros
+  const crossParams = new Map<string, string>();
 
   for (const construct of stack.constructs) {
-    synthesizeConstruct(construct, idx, resources, outputs, needsAdminPassword);
+    synthesizeConstruct(construct, idx, resources, outputs, needsAdminPassword, crossParams);
   }
 
   const params: Array<{ name: string; type: string; default?: unknown; secure?: boolean }> = [
@@ -923,6 +948,10 @@ export function emitBicep(stack: Stack): string {
   ];
   if (needsAdminPassword.value) {
     params.push({ name: 'adminPassword', type: 'string', default: '', secure: true });
+  }
+  // Parâmetros cross-stack (sem default — devem ser passados no deploy)
+  for (const [name, type] of crossParams) {
+    params.push({ name, type });
   }
 
   return renderBicep(params, resources, outputs);

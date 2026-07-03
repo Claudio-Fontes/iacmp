@@ -7,7 +7,7 @@ import chalk from 'chalk';
 import { listTemplates, countResources, orderByDependency } from '../synth-out';
 import { readJsonFile, errMessage } from '../utils';
 import { commandExists } from './doctor';
-import { getExecutor, printPlan, runCommands, formatCommand, resourceGroupExists, findExistingRetainedResources, deleteResourceAndWait, DeployContext } from '../deploy';
+import { getExecutor, printPlan, runCommands, formatCommand, resourceGroupExists, getAzureStackOutputs, findExistingRetainedResources, deleteResourceAndWait, DeployContext } from '../deploy';
 
 interface IacmpConfig {
   name?: string;
@@ -114,6 +114,9 @@ export default class Deploy extends Command {
 
     this.log(`Provider: ${provider}${dryRun ? ' (dry-run)' : ''}\n`);
 
+    // Acumula outputs de stacks Azure deployadas para injetar como params na próxima
+    const azureOutputAccumulator: Record<string, string> = {};
+
     const baseCtx: Omit<DeployContext, 'stackName' | 'templatePath'> = {
       cwd,
       region,
@@ -178,7 +181,14 @@ export default class Deploy extends Command {
         }
       }
 
-      const ctx: DeployContext = { ...baseCtx, stackName: t.stackName, templatePath: t.filePath };
+      const ctx: DeployContext = {
+        ...baseCtx,
+        stackName: t.stackName,
+        templatePath: t.filePath,
+        ...(provider === 'azure' && Object.keys(azureOutputAccumulator).length > 0
+          ? { outputParams: { ...azureOutputAccumulator } }
+          : {}),
+      };
 
       let commands;
       try {
@@ -194,6 +204,11 @@ export default class Deploy extends Command {
           runCommands(commands);
         } catch (err) {
           this.error(errMessage(err));
+        }
+        // Azure: coleta outputs desta stack para injetar como params na próxima
+        if (provider === 'azure' && config.resourceGroup) {
+          const stackOutputs = getAzureStackOutputs(t.stackName, config.resourceGroup);
+          Object.assign(azureOutputAccumulator, stackOutputs);
         }
       }
       this.log('');

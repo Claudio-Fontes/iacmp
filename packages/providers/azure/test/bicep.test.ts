@@ -90,13 +90,13 @@ describe('AzureProvider (Bicep)', () => {
     expect(out).toContain("'Microsoft.Sql/servers@2023-02-01-preview'");
   });
 
-  test('Function.Lambda nodejs20 → Microsoft.Web/sites functionapp', () => {
+  test('Function.Lambda nodejs20 → Microsoft.App/containerApps', () => {
     const stack = new Stack('test');
     new Fn.Lambda(stack, 'Handler', { runtime: 'nodejs20', handler: 'index.handler', code: 'dist/' });
     const out = synth(stack);
-    expect(out).toContain("'Microsoft.Web/sites@2023-01-01'");
-    expect(out).toContain('functionapp');
-    expect(out).toContain('node');
+    expect(out).toContain("'Microsoft.App/managedEnvironments@2023-05-01'");
+    expect(out).toContain("'Microsoft.App/containerApps@2023-05-01'");
+    expect(out).toContain('node:4-node20');
   });
 
   test('Messaging.Queue → namespaces + queues', () => {

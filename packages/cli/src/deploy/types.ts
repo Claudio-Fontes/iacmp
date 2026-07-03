@@ -15,6 +15,8 @@ export interface DeployContext {
   projectId?: string;
   /** true em --dry-run: planDeploy não deve executar efeitos locais (ex: build). */
   dryRun?: boolean;
+  /** Outputs de stacks anteriores — usados para preencher parâmetros cross-stack (Azure Bicep). */
+  outputParams?: Record<string, string>;
 }
 
 export interface DestroyContext {
