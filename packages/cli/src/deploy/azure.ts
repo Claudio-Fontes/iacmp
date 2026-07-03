@@ -5,7 +5,12 @@ import { DeployContext, DeployExecutor, DestroyContext, NativeCommand, StackStat
 
 /** Parâmetros Bicep sem valor default — precisam vir de stacks anteriores. */
 function getCrossStackParams(templatePath: string): string[] {
-  const content = fs.readFileSync(templatePath, 'utf-8');
+  let content: string;
+  try {
+    content = fs.readFileSync(templatePath, 'utf-8');
+  } catch {
+    return []; // template ilegível/inexistente — sem params conhecidos (dry-run/testes)
+  }
   const params: string[] = [];
   for (const line of content.split('\n')) {
     const m = line.match(/^param\s+(\w+)\s+\w+\s*$/);
@@ -251,13 +256,29 @@ export const azureExecutor: DeployExecutor = {
     ];
 
     const paramValues: string[] = [...extraParams];
-    if (ctx.templatePath && ctx.outputParams) {
+    if (ctx.templatePath) {
       const crossParams = getCrossStackParams(ctx.templatePath);
-      paramValues.push(
-        ...crossParams
-          .filter(p => ctx.outputParams![p] !== undefined)
-          .map(p => `${p}=${ctx.outputParams![p]}`),
-      );
+      const provided = new Set(paramValues.map(p => p.split('=')[0]));
+      const missing: string[] = [];
+      for (const p of crossParams) {
+        if (provided.has(p)) continue;
+        const value = ctx.outputParams?.[p];
+        if (value !== undefined) {
+          paramValues.push(`${p}=${value}`);
+        } else {
+          missing.push(p);
+        }
+      }
+      // Sem isso o `az` cai num prompt interativo pedindo o valor — pendura o
+      // deploy em vez de falhar. Param cross-stack sem output correspondente
+      // significa que a stack exportadora não foi deployada (ou falhou) antes.
+      if (missing.length > 0) {
+        throw new Error(
+          `Stack "${ctx.stackName}" precisa de parâmetro(s) cross-stack sem valor: ${missing.join(', ')}. ` +
+          `A stack que exporta esse(s) output(s) precisa ser deployada antes e com sucesso. ` +
+          `Rode "iacmp deploy --provider azure" sem --stack para a ordem automática, ou verifique se a stack exportadora falhou.`,
+        );
+      }
     }
     if (paramValues.length > 0) {
       args.push('--parameters', ...paramValues);

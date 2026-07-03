@@ -125,17 +125,32 @@ export function orderByDependency(templates: TemplateRef[]): TemplateRef[] {
   for (const t of templates) {
     const exportNames = new Set<string>();
     const importNames = new Set<string>();
-    try {
-      const json = JSON.parse(fs.readFileSync(t.filePath, 'utf-8')) as {
-        Outputs?: Record<string, { Export?: { Name?: string } }>;
-        Resources?: unknown;
-      };
-      for (const output of Object.values(json.Outputs ?? {})) {
-        if (output?.Export?.Name) exportNames.add(output.Export.Name);
+    if (t.filePath.endsWith('.bicep')) {
+      // Azure: cross-stack = `param X <tipo>` SEM default (o deploy injeta com o
+      // output homônimo de outra stack). `output X ...` é o lado exportador.
+      // Mesma semântica do Export/ImportValue do CFN, dialeto Bicep.
+      try {
+        const content = fs.readFileSync(t.filePath, 'utf-8');
+        for (const line of content.split('\n')) {
+          const param = line.match(/^param\s+(\w+)\s+\w+\s*$/);
+          if (param) importNames.add(param[1]);
+          const output = line.match(/^output\s+(\w+)\s/);
+          if (output) exportNames.add(output[1]);
+        }
+      } catch { /* ilegível — sem dependências conhecidas */ }
+    } else {
+      try {
+        const json = JSON.parse(fs.readFileSync(t.filePath, 'utf-8')) as {
+          Outputs?: Record<string, { Export?: { Name?: string } }>;
+          Resources?: unknown;
+        };
+        for (const output of Object.values(json.Outputs ?? {})) {
+          if (output?.Export?.Name) exportNames.add(output.Export.Name);
+        }
+        collectImportValues(json.Resources, importNames);
+      } catch {
+        // não-JSON (ex: terraform .tf) ou template inválido — sem dependências conhecidas
       }
-      collectImportValues(json.Resources, importNames);
-    } catch {
-      // não-JSON (ex: terraform .tf) ou template inválido — sem dependências conhecidas
     }
     exportsByPath.set(t.filePath, exportNames);
     importsByPath.set(t.filePath, importNames);

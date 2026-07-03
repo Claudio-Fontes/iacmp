@@ -64,4 +64,36 @@ describe('orderByDependency', () => {
     const ordered = orderByDependency([c, a, b]);
     expect(ordered.map(t => t.fileName)).toEqual(['a.json', 'b.json', 'c.json']);
   });
+
+  function writeBicep(fileName: string, content: string): TemplateRef {
+    const filePath = path.join(dir, fileName);
+    fs.writeFileSync(filePath, content);
+    return { stackName: fileName.replace(/\.bicep$/, ''), filePath, fileName };
+  }
+
+  test('bicep: stack com output vem antes da stack com param sem default (caso iacmp31)', () => {
+    // api-stack precisa de ItemsTableName (param SEM default); dynamo-stack o exporta.
+    // Ordem alfabética/entrada colocaria api antes — a ordenação deve inverter.
+    const api = writeBicep('api-stack.bicep', [
+      'param location string = resourceGroup().location',
+      'param listItemsFnImage string = \'node:20-alpine\'',
+      'param acrServer string = \'\'',
+      'param ItemsTableName string',
+      'output ListItemsFnId string = listItemsFn.id',
+    ].join('\n'));
+    const dynamo = writeBicep('dynamo-stack.bicep', [
+      'param location string = resourceGroup().location',
+      'output ItemsTableName string = itemsTable.name',
+      'output ItemsTableArn string = itemsTable.id',
+    ].join('\n'));
+
+    const ordered = orderByDependency([api, dynamo]);
+    expect(ordered.map(t => t.fileName)).toEqual(['dynamo-stack.bicep', 'api-stack.bicep']);
+  });
+
+  test('bicep: params COM default não criam dependência', () => {
+    const a = writeBicep('a.bicep', 'param location string = resourceGroup().location\noutput X string = r.id');
+    const b = writeBicep('b.bicep', 'param location string = resourceGroup().location');
+    expect(orderByDependency([a, b]).map(t => t.fileName)).toEqual(['a.bicep', 'b.bicep']);
+  });
 });
