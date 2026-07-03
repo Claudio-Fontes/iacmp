@@ -497,7 +497,15 @@ export default class Init extends Command {
 
     // iacmp.json
     const accountTier = flags.accountTier ?? 'free';
-    const config = { name: projectName, provider: flags.provider, region: 'us-east-1', language: flags.language, accountTier };
+    const config = {
+      name: projectName,
+      provider: flags.provider,
+      region: 'us-east-1',
+      resourceGroup: `${projectName}-rg`,
+      azureRegion: 'eastus',
+      language: flags.language,
+      accountTier,
+    };
     fs.writeFileSync(path.join(projectDir, 'iacmp.json'), JSON.stringify(config, null, 2) + '\n');
 
     // .gitignore
