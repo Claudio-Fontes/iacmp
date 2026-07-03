@@ -166,5 +166,17 @@ async function analyzeWithOpenAI(
   });
 
   const text = response.choices[0]?.message?.content ?? '';
+
+  // GPT-4o recusa imagens com logos de provedores cloud (AWS, Azure, GCP) por política de conteúdo.
+  // Detecta a recusa e lança erro com instrução clara em vez de mensagem genérica de parse.
+  const refusalPhrases = ["i'm sorry", "i cannot", "i can't", "unable to assist", "can't assist", "cannot assist"];
+  if (refusalPhrases.some(p => text.toLowerCase().startsWith(p))) {
+    throw new Error(
+      'O GPT-4o recusou processar esta imagem (política de conteúdo — comum em diagramas com logos de cloud).\n' +
+      'Solução: configure ANTHROPIC_API_KEY no .env — o Claude não tem essa restrição.\n' +
+      'Alternativa: use `iacmp ai "descreva a arquitetura"` e descreva manualmente.',
+    );
+  }
+
   return extractResponse(text);
 }
