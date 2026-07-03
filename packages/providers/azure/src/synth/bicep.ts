@@ -773,8 +773,11 @@ function synthesizeConstruct(
       // Bicep string interpolation: resolvida em deploy-time, não em synth-time
       const apimName = expr(`'${apimBase}-\${uniqueString(resourceGroup().id)}'`);
       const authorizerLambdaId = props.authorizerLambdaId as string | undefined;
-      // restore: true — restaura automaticamente se o serviço estiver em soft-delete (evita ServiceAlreadyExistsInSoftDeletedState)
-      resources.push({ sym, type: 'Microsoft.ApiManagement/service', apiVersion: '2023-05-01-preview', name: apimName, location: 'location', tags: tag(construct.id), sku: { name: 'Consumption', capacity: 0 }, properties: { publisherEmail: 'admin@example.com', publisherName: construct.id, virtualNetworkType: 'None', restore: true, customProperties: { 'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls10': 'false', 'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls11': 'false' } } });
+      // SEM restore:true — com restore, o ARM falha com ServiceUndeleteNotPossible quando
+      // NÃO existe instância soft-deletada com esse nome (caso normal de 1º deploy).
+      // Colisão com soft-delete (redeploy no mesmo RG após destroy) se resolve com
+      // `az apim deletedservice purge` antes do deploy.
+      resources.push({ sym, type: 'Microsoft.ApiManagement/service', apiVersion: '2023-05-01-preview', name: apimName, location: 'location', tags: tag(construct.id), sku: { name: 'Consumption', capacity: 0 }, properties: { publisherEmail: 'admin@example.com', publisherName: construct.id, virtualNetworkType: 'None', customProperties: { 'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls10': 'false', 'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls11': 'false' } } });
       if (authorizerLambdaId) {
         const authFnSym = toSym(authorizerLambdaId);
         resources.push({ sym: `${sym}AuthorizerBackend`, type: 'Microsoft.ApiManagement/service/backends', apiVersion: '2023-05-01-preview', parent: sym, name: 'authorizer-backend', properties: { description: `Lambda authorizer backend (${authorizerLambdaId})`, url: expr(`'https://${authFnSym}.azurewebsites.net'`), protocol: 'http' } });
