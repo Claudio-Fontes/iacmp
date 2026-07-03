@@ -13,6 +13,7 @@ interface IacmpConfig {
   name?: string;
   provider?: string;
   region?: string;
+  azureRegion?: string;
   resourceGroup?: string;
   projectId?: string;
 }
@@ -62,7 +63,7 @@ export default class Deploy extends Command {
       this.error(errMessage(err));
     }
     const provider = flags.provider ?? config.provider ?? 'aws';
-    const region = config.region ?? 'us-east-1';
+    const region = (provider === 'azure' ? config.azureRegion : undefined) ?? config.region ?? 'us-east-1';
 
     let executor;
     try {

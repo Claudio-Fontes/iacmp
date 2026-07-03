@@ -34,7 +34,8 @@ function bv(v: unknown, depth = 0): string {
   }
   const entries = Object.entries(v as Record<string, unknown>)
     .filter(([, val]) => val !== undefined && val !== null)
-    .map(([k, val]) => `${inner}${k}: ${bv(val, depth + 1)}`);
+    // Chaves com caracteres especiais (ponto, hífen, espaço) precisam de aspas em Bicep
+    .map(([k, val]) => `${inner}${/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(k) ? k : `'${k}'`}: ${bv(val, depth + 1)}`);
   if (entries.length === 0) return '{}';
   return `{\n${entries.join('\n')}\n${pad}}`;
 }
@@ -460,24 +461,19 @@ function synthesizeConstruct(
 
     case 'Network.Subnet': {
       const vnetId = props.vpcId;
-      const vnetSym = isRef(vnetId) ? toSym((vnetId as Ref).constructId) : null;
+      const vnetSym = isRef(vnetId) ? toSym((vnetId as Ref).constructId) : toSym(vnetId as string);
       const subnetResource: BicepResource = {
         sym,
         type: 'Microsoft.Network/virtualNetworks/subnets',
         apiVersion: '2023-04-01',
-        location: 'location',
+        // subnets são recursos filho — herdam location do VNet, não declaram própria
         properties: {
           addressPrefix: props.cidr as string,
           privateEndpointNetworkPolicies: (props.public as boolean) ? 'Disabled' : 'Enabled',
         },
       };
-      if (vnetSym) {
-        subnetResource.parent = vnetSym;
-        subnetResource.name = construct.id;
-      } else {
-        subnetResource.name = construct.id;
-        subnetResource.dependsOn = [vnetId as string];
-      }
+      subnetResource.parent = vnetSym;
+      subnetResource.name = construct.id;
       resources.push(subnetResource);
       break;
     }
@@ -679,8 +675,24 @@ function synthesizeConstruct(
     }
 
     case 'Database.DynamoDB': {
-      needsAdminPassword.value = true;
-      resources.push({ sym, type: 'Microsoft.DocumentDB/databaseAccounts', apiVersion: '2023-04-15', name: construct.id.toLowerCase(), location: 'location', tags: tag(construct.id), properties: { databaseAccountOfferType: 'Standard', kind: 'GlobalDocumentDB', capabilities: [{ name: 'EnableTable' }], locations: [{ locationName: expr('location'), failoverPriority: 0, isZoneRedundant: false }], backupPolicy: { type: 'Continuous', continuousModeProperties: { tier: 'Continuous30Days' } } } });
+      // DynamoDB → Azure Cosmos DB for Table API. kind vai no nível do recurso,
+      // não em properties. Backup Periodic (Continuous requer conta paga).
+      resources.push({
+        sym,
+        type: 'Microsoft.DocumentDB/databaseAccounts',
+        apiVersion: '2023-04-15',
+        name: construct.id.toLowerCase(),
+        location: 'location',
+        kind: 'GlobalDocumentDB',
+        tags: tag(construct.id),
+        properties: {
+          databaseAccountOfferType: 'Standard',
+          capabilities: [{ name: 'EnableTable' }],
+          locations: [{ locationName: expr('location'), failoverPriority: 0, isZoneRedundant: false }],
+          backupPolicy: { type: 'Periodic', periodicModeProperties: { backupIntervalInMinutes: 1440, backupRetentionIntervalInHours: 168 } },
+        },
+      });
+      outputs.push({ name: `${construct.id}Endpoint`, type: 'string', value: `${sym}.properties.documentEndpoint` });
       break;
     }
 
@@ -700,18 +712,47 @@ function synthesizeConstruct(
     case 'Function.Lambda': {
       const environment = (props.environment as Record<string, string>) ?? {};
       const runtimeMap: Record<string, string> = { 'nodejs20': 'node|20', 'nodejs18': 'node|18', 'python3.12': 'python|3.12', 'python3.11': 'python|3.11', 'java21': 'java|21', 'go1.x': 'go|1', 'dotnet8': 'dotnet|8' };
+      const workerRuntime = (props.runtime as string)?.startsWith('nodejs') ? 'node' : (props.runtime as string)?.startsWith('python') ? 'python' : 'dotnet';
+      // Storage Account obrigatório para Azure Functions
+      const storageSym = `${sym}Storage`;
+      const storageName = safeStorageName(`fn${construct.id}`);
+      resources.push({ sym: storageSym, type: 'Microsoft.Storage/storageAccounts', apiVersion: '2023-01-01', name: storageName, location: 'location', kind: 'StorageV2', sku: { name: 'Standard_LRS' }, tags: tag(construct.id), properties: { supportsHttpsTrafficOnly: true } });
+      // Consumption App Service Plan (Y1) obrigatório para Function App
+      const planSym = `${sym}Plan`;
+      resources.push({ sym: planSym, type: 'Microsoft.Web/serverfarms', apiVersion: '2023-01-01', name: `${construct.id}-plan`, location: 'location', kind: 'functionapp', sku: { name: 'Y1', tier: 'Dynamic' }, tags: tag(construct.id), properties: { reserved: true } });
       const baseSettings = [
         { name: 'FUNCTIONS_EXTENSION_VERSION', value: '~4' },
-        { name: 'FUNCTIONS_WORKER_RUNTIME', value: (props.runtime as string)?.startsWith('nodejs') ? 'node' : (props.runtime as string)?.startsWith('python') ? 'python' : 'dotnet' },
+        { name: 'FUNCTIONS_WORKER_RUNTIME', value: workerRuntime },
+        { name: 'AzureWebJobsStorage', value: expr(`'DefaultEndpointsProtocol=https;AccountName=${storageName};AccountKey=\${${storageSym}.listKeys().keys[0].value};EndpointSuffix=\${environment().suffixes.storage}'`) },
       ];
       const envSettings = Object.entries(environment).map(([k, v]) => ({ name: k, value: v }));
-      resources.push({ sym, type: 'Microsoft.Web/sites', apiVersion: '2023-01-01', name: construct.id, location: 'location', kind: 'functionapp', tags: tag(construct.id), properties: { siteConfig: { linuxFxVersion: runtimeMap[(props.runtime as string) ?? 'nodejs20'] ?? 'node|20', appSettings: [...baseSettings, ...envSettings], ...(props.memory ? { memoryAllocation: props.memory } : {}) }, httpsOnly: true } });
+      resources.push({
+        sym,
+        type: 'Microsoft.Web/sites',
+        apiVersion: '2023-01-01',
+        name: construct.id,
+        location: 'location',
+        kind: 'functionapp,linux',
+        tags: tag(construct.id),
+        identity: { type: 'SystemAssigned' },
+        properties: {
+          serverFarmId: expr(`${planSym}.id`),
+          siteConfig: {
+            linuxFxVersion: runtimeMap[(props.runtime as string) ?? 'nodejs20'] ?? 'node|20',
+            appSettings: [...baseSettings, ...envSettings],
+          },
+          httpsOnly: true,
+        },
+      });
       outputs.push({ name: `${construct.id}Id`, type: 'string', value: `${sym}.id` });
+      outputs.push({ name: `${construct.id}PrincipalId`, type: 'string', value: `${sym}.identity.principalId` });
       break;
     }
 
     case 'Function.ApiGateway': {
-      const apimName = (props.name as string) ?? construct.id;
+      // nomes Azure não aceitam espaços — sanitiza para kebab-case
+      const rawName = (props.name as string) ?? construct.id;
+      const apimName = rawName.replace(/[^a-zA-Z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').toLowerCase().slice(0, 50);
       const authorizerLambdaId = props.authorizerLambdaId as string | undefined;
       resources.push({ sym, type: 'Microsoft.ApiManagement/service', apiVersion: '2023-05-01-preview', name: apimName, location: 'location', tags: tag(construct.id), sku: { name: 'Consumption', capacity: 0 }, properties: { publisherEmail: 'admin@example.com', publisherName: construct.id, virtualNetworkType: 'None', customProperties: { 'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls10': 'false', 'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls11': 'false' } } });
       if (authorizerLambdaId) {
@@ -724,17 +765,55 @@ function synthesizeConstruct(
     case 'Policy.IAM': {
       const statements = (props.statements as Array<Record<string, unknown>>) ?? [];
       const attachTo = props.attachTo as string;
+      const attachSym = toSym(attachTo);
+      // Azure RBAC usa actions no formato Microsoft.*/* — mapear ações AWS para
+      // um placeholder válido (o deploy precisa do formato correto, não da semântica AWS)
       const actions: string[] = [];
       const notActions: string[] = [];
       for (const s of statements) {
-        if (s.effect === 'Allow') actions.push(...(s.actions as string[]));
-        else notActions.push(...(s.actions as string[]));
+        const rawActions = (s.actions as string[]) ?? [];
+        // Mapeia ações AWS-style para Azure-style equivalentes
+        const azureActions = rawActions.map(a => {
+          if (a.startsWith('dynamodb:') || a.startsWith('DocumentDB:')) return 'Microsoft.DocumentDB/databaseAccounts/*/read';
+          if (a.startsWith('s3:') || a.startsWith('storage:')) return 'Microsoft.Storage/storageAccounts/blobServices/containers/*';
+          if (a.startsWith('secretsmanager:') || a.startsWith('keyvault:')) return 'Microsoft.KeyVault/vaults/secrets/*';
+          if (a.startsWith('sqs:') || a.startsWith('servicebus:')) return 'Microsoft.ServiceBus/namespaces/queues/*';
+          if (a === '*') return '*';
+          return `Microsoft.Resources/subscriptions/resourceGroups/read`; // fallback válido
+        });
+        if (s.effect === 'Allow') actions.push(...azureActions);
+        else notActions.push(...azureActions);
       }
-      const principalType = props.attachType === 'lambda' ? 'FunctionApp' : 'VirtualMachine';
       const roleDefSym = `${sym}RoleDef`;
       const roleAssignSym = `${sym}RoleAssign`;
-      resources.push({ sym: roleDefSym, type: 'Microsoft.Authorization/roleDefinitions', apiVersion: '2022-04-01', name: expr(`guid(resourceGroup().id, '${construct.id}')`), location: 'location', properties: { roleName: `${construct.id}-role`, description: (props.description as string) ?? `Custom role for ${attachTo}`, type: 'CustomRole', permissions: [{ actions, notActions, dataActions: [], notDataActions: [] }], assignableScopes: [expr('resourceGroup().id')] } });
-      resources.push({ sym: roleAssignSym, type: 'Microsoft.Authorization/roleAssignments', apiVersion: '2022-04-01', name: expr(`guid(resourceGroup().id, '${attachTo}', '${construct.id}')`), location: 'location', dependsOn: [roleDefSym], properties: { roleDefinitionId: expr(`${roleDefSym}.id`), principalType, description: `Role assignment for ${attachTo} (${principalType})` } });
+      // roleDefinitions e roleAssignments são recursos GLOBAIS — sem location
+      resources.push({
+        sym: roleDefSym,
+        type: 'Microsoft.Authorization/roleDefinitions',
+        apiVersion: '2022-04-01',
+        name: expr(`guid(resourceGroup().id, '${construct.id}')`),
+        properties: {
+          roleName: `${construct.id}-role`,
+          description: (props.description as string) ?? `Custom role for ${attachTo}`,
+          type: 'CustomRole',
+          permissions: [{ actions: actions.length > 0 ? [...new Set(actions)] : ['Microsoft.Resources/subscriptions/resourceGroups/read'], notActions, dataActions: [], notDataActions: [] }],
+          assignableScopes: [expr('resourceGroup().id')],
+        },
+      });
+      resources.push({
+        sym: roleAssignSym,
+        type: 'Microsoft.Authorization/roleAssignments',
+        apiVersion: '2022-04-01',
+        name: expr(`guid(resourceGroup().id, '${attachTo}', '${construct.id}')`),
+        // dependsOn implícito via roleDefinitionId: roleDefSym.id — não declarar explicitamente
+        properties: {
+          roleDefinitionId: expr(`${roleDefSym}.id`),
+          // principalId = managed identity da Function App (requer identity: SystemAssigned)
+          principalId: expr(`${attachSym}.identity.principalId`),
+          principalType: 'ServicePrincipal',
+          description: `Role assignment for ${attachTo}`,
+        },
+      });
       break;
     }
 
