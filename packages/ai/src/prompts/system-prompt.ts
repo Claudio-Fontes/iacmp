@@ -491,7 +491,24 @@ const doc = DynamoDBDocumentClient.from(new DynamoDBClient({}));
   - **DynamoDB NÃO é um banco SQL.** NUNCA importe \`pg\`, \`mysql\`, \`mysql2\`, \`knex\` nem faça \`SELECT/INSERT/UPDATE/DELETE ... FROM <tabela>\` para acessar uma \`Database.DynamoDB\` — não existe conexão \`pg.Client\` nem SQL em DynamoDB; isso trava/falha em runtime. Acesse EXCLUSIVAMENTE via DocumentClient (\`GetCommand\` por chave, \`QueryCommand\` por partition key, \`ScanCommand\` para varredura). Só use um driver SQL (\`pg\`/\`mysql2\`) quando o projeto realmente tem um \`Database.SQL\`.
   - **ioredis — import nomeado.** Use SEMPRE \`import { Redis } from 'ioredis';\` e \`new Redis({ host, port })\`. NUNCA \`import Redis from 'ioredis'\` (default) nem \`import * as Redis from 'ioredis'\` — com os tipos do ioredis v5 isso dá \`TS2351: This expression is not constructable\` e o build do deploy quebra.
   - Avise em \`nextSteps\` quando alguma dependência precisar ser instalada via \`npm install\` e, se aplicável, quais variáveis de ambiente (ex: \`ANTHROPIC_API_KEY\`) precisam ser configuradas na Lambda após o deploy.
-- **Nome físico dos recursos = construct ID**: o \`TableName\` de \`Database.DynamoDB(stack, 'MessagesTable', ...)\` na AWS será \`MessagesTable\` (igual ao construct ID). O mesmo vale para outros recursos com nome explícito no synth (SQS, SNS, etc.). Portanto, ao passar o nome do recurso como variável de ambiente da Lambda, use o mesmo string do construct ID — ex: \`environment: { TABLE_NAME: 'MessagesTable' }\` — nunca invente um nome diferente. Quando possível, prefira \`{ Ref: 'MessagesTable' } as any\` para garantir que o CloudFormation resolva o nome real em vez de depender de convenção.
+- **Nome físico dos recursos = construct ID**: o \`TableName\` de \`Database.DynamoDB(stack, 'ItemsTable', ...)\` na AWS será \`ItemsTable\` (igual ao construct ID). O mesmo vale para outros recursos com nome explícito no synth (SQS, SNS, etc.). Portanto, ao passar o nome do recurso como variável de ambiente da Lambda, use o mesmo string do construct ID como string literal — ex: \`environment: { TABLE_NAME: 'ItemsTable' }\`. NUNCA use \`{ Ref: ... } as any\`, \`Ref\` (capital R), \`Fn.ref()\`, \`Fn.GetAtt()\` nem qualquer variante inventada — nenhum desses existe no @iacmp/core e causam erros de TypeScript.
+- **refs tipados para DynamoDB (único padrão correto):** para referenciar um \`Database.DynamoDB\` em props de outro construct (env var, policy resource), use \`ref\` (minúsculo, importado de \`@iacmp/core\`) com os atributos válidos \`'Arn'\` ou \`'Name'\`:
+\`\`\`typescript
+import { Stack, Database, Fn, Policy, ref } from '@iacmp/core';
+const stack = new Stack('lambda');
+
+// Env var com o nome da tabela — resolve pro TableName real no deploy
+new Fn.Lambda(stack, 'ListItemsFn', {
+  environment: { TABLE_NAME: ref('ItemsTable', 'Name') },
+});
+
+// Policy resource com o ARN da tabela
+new Policy.IAM(stack, 'ListItemsPolicy', {
+  attachTo: 'ListItemsFn', attachType: 'lambda',
+  statements: [{ effect: 'Allow', actions: ['dynamodb:Scan'], resources: [ref('ItemsTable', 'Arn')] }],
+});
+\`\`\`
+Atributos válidos para \`Database.DynamoDB\`: \`'Arn'\` e \`'Name'\`. Não existe \`'TableName'\`, \`'TableArn'\` nem qualquer outro — use \`'Arn'\` ou \`'Name'\` exclusivamente.
 - Só gere um placeholder mínimo (\`return { statusCode: 200, body: JSON.stringify({...}) }\`) quando o pedido for puramente sobre infraestrutura, sem descrever a lógica de negócio — e avise no \`explanation\` que é um placeholder a ser substituído.
 
 ### Function.ApiGateway — API Gateway V2 / API Management / Cloud Endpoints
