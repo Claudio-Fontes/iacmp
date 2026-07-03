@@ -90,13 +90,23 @@ describe('AzureProvider (Bicep)', () => {
     expect(out).toContain("'Microsoft.Sql/servers@2023-02-01-preview'");
   });
 
-  test('Function.Lambda nodejs20 → Microsoft.App/containerApps', () => {
+  test('Function.Lambda nodejs20 → Microsoft.App/containerApps (shared env, ACR params)', () => {
     const stack = new Stack('test');
     new Fn.Lambda(stack, 'Handler', { runtime: 'nodejs20', handler: 'index.handler', code: 'dist/' });
     const out = synth(stack);
-    expect(out).toContain("'Microsoft.App/managedEnvironments@2023-05-01'");
+    // Um único ManagedEnvironment compartilhado por stack
+    expect(out.match(/'Microsoft\.App\/managedEnvironments@2023-05-01'/g)?.length).toBe(1);
     expect(out).toContain("'Microsoft.App/containerApps@2023-05-01'");
-    expect(out).toContain('node:4-node20');
+    // Imagem via parâmetro (não hardcoded)
+    expect(out).toContain('param handlerImage string');
+    expect(out).toContain('param acrServer string');
+    // Múltiplas Lambdas ainda usam o mesmo environment
+    const stack2 = new Stack('multi');
+    new Fn.Lambda(stack2, 'Fn1', { runtime: 'nodejs20', handler: 'a.handler', code: '.' });
+    new Fn.Lambda(stack2, 'Fn2', { runtime: 'nodejs20', handler: 'b.handler', code: '.' });
+    const out2 = synth(stack2);
+    expect(out2.match(/'Microsoft\.App\/managedEnvironments@2023-05-01'/g)?.length).toBe(1);
+    expect(out2.match(/'Microsoft\.App\/containerApps@2023-05-01'/g)?.length).toBe(2);
   });
 
   test('Messaging.Queue → namespaces + queues', () => {

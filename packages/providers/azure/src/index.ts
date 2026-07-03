@@ -1,2 +1,3 @@
 export { AzureProvider } from './provider';
-export { emitBicep } from './synth/bicep';
+export { emitBicep, extractAzureFunctionMeta } from './synth/bicep';
+export type { AzureFunctionMeta } from './synth/bicep';

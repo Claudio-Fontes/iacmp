@@ -202,6 +202,8 @@ function synthesizeConstruct(
   outputs: BicepOutput[],
   needsAdminPassword: { value: boolean },
   crossParams: Map<string, string>,
+  functionImageParams: Set<string>,
+  sharedContainerEnvSym: string | null,
 ): void {
   const props = construct.props as Record<string, unknown>;
   const sym = toSym(construct.id);
@@ -723,27 +725,14 @@ function synthesizeConstruct(
 
     case 'Function.Lambda': {
       const environment = (props.environment as Record<string, string>) ?? {};
-      // Lambda → Azure Container Apps (escala a zero, sem quota de VM)
-      // Um único ManagedEnvironment compartilhado por stack + um ContainerApp por Lambda.
-      const envSym = `${sym}Env`;
-      const envName = `${construct.id.toLowerCase().replace(/[^a-z0-9-]/g, '-')}-env`;
-      resources.push({
-        sym: envSym,
-        type: 'Microsoft.App/managedEnvironments',
-        apiVersion: '2023-05-01',
-        name: envName,
-        location: 'location',
-        tags: tag(construct.id),
-        properties: { zoneRedundant: false },
-      });
-      const runtimeImageMap: Record<string, string> = {
-        'nodejs20': 'mcr.microsoft.com/azure-functions/node:4-node20',
-        'nodejs18': 'mcr.microsoft.com/azure-functions/node:4-node18',
-        'python3.12': 'mcr.microsoft.com/azure-functions/python:4-python3.12',
-        'python3.11': 'mcr.microsoft.com/azure-functions/python:4-python3.11',
-        'dotnet8':   'mcr.microsoft.com/azure-functions/dotnet-isolated:4-dotnet-isolated8.0',
-      };
-      const image = runtimeImageMap[(props.runtime as string) ?? 'nodejs20'] ?? 'mcr.microsoft.com/azure-functions/node:4-node20';
+      // Lambda → Azure Container Apps (escala a zero, sem quota de VM).
+      // Um único ManagedEnvironment compartilhado por stack (free tier: max 1 por região).
+      // sharedContainerEnvSym é criado em emitBicep antes do loop de constructs.
+      const envSym = sharedContainerEnvSym!;
+      // A imagem real (buildada no ACR) é passada como parâmetro Bicep no deploy.
+      // Default 'node:20-alpine' serve apenas para validação estática do template.
+      const imageParamName = `${sym}Image`;
+      functionImageParams.add(imageParamName);
       const envVars = Object.entries(environment).map(([k, v]) => ({ name: k, value: resolveValue(v, idx, crossParams) }));
       resources.push({
         sym,
@@ -755,12 +744,16 @@ function synthesizeConstruct(
         identity: { type: 'SystemAssigned' },
         properties: {
           managedEnvironmentId: expr(`${envSym}.id`),
-          configuration: { ingress: { external: true, targetPort: 80 } },
+          configuration: {
+            ingress: { external: true, targetPort: 3000 },
+            registries: expr(`empty(acrServer) ? [] : [{\n    server: acrServer\n    username: acrUser\n    passwordSecretRef: 'acr-pwd'\n  }]`),
+            secrets: expr(`empty(acrPassword) ? [] : [{\n    name: 'acr-pwd'\n    value: acrPassword\n  }]`),
+          },
           template: {
             containers: [{
               name: construct.id.toLowerCase(),
-              image,
-              resources: { cpu: 0.25, memory: '0.5Gi' },
+              image: expr(imageParamName),
+              resources: { cpu: expr("json('0.25')"), memory: '0.5Gi' },
               env: envVars,
             }],
             scale: { minReplicas: 0, maxReplicas: 10 },
@@ -773,11 +766,15 @@ function synthesizeConstruct(
     }
 
     case 'Function.ApiGateway': {
-      // nomes Azure não aceitam espaços — sanitiza para kebab-case
+      // nomes Azure não aceitam espaços — sanitiza para kebab-case.
+      // APIM names são globalmente únicos no Azure — sufixo uniqueString garante unicidade.
       const rawName = (props.name as string) ?? construct.id;
-      const apimName = rawName.replace(/[^a-zA-Z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').toLowerCase().slice(0, 50);
+      const apimBase = rawName.replace(/[^a-zA-Z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').toLowerCase().slice(0, 36);
+      // Bicep string interpolation: resolvida em deploy-time, não em synth-time
+      const apimName = expr(`'${apimBase}-\${uniqueString(resourceGroup().id)}'`);
       const authorizerLambdaId = props.authorizerLambdaId as string | undefined;
-      resources.push({ sym, type: 'Microsoft.ApiManagement/service', apiVersion: '2023-05-01-preview', name: apimName, location: 'location', tags: tag(construct.id), sku: { name: 'Consumption', capacity: 0 }, properties: { publisherEmail: 'admin@example.com', publisherName: construct.id, virtualNetworkType: 'None', customProperties: { 'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls10': 'false', 'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls11': 'false' } } });
+      // restore: true — restaura automaticamente se o serviço estiver em soft-delete (evita ServiceAlreadyExistsInSoftDeletedState)
+      resources.push({ sym, type: 'Microsoft.ApiManagement/service', apiVersion: '2023-05-01-preview', name: apimName, location: 'location', tags: tag(construct.id), sku: { name: 'Consumption', capacity: 0 }, properties: { publisherEmail: 'admin@example.com', publisherName: construct.id, virtualNetworkType: 'None', restore: true, customProperties: { 'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls10': 'false', 'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls11': 'false' } } });
       if (authorizerLambdaId) {
         const authFnSym = toSym(authorizerLambdaId);
         resources.push({ sym: `${sym}AuthorizerBackend`, type: 'Microsoft.ApiManagement/service/backends', apiVersion: '2023-05-01-preview', parent: sym, name: 'authorizer-backend', properties: { description: `Lambda authorizer backend (${authorizerLambdaId})`, url: expr(`'https://${authFnSym}.azurewebsites.net'`), protocol: 'http' } });
@@ -930,6 +927,33 @@ function synthesizeConstruct(
   }
 }
 
+// ── Function metadata for packaging ──────────────────────────────────────────
+export interface AzureFunctionMeta {
+  constructId: string;
+  containerAppName: string;
+  handler: string;
+  code: string;
+  runtime: string;
+  imageParamName: string;
+}
+
+export function extractAzureFunctionMeta(stack: Stack): AzureFunctionMeta[] {
+  return stack.constructs
+    .filter(c => c.type === 'Function.Lambda')
+    .map(c => {
+      const props = c.props as Record<string, unknown>;
+      const sym = toSym(c.id);
+      return {
+        constructId: c.id,
+        containerAppName: c.id.toLowerCase().replace(/[^a-z0-9-]/g, '-'),
+        handler: (props.handler as string) ?? 'dist/handler.handler',
+        code: (props.code as string) ?? 'dist/',
+        runtime: (props.runtime as string) ?? 'nodejs20',
+        imageParamName: `${sym}Image`,
+      };
+    });
+}
+
 // ── Main export ───────────────────────────────────────────────────────────────
 export function emitBicep(stack: Stack): string {
   const idx = new Map<string, BaseConstruct>(stack.constructs.map(c => [c.id, c]));
@@ -938,9 +962,28 @@ export function emitBicep(stack: Stack): string {
   const needsAdminPassword = { value: false };
   // crossParams: referências a constructs de outro stack viram parâmetros
   const crossParams = new Map<string, string>();
+  // functionImageParams: param Bicep por Function.Lambda (imagem buildada no ACR)
+  const functionImageParams = new Set<string>();
+
+  // ManagedEnvironment compartilhado — free tier Azure limita a 1 env por região.
+  // Criado uma única vez se o stack tiver alguma Function.Lambda.
+  const hasLambda = stack.constructs.some(c => c.type === 'Function.Lambda');
+  let sharedContainerEnvSym: string | null = null;
+  if (hasLambda) {
+    sharedContainerEnvSym = 'sharedContainerEnv';
+    resources.push({
+      sym: sharedContainerEnvSym,
+      type: 'Microsoft.App/managedEnvironments',
+      apiVersion: '2023-05-01',
+      name: expr(`'${stack.name}-cae'`),
+      location: 'location',
+      tags: { Stack: stack.name },
+      properties: { zoneRedundant: false },
+    });
+  }
 
   for (const construct of stack.constructs) {
-    synthesizeConstruct(construct, idx, resources, outputs, needsAdminPassword, crossParams);
+    synthesizeConstruct(construct, idx, resources, outputs, needsAdminPassword, crossParams, functionImageParams, sharedContainerEnvSym);
   }
 
   const params: Array<{ name: string; type: string; default?: unknown; secure?: boolean }> = [
@@ -948,6 +991,17 @@ export function emitBicep(stack: Stack): string {
   ];
   if (needsAdminPassword.value) {
     params.push({ name: 'adminPassword', type: 'string', default: '', secure: true });
+  }
+  // Parâmetros de imagem por Function.Lambda — default 'node:20-alpine' para
+  // validação estática; o deploy sobrescreve com a imagem real buildada no ACR.
+  for (const name of functionImageParams) {
+    params.push({ name, type: 'string', default: 'node:20-alpine' });
+  }
+  // Params ACR — usados quando há Function.Lambda e o deploy faz build no ACR.
+  if (hasLambda) {
+    params.push({ name: 'acrServer', type: 'string', default: '' });
+    params.push({ name: 'acrUser', type: 'string', default: '' });
+    params.push({ name: 'acrPassword', type: 'string', default: '', secure: true });
   }
   // Parâmetros cross-stack (sem default — devem ser passados no deploy)
   for (const [name, type] of crossParams) {

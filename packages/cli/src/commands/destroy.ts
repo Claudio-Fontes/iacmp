@@ -156,6 +156,16 @@ export default class Destroy extends Command {
     }
 
     for (const t of templates) {
+      // Em modo real (não dry-run), pular stacks que não estão deployadas para evitar erro "not found"
+      if (!dryRun && executor.describeStatus) {
+        const status = executor.describeStatus(t.stackName, baseCtx);
+        if (!status.deployed) {
+          this.log(`Stack: ${t.stackName} ${chalk.yellow('(não deployada — ignorada)')}`);
+          this.log('');
+          continue;
+        }
+      }
+
       this.log(`Stack: ${t.stackName}`);
       const ctx: DestroyContext = { ...baseCtx, stackName: t.stackName };
 

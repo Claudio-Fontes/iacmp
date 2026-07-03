@@ -224,6 +224,14 @@ export default class Synth extends Command {
             const bicep = p.synthesize(typedStack, allStacks);
             const outPath = path.join(provOutDir, `${stackName}.bicep`);
             fs.writeFileSync(outPath, bicep);
+            const { extractAzureFunctionMeta } = await import('@iacmp/provider-azure');
+            const fnMeta = extractAzureFunctionMeta(typedStack);
+            if (fnMeta.length > 0) {
+              fs.writeFileSync(
+                path.join(provOutDir, `${stackName}.iacmp-meta.json`),
+                JSON.stringify({ functions: fnMeta }, null, 2),
+              );
+            }
             this.log(`Sintetizado: ${outPath}`);
             break;
           }
