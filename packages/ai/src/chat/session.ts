@@ -24,6 +24,10 @@ export class ChatSession {
     while (this.messages.length > 2 && this.estimateTokens() > budget) {
       this.messages.splice(0, 1);
     }
+    // Garante que a primeira mensagem é sempre 'user'
+    while (this.messages.length > 0 && this.messages[0].role !== 'user') {
+      this.messages.splice(0, 1);
+    }
   }
 
   removeLast(): void {

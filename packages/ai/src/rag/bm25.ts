@@ -48,6 +48,7 @@ export function buildBM25Index(chunks: Chunk[]): BM25Index {
     // Usa contextualContent se disponível (Contextual Retrieval), senão content
     const text = chunk.contextualContent ?? chunk.content;
     const tokens = tokenize(text);
+    if (tokens.length === 0) continue;
     const terms = termFrequency(tokens);
 
     totalLength += tokens.length;

@@ -30,7 +30,6 @@ export class OpenAIProvider implements AIProvider {
       max_tokens: 16384,
       temperature: this.temperature,
       messages: openaiMessages,
-      response_format: { type: 'json_object' },
     }));
 
     return {
@@ -61,7 +60,6 @@ export class OpenAIProvider implements AIProvider {
         max_tokens: 16384,
         temperature: this.temperature,
         messages: openaiMessages,
-        response_format: { type: 'json_object' },
         stream: true,
       });
 

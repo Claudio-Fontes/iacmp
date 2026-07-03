@@ -16,6 +16,10 @@ function trimToTokenBudget(messages: AIMessage[]): AIMessage[] {
   while (trimmed.length > 2 && estimateTokens(trimmed) > TOKEN_BUDGET) {
     trimmed = trimmed.slice(1);
   }
+  // Garante que a primeira mensagem é sempre 'user'
+  while (trimmed.length > 0 && trimmed[0].role !== 'user') {
+    trimmed = trimmed.slice(1);
+  }
   return trimmed;
 }
 

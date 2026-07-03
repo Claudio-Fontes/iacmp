@@ -633,6 +633,7 @@ export default class Init extends Command {
             diagramPath,
             { anthropic: anthropicKey, openai: openaiKey },
             anthropicKey ? claudeModel : undefined,
+            { accountTier: config.accountTier ?? 'free' },
           );
           spinner.succeed('Diagrama analisado');
 

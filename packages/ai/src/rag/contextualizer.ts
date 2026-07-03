@@ -27,7 +27,7 @@ Seja direto e técnico. Não use markdown. Responda apenas com o parágrafo de c
 
 export class Contextualizer {
   private client: Anthropic;
-  private model = 'claude-haiku-4-5'; // usa Haiku para minimizar custo — tarefa simples
+  private model = 'claude-haiku-4-5-20251001'; // usa Haiku para minimizar custo — tarefa simples
 
   constructor(apiKey: string) {
     this.client = new Anthropic({ apiKey });

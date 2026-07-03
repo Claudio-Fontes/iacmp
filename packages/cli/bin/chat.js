@@ -396,7 +396,7 @@ async function runGeneration(provider, session, lastPrompt, projectContext, aiPr
         try {
           const retryParsed = extractResponse(retryRaw);
           parsed = retryParsed;
-          await writeGeneratedFiles(parsed.files, cwd, false, async () => 'y', currentLang);
+          await writeGeneratedFiles(parsed.files, cwd, false, ask, currentLang);
         } catch { /* mantém parsed anterior */ }
       } catch (err) {
         process.stderr.write(chalk.red(`  ✗ Erro no retry: ${err.message}\n`));
@@ -537,6 +537,8 @@ async function main() {
     process.exit(1);
   }
 
+  let lastContextHash = '';
+
   while (true) {
     let input = await ask(chalk.bold(MESSAGES[currentLang].chat.prompt));
     let voiceLanguageForThisTurn = null;
@@ -587,7 +589,6 @@ async function main() {
 
     const freshContext = await readProjectContextRAG(cwd, input);
 
-    const isFirstMessage = session.getMessages().length === 0;
     const hasStacks = freshContext.includes('Stacks existentes');
 
     function extractStacksSection(ctx) {
@@ -596,8 +597,16 @@ async function main() {
       return ctx.slice(start);
     }
 
+    // As stacks já vão para o system prompt via buildSystemPrompt(freshContext).
+    // Só reinjeta na mensagem do usuário quando o contexto mudou (ou na primeira
+    // mensagem) — evita dobrar os tokens de input a cada turn.
+    const contextHash = require('crypto').createHash('md5').update(freshContext).digest('hex').slice(0, 8);
+    const contextChanged = contextHash !== lastContextHash;
+    lastContextHash = contextHash;
+
+    const isFirstMessage = session.getMessages().length === 0;
     const stacksSection = hasStacks ? extractStacksSection(freshContext) : '';
-    const userMessageContent = (hasStacks && stacksSection)
+    const userMessageContent = (stacksSection && (isFirstMessage || contextChanged))
       ? `${input}\n\n[Estado atual do projeto]\n${stacksSection}`
       : input;
 

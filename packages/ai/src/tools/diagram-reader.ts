@@ -13,7 +13,12 @@ const MEDIA_TYPES: Record<string, 'image/png' | 'image/jpeg' | 'image/gif' | 'im
   '.webp': 'image/webp',
 };
 
-const DIAGRAM_PROMPT = `Analise este diagrama de arquitetura de infraestrutura em nuvem e gere os arquivos TypeScript do iacmp que representam exatamente a arquitetura visualizada.
+function buildDiagramPrompt(accountTier = 'free'): string {
+  const tierNote = accountTier === 'free'
+    ? '- Conta free tier: sem criptografia (storageEncrypted: false), sem backup (backupRetentionDays: 0), db.t3.micro para RDS'
+    : '- Conta standard: pode usar criptografia, backup e instâncias maiores conforme necessário';
+
+  return `Analise este diagrama de arquitetura de infraestrutura em nuvem e gere os arquivos TypeScript do iacmp que representam exatamente a arquitetura visualizada.
 
 Regras gerais:
 - Preserve os nomes/IDs dos componentes como estão no diagrama (ex: "AppDB" → id "AppDB")
@@ -22,7 +27,7 @@ Regras gerais:
 - Separe em stacks por camada: network/, database/, compute/, storage/, etc.
 - Respeite relações visíveis: VPCs, subnets, security groups, conexões entre serviços
 - Gere também os handlers Node.js/TypeScript para Lambdas quando o diagrama indicar lógica real
-- Conta free tier: sem criptografia, sem backup, db.t3.micro
+${tierNote}
 
 Regras de validação semântica OBRIGATÓRIAS (o synth rejeita se violadas):
 - SUBNETS para RDS/Database.SQL: sempre declare ≥2 Network.Subnet com availabilityZone DIFERENTES
@@ -44,6 +49,7 @@ Retorne APENAS o JSON abaixo (sem markdown, sem texto fora do JSON):
   "nextSteps": ["npm install", "iacmp synth", "iacmp deploy"],
   "warnings": []
 }`;
+}
 
 export interface DiagramKeys {
   anthropic?: string;
@@ -62,6 +68,7 @@ export async function analyzeDiagramImage(
   imagePath: string,
   keys: DiagramKeys | string,
   model?: string,
+  options?: { accountTier?: string },
 ): Promise<AIGeneratedResponse> {
   const ext = path.extname(imagePath).toLowerCase();
   const mediaType = MEDIA_TYPES[ext] ?? 'image/png';
@@ -76,12 +83,14 @@ export async function analyzeDiagramImage(
   const anthropicKey = typeof keys === 'string' ? keys : keys.anthropic;
   const openaiKey = typeof keys === 'string' ? undefined : keys.openai;
 
+  const prompt = buildDiagramPrompt(options?.accountTier);
+
   if (anthropicKey) {
-    return analyzeWithAnthropic(imageData, mediaType, anthropicKey, model ?? 'claude-sonnet-4-6');
+    return analyzeWithAnthropic(imageData, mediaType, anthropicKey, model ?? 'claude-sonnet-4-6', prompt);
   }
 
   if (openaiKey) {
-    return analyzeWithOpenAI(imageData, mediaType, openaiKey);
+    return analyzeWithOpenAI(imageData, mediaType, openaiKey, prompt);
   }
 
   throw new Error('Nenhuma API key configurada. Configure ANTHROPIC_API_KEY ou OPENAI_API_KEY no .env do projeto.');
@@ -92,6 +101,7 @@ async function analyzeWithAnthropic(
   mediaType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp',
   apiKey: string,
   model: string,
+  prompt: string,
 ): Promise<AIGeneratedResponse> {
   const client = new Anthropic({ apiKey });
 
@@ -107,7 +117,7 @@ async function analyzeWithAnthropic(
             type: 'image',
             source: { type: 'base64', media_type: mediaType, data: imageData },
           },
-          { type: 'text', text: DIAGRAM_PROMPT },
+          { type: 'text', text: prompt },
         ],
       },
     ],
@@ -122,6 +132,7 @@ async function analyzeWithOpenAI(
   imageData: string,
   mediaType: string,
   apiKey: string,
+  prompt: string,
 ): Promise<AIGeneratedResponse> {
   const client = new OpenAI({ apiKey });
 
@@ -136,7 +147,7 @@ async function analyzeWithOpenAI(
         role: 'user',
         content: [
           { type: 'image_url', image_url: { url: dataUrl } },
-          { type: 'text', text: DIAGRAM_PROMPT },
+          { type: 'text', text: prompt },
         ],
       },
     ],

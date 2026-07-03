@@ -3,7 +3,7 @@ import * as path from 'path';
 import { buildIndexes, IndexerOptions } from '../rag/indexer';
 import { retrieve, formatRetrievedContext, RetrieverIndexes } from '../rag/retriever';
 import { SYSTEM_PROMPT_TEMPLATE } from '../prompts/system-prompt';
-import { fetchLive, shouldFetchLive } from '../rag/live-retriever';
+import { fetchLive } from '../rag/live-retriever';
 import { routeQuery } from '../rag/query-router';
 
 // Cache de índices em memória por projectDir (evita reindexar em cada mensagem)
@@ -218,9 +218,13 @@ export async function readProjectContextRAG(
       onProgress: onProgress ?? (() => {}),
     };
 
-    // O indexer usa hash para detectar mudanças e só reconstrói se necessário
-    const indexes = await buildIndexes(indexerOptions);
-    indexCache.set(projectDir, indexes);
+    // Cache em memória por sessão — evita reconstruir o índice BM25 a cada mensagem
+    let indexes = indexCache.get(projectDir);
+    if (!indexes) {
+      // O indexer usa hash para detectar mudanças e só reconstrói se necessário
+      indexes = await buildIndexes(indexerOptions);
+      indexCache.set(projectDir, indexes);
+    }
 
     const route = routeQuery(userQuery);
     const results = retrieve(indexes, userQuery, {
@@ -236,7 +240,7 @@ export async function readProjectContextRAG(
 
     // Live retriever: consulta fontes externas quando a query pede info recente/preço/terraform
     let liveContext = '';
-    if (shouldFetchLive(userQuery)) {
+    if (route.useLive) {
       liveContext = await fetchLive(userQuery, [], { projectDir });
     }
 
