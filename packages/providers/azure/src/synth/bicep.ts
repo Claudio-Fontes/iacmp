@@ -682,18 +682,22 @@ function synthesizeConstruct(
 
     case 'Database.DocumentDB': {
       needsAdminPassword.value = true;
-      resources.push({ sym, type: 'Microsoft.DocumentDB/databaseAccounts', apiVersion: '2023-04-15', name: construct.id.toLowerCase(), location: 'location', tags: tag(construct.id), properties: { databaseAccountOfferType: 'Standard', kind: 'MongoDB', locations: [{ locationName: expr('location'), failoverPriority: 0, isZoneRedundant: false }], backupPolicy: { type: 'Periodic', periodicModeProperties: { backupIntervalInMinutes: 1440, backupRetentionIntervalInHours: 168 } }, enableAutomaticFailover: (props.deletionProtection as boolean) ?? false } });
+      // Nome de conta Cosmos é GLOBALMENTE único (vira DNS <nome>.documents.azure.com)
+      // — o construct id cru colide entre projetos e com tombstones de contas recém-
+      // deletadas. Sufixo uniqueString(resourceGroup().id), mesmo padrão do APIM.
+      resources.push({ sym, type: 'Microsoft.DocumentDB/databaseAccounts', apiVersion: '2023-04-15', name: expr(`'${construct.id.toLowerCase()}-\${uniqueString(resourceGroup().id)}'`), location: 'location', tags: tag(construct.id), properties: { databaseAccountOfferType: 'Standard', kind: 'MongoDB', locations: [{ locationName: expr('location'), failoverPriority: 0, isZoneRedundant: false }], backupPolicy: { type: 'Periodic', periodicModeProperties: { backupIntervalInMinutes: 1440, backupRetentionIntervalInHours: 168 } }, enableAutomaticFailover: (props.deletionProtection as boolean) ?? false } });
       break;
     }
 
     case 'Database.DynamoDB': {
       // DynamoDB → Azure Cosmos DB for Table API. kind vai no nível do recurso,
       // não em properties. Backup Periodic (Continuous requer conta paga).
+      // Nome globalmente único: ver comentário no DocumentDB acima.
       resources.push({
         sym,
         type: 'Microsoft.DocumentDB/databaseAccounts',
         apiVersion: '2023-04-15',
-        name: construct.id.toLowerCase(),
+        name: expr(`'${construct.id.toLowerCase()}-\${uniqueString(resourceGroup().id)}'`),
         location: 'location',
         kind: 'GlobalDocumentDB',
         tags: tag(construct.id),
