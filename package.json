@@ -11,7 +11,8 @@
     "dev": "turbo run dev --parallel",
     "clean": "turbo run clean",
     "typecheck": "turbo run typecheck",
-    "test": "turbo run test"
+    "test": "turbo run test",
+    "sync": "./scripts/dev-sync.sh"
   },
   "devDependencies": {
     "ts-node": "10.9.2",
