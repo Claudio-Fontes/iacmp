@@ -186,7 +186,8 @@ export function resolveRef(r: Ref, ctx: SynthContext, opts?: { expectType?: stri
  */
 // Helper compartilhado: resolve o ARN de um construct (Lambda, fila, tópico...)
 // — wrapper fino de parseStringRef+resolveRef. same-stack GetAtt / cross-stack ImportValue.
-export function resolveLambdaArnRef(lambdaId: string, ctx: SynthContext): unknown {
+export function resolveLambdaArnRef(lambdaId: string | Ref, ctx: SynthContext): unknown {
+  if (isRef(lambdaId)) return resolveRef(lambdaId, ctx);
   const parsed = parseStringRef(lambdaId, ctx);
   if ('literal' in parsed) {
     throw new Error(`Referência "${lambdaId}" não foi encontrada em nenhuma stack do projeto.`);
@@ -306,7 +307,8 @@ export function defaultServiceRole(
   }];
 }
 
-export function resolveVpcId(id: string, ctx: SynthContext): unknown {
+export function resolveVpcId(id: string | Ref, ctx: SynthContext): unknown {
+  if (isRef(id)) return resolveRef(id, ctx);
   if (/^vpc-[0-9a-z]+$/.test(id)) return id;
   const ownerStack = ctx.registry.get(id)?.stackName;
   if (!ownerStack) return id;
@@ -315,7 +317,8 @@ export function resolveVpcId(id: string, ctx: SynthContext): unknown {
   return { 'Fn::ImportValue': `${ownerStack}-${id}-VpcId` };
 }
 
-export function resolveSubnetId(id: string, ctx: SynthContext): unknown {
+export function resolveSubnetId(id: string | Ref, ctx: SynthContext): unknown {
+  if (isRef(id)) return resolveRef(id, ctx);
   if (/^subnet-[0-9a-z]+$/.test(id)) return id;
   const ownerStack = ctx.registry.get(id)?.stackName;
   if (!ownerStack) return id;
@@ -324,7 +327,8 @@ export function resolveSubnetId(id: string, ctx: SynthContext): unknown {
   return { 'Fn::ImportValue': `${ownerStack}-${id}-SubnetId` };
 }
 
-export function resolveSecurityGroupId(id: string, ctx: SynthContext): unknown {
+export function resolveSecurityGroupId(id: string | Ref, ctx: SynthContext): unknown {
+  if (isRef(id)) return resolveRef(id, ctx);
   if (/^sg-[0-9a-zA-Z]+$/.test(id)) return id;
   const ownerStack = ctx.registry.get(id)?.stackName;
   if (!ownerStack) return id;
@@ -358,7 +362,8 @@ export function normalizeRate(rate: string): string {
   return `${n} ${unit}${n === 1 ? '' : 's'}`;
 }
 
-export function resolveQueueArn(value: string, ctx: SynthContext): unknown {
+export function resolveQueueArn(value: string | Ref, ctx: SynthContext): unknown {
+  if (isRef(value)) return resolveRef(value, ctx);
   if (value.startsWith('arn:')) return value;
   const parsed = parseStringRef(value, ctx);
   if ('literal' in parsed) return value;

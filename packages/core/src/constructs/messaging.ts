@@ -20,7 +20,7 @@ export interface MessagingQueueProps {
   messageRetentionSeconds?: number;
   delaySeconds?: number;
   fifo?: boolean;
-  dlqArn?: string;
+  dlqArn?: string | Ref<'Arn'>;
   maxReceiveCount?: number;
   encrypted?: boolean;
 }

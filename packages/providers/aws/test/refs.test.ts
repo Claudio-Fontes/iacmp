@@ -135,3 +135,29 @@ test('policy resources: [vault.secretArn] produz mesmo output que ["MyVault.Secr
   expect(stmtsGetter[0].Resource).toEqual(stmtsString[0].Resource);
   expect(stmtsGetter[0].Resource).toEqual([{ Ref: 'MyVault' }]);
 });
+
+// ── 7. dlqArn via getter (caso p03e2e: dlq.arn crashava resolveQueueArn) ─────
+
+test('Messaging.Queue com dlqArn via getter (dlq.arn) → RedrivePolicy com GetAtt', () => {
+  const s = new Stack('task-queue', { region: 'us-east-1' });
+  const dlq = new Messaging.Queue(s, 'TaskDLQ', {});
+  new Messaging.Queue(s, 'TaskQueue', { dlqArn: dlq.arn, maxReceiveCount: 3 });
+
+  const tpl = provider.synthesize(s, [s]) as any;
+  const redrive = tpl.Resources.TaskQueue.Properties.RedrivePolicy;
+  expect(redrive.deadLetterTargetArn).toEqual({ 'Fn::GetAtt': ['TaskDLQ', 'Arn'] });
+  expect(redrive.maxReceiveCount).toBe(3);
+});
+
+test('vpcId/subnetIds/securityGroupIds aceitam Ref sem crashar (guards nos resolvers)', () => {
+  const s = new Stack('net-stack', { region: 'us-east-1' });
+  new Fn.Lambda(s, 'VpcFn', {
+    runtime: 'nodejs20', handler: 'i.h', code: 'dist/',
+    vpcId: ref('AppVpc', 'VpcId') as any,
+    subnetIds: [ref('PrivateSubnet1', 'SubnetId') as any],
+    securityGroupIds: [ref('LambdaSG', 'GroupId') as any],
+  });
+  // AppVpc/subnet/SG não existem no universo — resolveRef lança erro CLARO de
+  // referência não encontrada (não TypeError de .startsWith em objeto).
+  expect(() => provider.synthesize(s, [s])).toThrow(/não foi encontrada|not found|Referência/);
+});
