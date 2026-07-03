@@ -4,7 +4,9 @@
   "license": "MIT",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
@@ -12,7 +14,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@iacmp/core": "*"
+    "@iacmp/core": "^1.2.0"
   },
   "devDependencies": {
     "typescript": "^5.5.0"

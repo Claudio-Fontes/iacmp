@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.105.0",
-    "@iacmp/core": "*",
+    "@iacmp/core": "^1.2.0",
     "chalk": "^4.1.2",
     "diff": "^5.2.0",
     "openai": "6.45.0",
