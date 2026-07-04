@@ -425,6 +425,7 @@ export default class Init extends Command {
     language: Flags.string({ char: 'l', description: 'Linguagem (typescript, python)', default: 'typescript' }),
     provider: Flags.string({ char: 'p', description: 'Provider padrão (aws, azure, gcp, terraform)', default: 'aws' }),
     accountTier: Flags.string({ description: 'Tier da conta cloud: free ou standard (afeta defaults de RDS, backup, criptografia)', default: 'free', options: ['free', 'standard'] }),
+    azureRegion: Flags.string({ description: 'Região Azure do projeto (grava azureRegion no iacmp.json)', default: 'westus' }),
     template: Flags.string({
       char: 't',
       description: `Template de stack a usar (blank, hello, rds, webapp, network, serverless, fullstack)`,
@@ -502,7 +503,8 @@ export default class Init extends Command {
       provider: flags.provider,
       region: 'us-east-1',
       resourceGroup: `${projectName}-rg`,
-      azureRegion: 'eastus',
+      // Default westus: East US está recorrentemente sem capacidade p/ Cosmos novo.
+      azureRegion: flags.azureRegion ?? 'westus',
       language: flags.language,
       accountTier,
     };

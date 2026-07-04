@@ -302,13 +302,13 @@ new Network.CDN(stack, 'LogicalId', {
 **REGRA CRÍTICA — Hosting de app React/SPA na AWS:**
 Use SEMPRE o padrão com bucketRef — ele cria OAC + BucketPolicy automaticamente (bucket privado, acesso só via CloudFront).
 **OBRIGATÓRIO**: bucket e CDN devem estar na MESMA stack TypeScript. bucketRef é uma referência local (Fn::GetAtt) e não funciona entre stacks separadas.
+**NUNCA combine \`websiteHosting: true\` com \`bucketRef\`** — são mutuamente exclusivos (OAC exige bucket PRIVADO; o synth rejeita a combinação). Com CDN, o bucket fica SEM websiteHosting.
+**\`Storage.CDN\` NÃO EXISTE** — CDN é \`Network.CDN\`, sempre.
 \`\`\`typescript
 // stacks/network/static-site-stack.ts  ← bucket E cdn no mesmo arquivo/stack
 import { Stack, Storage, Network } from '@iacmp/core';
 const stack = new Stack('meu-app-static-site');
-new Storage.Bucket(stack, 'AppBucket', {
-  websiteHosting: true,
-});
+new Storage.Bucket(stack, 'AppBucket', {});  // privado, SEM websiteHosting — o OAC do CDN dá o acesso
 new Network.CDN(stack, 'AppCDN', {
   defaultRootObject: 'index.html',
   origins: [
@@ -1109,6 +1109,11 @@ const AZURE_HANDLER_SECTION = `
 ## REGRA ABSOLUTA AZURE — handlers de Database.DynamoDB usam @azure/data-tables
 
 O projeto usa provider=azure. O backend de Database.DynamoDB no Azure é o **Cosmos DB for Table API**.
+
+### Escolha de construct no Azure (NUNCA troque)
+- Cenário pede "DynamoDB"/tabela chave-valor → \`Database.DynamoDB\` SEMPRE. NUNCA \`Database.DocumentDB\` (Mongo — outro produto, sem ConnectionString de Table).
+- Cenário pede PostgreSQL/MySQL → \`Database.SQL\` (vira Azure Database flexible server). O handler usa o driver \`pg\`/\`mysql2\` NORMAL (o protocolo é o mesmo do RDS) com \`ref('AppDB','Endpoint'/'Port'/'Password'/'Username')\` — NUNCA \`@azure/data-tables\` para SQL.
+- **Atributos válidos de \`ref()\` por tipo (NÃO invente outros):** \`Database.SQL\` → \`Endpoint, Port, SecretArn, Password, Username\` (NÃO existe \`ConnectionString\`); \`Database.DynamoDB\` → \`Arn, Name, ConnectionString\` (Name = nome da TABELA).
 
 ### PROIBIDO em handlers deste projeto (causa "Region is missing" em runtime):
 - \`import { DynamoDBClient } from '@aws-sdk/client-dynamodb'\`

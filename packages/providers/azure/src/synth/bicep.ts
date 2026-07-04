@@ -1023,6 +1023,16 @@ export function emitBicep(stack: Stack): string {
     synthesizeConstruct(construct, idx, resources, outputs, needsAdminPassword, crossParams, functionImageParams, sharedContainerEnvSym);
   }
 
+  // Choke point global: NENHUM Ref tipado pode chegar cru ao render (viraria
+  // objeto {kind:'iacmp:ref',...} no Bicep → BCP020/22/55). Cases individuais
+  // podem esquecer o resolveValue (ex: env do Compute.Container) — esta passada
+  // resolve tudo (same-stack → expressão; cross-stack → param) de forma idempotente.
+  for (const r of resources) {
+    r.properties = resolveValue(r.properties, idx, crossParams) as Record<string, unknown>;
+    if (r.name !== undefined) r.name = resolveValue(r.name, idx, crossParams);
+    if (r.tags) r.tags = resolveValue(r.tags, idx, crossParams) as Record<string, string>;
+  }
+
   const params: Array<{ name: string; type: string; default?: unknown; secure?: boolean }> = [
     { name: 'location', type: 'string', default: expr('resourceGroup().location') },
   ];

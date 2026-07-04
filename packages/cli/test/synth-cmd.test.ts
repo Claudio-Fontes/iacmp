@@ -523,7 +523,7 @@ export async function handler() {
         stacks: {
           'compute.js': `const { Stack, Fn } = require('@iacmp/core');
 const stack = new Stack('proj-lambda');
-new Fn.Lambda(stack, 'ListFn', { runtime: 'nodejs20', handler: 'dist/list.handler', code: '.', vpcId: 'vpc-1', subnetIds: ['subnet-a','subnet-b'], securityGroupIds: ['sg-1'] });
+new Fn.Lambda(stack, 'ListFn', { runtime: 'nodejs20', handler: 'dist/list.handler', code: '.', vpcId: 'vpc-1', subnetIds: ['subnet-a','subnet-b'], securityGroupIds: ['sg-1'], environment: { DB_HOST: 'db.example.internal', DB_PASSWORD: 'via-dynamic-ref' } });
 module.exports = stack;
 `,
         },
@@ -537,6 +537,32 @@ export async function handler() {
 
       const r = runCli(['synth', '--provider', 'aws'], { cwd: dir });
       expect(r.status).toBe(0);
+    });
+
+    test('handler lê process.env que o construct NÃO declara → bloqueia em synth (caso p02aws)', () => {
+      dir = makeProject({
+        provider: 'aws',
+        stacks: {
+          'compute.js': `const { Stack, Fn } = require('@iacmp/core');
+const stack = new Stack('proj-lambda');
+new Fn.Lambda(stack, 'ListFn', { runtime: 'nodejs20', handler: 'dist/list.handler', code: '.' });
+module.exports = stack;
+`,
+        },
+        files: { 'src/list.ts': `export async function handler() {
+  const t = process.env.TABLE_NAME;
+  const q = process.env['QUEUE_URL'];
+  const region = process.env.AWS_REGION; // provida pelo runtime — não pode exigir
+  return { statusCode: 200, body: t + q + region };
+}
+` },
+      });
+
+      const r = runCli(['synth', '--provider', 'aws'], { cwd: dir });
+      expect(r.status).not.toBe(0);
+      expect(r.all).toContain('TABLE_NAME');
+      expect(r.all).toContain('QUEUE_URL');
+      expect(r.all).not.toContain('AWS_REGION');
     });
   });
 

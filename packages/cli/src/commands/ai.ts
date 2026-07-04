@@ -372,8 +372,13 @@ async function runGeneration(
       let correctionMsg: string | null = null;
       if (!success) {
         spinner.fail(`Synth falhou — corrigindo automaticamente...`);
+        // "NÃO repita": o modelo às vezes devolve a MESMA geração nas tentativas
+        // seguintes (observado 3x no ciclo p01az) — exigir mudança explícita no
+        // trecho apontado pelo erro reduz o loop estéril.
         correctionMsg =
           `O comando "iacmp synth" falhou com o seguinte erro:\n\n${output}\n\n` +
+          `A geração anterior está ERRADA no ponto apontado acima — NÃO retorne o mesmo código: ` +
+          `MUDE especificamente o trecho que causa o erro (tentativa ${attempt} de ${MAX_SYNTH_RETRIES}). ` +
           `Corrija os arquivos e retorne o JSON completo com TODOS os ${parsed.files.length} arquivo(s) da resposta anterior.`;
       } else {
         // Synth passou, mas o loop pode ter reescrito handlers (src/*.ts) sem

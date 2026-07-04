@@ -188,6 +188,18 @@ export default class Synth extends Command {
       );
     }
 
+    // ── Handler lê process.env.X que o construct não declara ─────────────────
+    // A IA gera o handler certo mas ESQUECE o environment no Fn.Lambda — o CRUD
+    // inteiro falha em runtime (ex: TABLE_NAME undefined → 502). Barrar aqui dá
+    // um erro que o loop de auto-correção da geração consegue consertar.
+    const envVarErrors = this.validateHandlerEnvVars(loadedStacks, cwd);
+    if (envVarErrors.length > 0) {
+      this.error(
+        `Handler usa process.env que o Fn.Lambda não declara em 'environment' (vai falhar em runtime):\n\n` +
+        envVarErrors.map(e => `  • ${e}`).join('\n'),
+      );
+    }
+
     // ── Passada 2: sintetiza e grava só as stacks que o --stack pediu ───────
     const targetStacks = loadedStacks.filter(s => !flags.stack || s.stackName === flags.stack);
     if (targetStacks.length === 0) {
@@ -432,6 +444,45 @@ export default class Synth extends Command {
           `${path.relative(cwd, file)}: importa um driver SQL (pg/mysql/...) mas o projeto usa DynamoDB, que NÃO é SQL. ` +
           `Use o DocumentClient (@aws-sdk/lib-dynamodb: DynamoDBDocumentClient + GetCommand/PutCommand/QueryCommand/ScanCommand) — sem SELECT/INSERT nem pg.Client.`,
         );
+      }
+    }
+    return errors;
+  }
+
+  /**
+   * Bloqueia Fn.Lambda cujo handler lê `process.env.X` sem que o construct
+   * declare a chave em `environment`. Padrão recorrente da geração: o handler
+   * usa TABLE_NAME/QUEUE_URL e o construct sai sem environment — deploya, mas
+   * TODO request falha em runtime (ex: ValidationException: tableName null).
+   * Ignora envs injetadas pelo runtime (AWS_*, _HANDLER etc) e NODE_ENV.
+   */
+  private validateHandlerEnvVars(loaded: LoadedStack[], cwd: string): string[] {
+    const errors: string[] = [];
+    const RUNTIME_PROVIDED = /^(AWS_|_|LAMBDA_|NODE_ENV$|TZ$)/;
+    for (const { stack } of loaded) {
+      for (const c of stack.constructs) {
+        if (c.type !== 'Function.Lambda') continue;
+        const props = c.props as Record<string, unknown>;
+        const handler = props.handler as string | undefined;
+        if (!handler) continue;
+        const stem = handler.replace(/\.[^./]+$/, '').replace(/^(\.\/)?(dist|src)\//, '');
+        const srcFile = [path.join(cwd, 'src', `${stem}.ts`), path.join(cwd, 'src', `${stem}.js`)]
+          .find(p => fs.existsSync(p));
+        if (!srcFile) continue;
+        const content = fs.readFileSync(srcFile, 'utf-8');
+        const used = new Set<string>();
+        for (const m of content.matchAll(/process\.env[.[]['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?\]?/g)) {
+          if (!RUNTIME_PROVIDED.test(m[1])) used.add(m[1]);
+        }
+        if (used.size === 0) continue;
+        const declared = new Set(Object.keys((props.environment as Record<string, unknown>) ?? {}));
+        const missing = [...used].filter(k => !declared.has(k)).sort();
+        if (missing.length > 0) {
+          errors.push(
+            `Fn.Lambda "${c.id}" → ${path.relative(cwd, srcFile)} lê process.env.${missing.join('/')} ` +
+            `mas o construct não declara essa(s) chave(s). Adicione environment: { ${missing.map(k => `${k}: <valor ou ref(...)>`).join(', ')} } no Fn.Lambda.`,
+          );
+        }
       }
     }
     return errors;
