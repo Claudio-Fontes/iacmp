@@ -78,6 +78,23 @@ function resolveRef(r: Ref, idx: Map<string, BaseConstruct>, crossParams: Map<st
   if (c.type === 'Database.DynamoDB' && r.attribute === 'Name') {
     return r.constructId;
   }
+  // Database.SQL: Password/Username/Port viram valores REAIS (o attr map genérico
+  // caía em `.id` — resource ID do ARM ia parar na env do handler; ciclo p01az6).
+  if (c.type === 'Database.SQL') {
+    const engine = ((c.props as Record<string, unknown>).engine as string) ?? 'postgres';
+    if (r.attribute === 'Password') {
+      // A senha é o param @secure() adminPassword — o deploy gera e injeta o
+      // MESMO valor em todas as stacks que declaram o param.
+      crossParams.set('adminPassword', 'secureString');
+      return expr('adminPassword');
+    }
+    if (r.attribute === 'Username') {
+      return ({ postgres: 'pgadmin', mysql: 'mysqladmin', sqlserver: 'sqladmin', mariadb: 'mariadbadmin' } as Record<string, string>)[engine] ?? 'pgadmin';
+    }
+    if (r.attribute === 'Port') {
+      return ({ postgres: '5432', mysql: '3306', sqlserver: '1433', mariadb: '3306' } as Record<string, string>)[engine] ?? '5432';
+    }
+  }
   const attr = AZURE_ATTR_MAP[c.type]?.[r.attribute] ?? 'id';
   return expr(`${sym}.${attr}`);
 }
@@ -1182,8 +1199,11 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
   const params: Array<{ name: string; type: string; default?: unknown; secure?: boolean }> = [
     { name: 'location', type: 'string', default: expr('resourceGroup().location') },
   ];
-  if (needsAdminPassword.value) {
-    params.push({ name: 'adminPassword', type: 'string', default: '', secure: true });
+  if (needsAdminPassword.value || crossParams.get('adminPassword') === 'secureString') {
+    // SEM default: flexibleServers rejeita senha vazia ("cannot be NULL or
+    // empty") — o deploy SEMPRE injeta via --parameters (gera uma por run).
+    params.push({ name: 'adminPassword', type: 'string', secure: true });
+    crossParams.delete('adminPassword');
   }
   // Parâmetros de imagem por Function.Lambda — default 'node:20-alpine' para
   // validação estática; o deploy sobrescreve com a imagem real buildada no ACR.
@@ -1198,6 +1218,7 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
   }
   // Parâmetros cross-stack (sem default — devem ser passados no deploy)
   for (const [name, type] of crossParams) {
+    if (type === 'secureString') { params.push({ name, type: 'string', secure: true }); continue; }
     params.push({ name, type });
   }
 

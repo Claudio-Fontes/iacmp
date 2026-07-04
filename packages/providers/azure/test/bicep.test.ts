@@ -1,4 +1,4 @@
-import { Stack, Compute, Storage, Network, Database, Fn, Messaging, Cache } from '@iacmp/core';
+import { Stack, Compute, Storage, Network, Database, Fn, Messaging, Cache, ref } from '@iacmp/core';
 import { AzureProvider, emitBicep } from '../src';
 
 function synth(stack: Stack): string {
@@ -330,5 +330,28 @@ describe('Network.CDN — accountTier free (Front Door proibido em Free Trial)',
     new Network.CDN(stack, 'AppCDN', { defaultRootObject: 'index.html', origins: [{ id: 'o', domainName: '', bucketRef: 'AppBucket' }] });
     const bicep = emitBicep(stack);
     expect(bicep).toContain('Standard_AzureFrontDoor');
+  });
+});
+
+describe('Database.SQL — cadeia da senha e refs de conexão (ciclo p01az6)', () => {
+  test('ref Password/Username/Port → adminPassword param, login e porta reais (não .id)', () => {
+    const stack = new Stack('api');
+    new Database.SQL(stack, 'AppDB', { engine: 'postgres' });
+    new Fn.Lambda(stack, 'ListFn', {
+      runtime: 'nodejs20', handler: 'dist/list.handler', code: '.',
+      environment: {
+        DB_HOST: ref('AppDB', 'Endpoint'),
+        DB_PORT: ref('AppDB', 'Port'),
+        DB_USER: ref('AppDB', 'Username'),
+        DB_PASSWORD: ref('AppDB', 'Password'),
+      },
+    });
+    const bicep = emitBicep(stack);
+    expect(bicep).toContain('@secure()');
+    expect(bicep).toMatch(/param adminPassword string\n/); // SEM default
+    expect(bicep).toContain("value: 'pgadmin'");
+    expect(bicep).toContain("value: '5432'");
+    expect(bicep).toContain('value: adminPassword');
+    expect(bicep).not.toMatch(/DB_PASSWORD'[\s\S]{0,40}\.id/);
   });
 });

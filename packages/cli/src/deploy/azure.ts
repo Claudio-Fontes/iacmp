@@ -4,6 +4,18 @@ import * as path from 'path';
 import { DeployContext, DeployExecutor, DestroyContext, NativeCommand, StackStatus } from './types';
 
 /** Parâmetros Bicep sem valor default — precisam vir de stacks anteriores. */
+// Senha do run: gerada uma vez por processo (mesmo valor em todas as stacks do
+// deploy). Prefixo garante as classes de caractere que o flexible server exige.
+let runAdminPassword: string | null = null;
+function getRunAdminPassword(): string {
+  if (!runAdminPassword) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const crypto = require('crypto') as typeof import('crypto');
+    runAdminPassword = `Ia1${crypto.randomBytes(18).toString('base64url')}`;
+  }
+  return runAdminPassword;
+}
+
 function getCrossStackParams(templatePath: string): string[] {
   let content: string;
   try {
@@ -276,6 +288,12 @@ export const azureExecutor: DeployExecutor = {
     const paramValues: string[] = [...extraParams];
     if (ctx.templatePath) {
       const crossParams = getCrossStackParams(ctx.templatePath);
+      // adminPassword (@secure, sem default): o deploy gera UMA senha forte por
+      // execução e injeta a MESMA em toda stack que declara o param — o servidor
+      // Postgres/MySQL e as envs dos handlers (ref('AppDB','Password')) batem.
+      if (crossParams.includes('adminPassword')) {
+        paramValues.push(`adminPassword=${getRunAdminPassword()}`);
+      }
       const provided = new Set(paramValues.map(p => p.split('=')[0]));
       // A API do Azure devolve as chaves de outputs em camelCase mesmo quando o
       // Bicep declara PascalCase (`output ItemsTableName` → chave `itemsTableName`)
