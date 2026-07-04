@@ -431,6 +431,16 @@ new Database.DynamoDB(stack, 'LogicalId', {
 \`\`\`
 
 SEMPRE defina \`partitionKeyType\`/\`sortKeyType\` (e o equivalente nos GSIs) de acordo com o tipo real do dado — ex: \`id: number\` no payload da aplicação → \`partitionKeyType: 'N'\`. Na AWS, DynamoDB rejeita em runtime (\`ValidationException: Type mismatch\`) qualquer escrita/leitura cujo tipo do valor não bata com o tipo declarado na tabela — não dá pra simplesmente enviar um número numa chave declarada como string. Ao alterar o tipo de uma chave existente que já tenha dados, avise no \`warnings\` que a tabela precisa ser recriada (chave primária não é alterável em uma tabela existente).
+**REGRA — GSI: só consulte índice que a tabela declara.** Se um handler faz \`QueryCommand({ IndexName: 'X', ... })\`, a \`Database.DynamoDB\` correspondente TEM que declarar esse índice em \`globalSecondaryIndexes\` (com o mesmo \`name: 'X'\`) E a Policy.IAM da Lambda tem que liberar \`<TableArn>/index/*\` além do ARN da tabela — senão o deploy sobe mas a query estoura \`ValidationException: The table does not have the specified index\` em runtime. Para **limpeza por TTL / itens expirados NÃO crie um GSI**: use \`ScanCommand\` + \`FilterExpression\` — e o writer que grava os itens precisa gravar o atributo \`ttl\` (epoch em segundos) para que algo de fato expire. **CUIDADO — \`ttl\` é PALAVRA RESERVADA no DynamoDB** (assim como \`name\`, \`status\`, \`date\`, \`timestamp\`, \`type\`, \`data\`, \`value\`, \`count\`, \`size\`, \`user\`, \`source\`, \`region\`, \`year\`, \`month\`, \`day\`, \`state\`, \`group\`, \`role\`, \`order\`, \`key\`, \`range\`, \`hour\`, \`minute\`, \`second\`, \`time\`, \`token\` e centenas de outras): usar o nome cru numa \`FilterExpression\`/\`KeyConditionExpression\`/\`ConditionExpression\` estoura \`ValidationException: Attribute name is a reserved keyword\` em runtime. SEMPRE aliase com \`ExpressionAttributeNames\` e use o \`#alias\` na expressão:
+\`\`\`ts
+await doc.send(new ScanCommand({
+  TableName: 'ReportsTable',
+  FilterExpression: '#ttl < :now',
+  ExpressionAttributeNames: { '#ttl': 'ttl' },
+  ExpressionAttributeValues: { ':now': Math.floor(Date.now() / 1000) },
+}));
+\`\`\`
+Na dúvida sobre um nome de atributo, aliase — atributos comuns como \`date\` (que pode ser sua sortKey!), \`name\`, \`status\` são todos reservados e exigem \`#\`.
 
 ---
 ## CACHE
@@ -764,6 +774,8 @@ new Monitoring.Alarm(stack, 'LogicalId', {
 export default stack;
 \`\`\`
 **REGRA — como referenciar outro construct.** Same-stack: PREFIRA os getters tipados — \`const t = new Messaging.Topic(stack, 'AlertsTopic', {}); ... alarmActions: [t.arn]\`. Getters disponíveis: \`db.endpoint/.port/.password/.secretArn\`, \`vault.secretArn\`, \`topic.arn\`, \`queue.arn/.queueUrl\`, \`stream.arn/.name\`, \`fn.arn\`, \`bucket.arn/.name\`, \`cache.endpoint/.port\`, \`lb.targetGroupArn/.dnsName\`, \`waf.arn\`. Cross-stack (construct declarado em OUTRO arquivo de stack): use \`ref('AlertsTopic', 'Arn')\` (import \`ref\` de \`@iacmp/core\`) ou a string \`'AlertsTopic'\`/\`'AppDB.Endpoint'\`. NUNCA invente propriedades que não existem (\`.url\`, \`.address\`) — só os getters listados.
+**REGRA — NUNCA hardcode ARN nem account id.** Em \`resources\` de Policy.IAM, use \`ref('MinhaTabela','Arn')\` — NUNCA escreva o ARN literal com um account id fixo (\`arn:aws:dynamodb:us-east-1:123456789012:table/X\`). \`123456789012\` é placeholder da doc AWS: a policy apontaria pra conta errada (AccessDenied em runtime). O synth resolve o ARN com a conta real.
+**REGRA — 1 recurso = 1 stack.** Cada construct (ex: uma Fn.Lambda) é declarado UMA vez, em UMA stack. NUNCA declare a mesma Lambda/tabela em dois arquivos de stack (mesmo FunctionName em duas stacks → conflito "already exists" no deploy). Outra stack REFERENCIA via \`ref('MinhaFn','Arn')\`, não redeclara.
 **REGRA — Lambda subscrita a um SNS topic:** para "Lambda X subscrita ao Topic Y", declare a subscription NO PRÓPRIO \`Messaging.Topic\`: \`subscriptions: [{ protocol: 'lambda', endpoint: 'AlertHandlerFn' }]\` (\`endpoint\` = id da Fn.Lambda, ou \`fn.arn\` se a Lambda está na mesma stack) — o synth cria a Subscription + a Lambda::Permission que autoriza o SNS. Não é preciso (nem existe) API Gateway para isso: um cenário de monitoramento (alarmes/dashboard/SNS/Lambda-de-alerta) NÃO tem HTTP — NÃO gere \`Fn.ApiGateway\`.
 
 ### Monitoring.Dashboard — CloudWatch Dashboard
@@ -1136,20 +1148,30 @@ const AZURE_HANDLER_SECTION = `
 
 O projeto usa provider=azure. O backend de Database.DynamoDB no Azure é o **Cosmos DB for Table API**.
 
-### Escolha de construct no Azure (NUNCA troque)
-- Cenário pede "DynamoDB"/tabela chave-valor → \`Database.DynamoDB\` SEMPRE. NUNCA \`Database.DocumentDB\` (Mongo — outro produto, sem ConnectionString de Table).
-- Cenário pede PostgreSQL/MySQL → \`Database.SQL\` (vira Azure Database flexible server). O handler usa o driver \`pg\`/\`mysql2\` NORMAL (o protocolo é o mesmo do RDS) com \`ref('AppDB','Endpoint'/'Port'/'Password'/'Username')\` — NUNCA \`@azure/data-tables\` para SQL.
-- Cenário de ARQUIVOS/BLOB (\`Storage.Bucket\` sem banco — upload/download, presigned URL) → o handler usa \`@azure/storage-blob\`, NUNCA \`@azure/data-tables\` (Table é NoSQL, não é blob). Use \`fromConnectionString\` (a chave vem junto — NÃO invente BLOB_KEY placeholder) e CRIE o container se não existir. Env var ÚNICA: \`BLOB_CONNECTION: ref('MeuBucket','ConnectionString')\`. NÃO gere COSMOS_CONNECTION/TABLE_NAME.
+## REGRA ABSOLUTA AZURE — Storage.Bucket usa @azure/storage-blob (NUNCA @azure/data-tables)
+
+**Storage.Bucket ≠ Database.DynamoDB.** São constructs DISTINTOS com SDKs DISTINTOS:
+- \`Storage.Bucket\` → Azure Blob Storage → handler usa \`@azure/storage-blob\` + \`BlobServiceClient.fromConnectionString\` + env \`BLOB_CONNECTION: ref('MeuBucket','ConnectionString')\`
+- \`Database.DynamoDB\` → Cosmos DB Table API → handler usa \`@azure/data-tables\` + env \`TABLE_CONNECTION: ref('MinhaTabela','ConnectionString')\`
+
+**NUNCA use \`@azure/data-tables\` para \`Storage.Bucket\`.** Gerar \`COSMOS_CONNECTION\` ou \`TABLE_NAME\` para um \`Storage.Bucket\` é ERRO — o synth não consegue gerar upload/SAS para Cosmos. O container \`uploads\` NÃO existe por padrão — sempre chame \`createIfNotExists\` no handler.
+
+Padrão obrigatório para upload de arquivo com \`Storage.Bucket\` no Azure:
 \`\`\`typescript
 import { BlobServiceClient, generateBlobSASQueryParameters, BlobSASPermissions, StorageSharedKeyCredential } from '@azure/storage-blob';
 const svc = BlobServiceClient.fromConnectionString(process.env.BLOB_CONNECTION!);
 const container = svc.getContainerClient('uploads');
-await container.createIfNotExists();                 // o container NÃO existe por padrão
+await container.createIfNotExists();                 // o container NÃO existe por padrão — criar sempre
 // SAS: const cred = svc.credential as StorageSharedKeyCredential;
 // generateBlobSASQueryParameters({ containerName:'uploads', blobName:key, permissions:BlobSASPermissions.parse('cw'), expiresOn:new Date(Date.now()+3e5) }, cred).toString()
 \`\`\`
+
+### Escolha de construct no Azure (NUNCA troque)
+- Cenário pede "DynamoDB"/tabela chave-valor → \`Database.DynamoDB\` SEMPRE. NUNCA \`Database.DocumentDB\` (Mongo — outro produto, sem ConnectionString de Table).
+- Cenário pede PostgreSQL/MySQL → \`Database.SQL\` (vira Azure Database flexible server). O handler usa o driver \`pg\`/\`mysql2\` NORMAL (o protocolo é o mesmo do RDS) com \`ref('AppDB','Endpoint'/'Port'/'Password'/'Username')\` — NUNCA \`@azure/data-tables\` para SQL.
+- Cenário de ARQUIVOS/BLOB (\`Storage.Bucket\` sem banco — upload/download, presigned URL) → o handler usa \`@azure/storage-blob\`, NUNCA \`@azure/data-tables\` (Table é NoSQL, não é blob). Use \`fromConnectionString\` (a chave vem junto — NÃO invente BLOB_KEY placeholder) e CRIE o container se não existir. Env var ÚNICA: \`BLOB_CONNECTION: ref('MeuBucket','ConnectionString')\`. NÃO gere COSMOS_CONNECTION/TABLE_NAME.
 - **env var NUNCA recebe \`process.env.X\` no código da STACK** — o valor é resolvido em synth-time; use string literal ou \`ref('Recurso','Attr')\`. \`process.env\` só existe DENTRO do handler (runtime), não na stack.
-- **Atributos válidos de \`ref()\` por tipo (NÃO invente outros):** \`Database.SQL\` → \`Endpoint, Port, SecretArn, Password, Username\` (NÃO existe \`ConnectionString\`); \`Database.DynamoDB\` → \`Arn, Name, ConnectionString\` (Name = nome da TABELA).
+- **Atributos válidos de \`ref()\` por tipo (NÃO invente outros):** \`Database.SQL\` → \`Endpoint, Port, SecretArn, Password, Username\` (NÃO existe \`ConnectionString\`); \`Database.DynamoDB\` → \`Arn, Name, ConnectionString\` (Name = nome da TABELA). \`Storage.Bucket\` → \`Arn, Name, ConnectionString\` (\`ConnectionString\` = Blob Storage connection string, NÃO Cosmos).
 - Frontend estático no Azure = \`Storage.Bucket\` (privado) + \`Network.CDN\` com \`bucketRef\`, MESMA stack — igual à AWS. CDN NUNCA é um \`Storage.Bucket\`; cada construct id aparece UMA vez por stack.
 - **Policy.IAM para \`Database.SQL\`: NÃO gere.** O acesso ao Postgres/MySQL é por usuário/senha via env vars — não existe IAM de data-plane. Policies com \`ref('AppDB','Arn')\` (atributo inexistente) ou actions de dynamodb/secretsmanager para um banco SQL são ERRO. Só gere Policy.IAM quando o handler usa um serviço com IAM real (fila, storage, tabela NoSQL).
 - Getter do bucket é \`bucket.name\` — \`bucket.bucketName\` NÃO existe.
