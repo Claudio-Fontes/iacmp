@@ -294,6 +294,14 @@ export const azureExecutor: DeployExecutor = {
       if (crossParams.includes('adminPassword')) {
         paramValues.push(`adminPassword=${getRunAdminPassword()}`);
       }
+      // Cross-params de senha (ex: AppDBPassword, vindos de ref('AppDB','Password')
+      // em OUTRA stack): senha nunca é output (secure) — injeta a MESMA senha do
+      // run, que é a que o servidor recebeu via adminPassword.
+      for (const p of crossParams) {
+        if (/password$/i.test(p) && p !== 'adminPassword') {
+          paramValues.push(`${p}=${getRunAdminPassword()}`);
+        }
+      }
       const provided = new Set(paramValues.map(p => p.split('=')[0]));
       // A API do Azure devolve as chaves de outputs em camelCase mesmo quando o
       // Bicep declara PascalCase (`output ItemsTableName` → chave `itemsTableName`)

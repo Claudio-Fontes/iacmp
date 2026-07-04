@@ -794,11 +794,15 @@ function synthesizeConstruct(
       if (engine === 'mysql') {
         resources.push({ sym, type: 'Microsoft.DBforMySQL/flexibleServers', apiVersion: '2023-06-30', name: serverName, location: 'location', tags: tag(construct.id), sku: { name: 'Standard_D2ds_v4', tier: 'GeneralPurpose' }, properties: { administratorLogin: 'mysqladmin', administratorLoginPassword: expr('adminPassword'), version: '8.0.21', storage: { storageSizeGB: props.storageGb ?? 20, autoGrow: 'Enabled' }, backup: { backupRetentionDays: props.backupRetentionDays ?? 7, geoRedundantBackup: 'Disabled' }, highAvailability: { mode: zoneRedundant ? 'ZoneRedundant' : 'Disabled' } } });
         outputs.push({ name: `${construct.id}Endpoint`, type: 'string', value: `${sym}.properties.fullyQualifiedDomainName` });
+        outputs.push({ name: `${construct.id}Port`, type: 'string', value: `'3306'` });
+        outputs.push({ name: `${construct.id}Username`, type: 'string', value: `'mysqladmin'` });
         break;
       }
       if (engine === 'postgres') {
         resources.push({ sym, type: 'Microsoft.DBforPostgreSQL/flexibleServers', apiVersion: '2023-06-01-preview', name: serverName, location: 'location', tags: tag(construct.id), sku: { name: 'Standard_D2ds_v5', tier: 'GeneralPurpose' }, properties: { administratorLogin: 'pgadmin', administratorLoginPassword: expr('adminPassword'), version: '15', storage: { storageSizeGB: props.storageGb ?? 32 }, backup: { backupRetentionDays: props.backupRetentionDays ?? 7, geoRedundantBackup: 'Disabled' }, highAvailability: { mode: zoneRedundant ? 'ZoneRedundant' : 'Disabled' } } });
         outputs.push({ name: `${construct.id}Endpoint`, type: 'string', value: `${sym}.properties.fullyQualifiedDomainName` });
+        outputs.push({ name: `${construct.id}Port`, type: 'string', value: `'5432'` });
+        outputs.push({ name: `${construct.id}Username`, type: 'string', value: `'pgadmin'` });
         break;
       }
       if (engine === 'mariadb') {
@@ -815,6 +819,8 @@ function synthesizeConstruct(
       resources.push({ sym, type: 'Microsoft.Sql/servers', apiVersion: '2023-02-01-preview', name: serverName, location: 'location', tags: tag(construct.id), properties: { administratorLogin: 'sqladmin', administratorLoginPassword: expr('adminPassword'), version: '12.0' } });
       resources.push({ sym: dbSym, type: 'Microsoft.Sql/servers/databases', apiVersion: '2023-02-01-preview', parent: sym, name: construct.id, location: 'location', sku: { name: edition === 'ee' ? 'BusinessCritical' : 'Standard', tier: edition === 'ee' ? 'BusinessCritical' : 'Standard' }, properties: { collation: 'SQL_Latin1_General_CP1_CI_AS', maxSizeBytes: storageBytes, zoneRedundant } });
       outputs.push({ name: `${construct.id}Endpoint`, type: 'string', value: `${sym}.properties.fullyQualifiedDomainName` });
+      outputs.push({ name: `${construct.id}Port`, type: 'string', value: `'1433'` });
+      outputs.push({ name: `${construct.id}Username`, type: 'string', value: `'sqladmin'` });
       break;
     }
 
