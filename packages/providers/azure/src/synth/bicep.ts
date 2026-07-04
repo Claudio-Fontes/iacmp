@@ -213,6 +213,7 @@ function synthesizeConstruct(
   functionImageParams: Set<string>,
   sharedContainerEnvSym: string | null,
   cdnBucketRefs: Set<string>,
+  accountTier: 'free' | 'standard' = 'standard',
 ): void {
   const props = construct.props as Record<string, unknown>;
   const sym = toSym(construct.id);
@@ -633,6 +634,23 @@ function synthesizeConstruct(
       const ogSym = `${sym}Og`;
       const originSym = `${sym}Origin`;
       const routeSym = `${sym}Route`;
+
+      const originsEarly = (props.origins as Array<Record<string, unknown>>) ?? [];
+      const bucketRefEarly = originsEarly[0]?.bucketRef as string | undefined;
+      if (accountTier === 'free') {
+        // Front Door é PROIBIDO em Free Trial/Student ("Free Trial and Student
+        // account is forbidden for Azure Frontdoor resources") e o CDN Classic
+        // não aceita perfis novos — em free tier NÃO existe CDN criável no Azure.
+        // Degrada com aviso: serve direto do endpoint público do Storage
+        // (container 'web'); accountTier=standard usa Front Door normalmente.
+        console.warn(`[azure] Network.CDN "${construct.id}": accountTier=free — Front Door indisponível em Free Trial; servindo direto do Storage público (sem CDN).`);
+        if (bucketRefEarly) {
+          const bSym = toSym(bucketRefEarly);
+          cdnBucketRefs.add(bucketRefEarly);
+          outputs.push({ name: `${construct.id}Url`, type: 'string', value: `'\${${bSym}.properties.primaryEndpoints.blob}web'` });
+        }
+        break;
+      }
 
       // AFD Standard Profile (recurso global)
       resources.push({
@@ -1087,7 +1105,8 @@ export function extractAzureFunctionMeta(stack: Stack): AzureFunctionMeta[] {
 }
 
 // ── Main export ───────────────────────────────────────────────────────────────
-export function emitBicep(stack: Stack): string {
+export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standard' }): string {
+  const accountTier = opts?.accountTier ?? 'standard';
   const idx = new Map<string, BaseConstruct>(stack.constructs.map(c => [c.id, c]));
   const resources: BicepResource[] = [];
   const outputs: BicepOutput[] = [];
@@ -1118,7 +1137,7 @@ export function emitBicep(stack: Stack): string {
   }
 
   for (const construct of stack.constructs) {
-    synthesizeConstruct(construct, idx, resources, outputs, needsAdminPassword, crossParams, functionImageParams, sharedContainerEnvSym, cdnBucketRefs);
+    synthesizeConstruct(construct, idx, resources, outputs, needsAdminPassword, crossParams, functionImageParams, sharedContainerEnvSym, cdnBucketRefs, accountTier);
   }
 
   // Post-processing: Storage.Buckets referenciados por CDN via bucketRef ganham

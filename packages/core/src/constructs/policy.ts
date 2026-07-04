@@ -1,7 +1,10 @@
 import { type Ref } from '../refs';
 import { Stack, BaseConstruct } from '../stack';
 
-export type PolicyEffect = 'Allow' | 'Deny';
+// (string & {}) mantém o autocomplete das literais mas aceita `string` inferido —
+// a IA monta statements em arrays intermediários e o TS alarga 'Allow' p/ string,
+// travando o loop de correção (ciclo p01az5). O synth valida o valor em runtime.
+export type PolicyEffect = 'Allow' | 'Deny' | (string & {});
 export type PolicyPrincipalType = 'service' | 'account' | 'role' | 'user' | 'any';
 
 export interface PolicyStatement {

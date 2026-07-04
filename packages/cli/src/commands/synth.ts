@@ -244,7 +244,7 @@ export default class Synth extends Command {
 
           case 'azure': {
             const p = new AzureProvider();
-            const bicep = p.synthesize(typedStack, allStacks);
+            const bicep = p.synthesize(typedStack, allStacks, { accountTier: (config.accountTier === 'standard' ? 'standard' : 'free') });
             const outPath = path.join(provOutDir, `${stackName}.bicep`);
             fs.writeFileSync(outPath, bicep);
             const { extractAzureFunctionMeta } = await import('@iacmp/provider-azure');

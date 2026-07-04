@@ -1,5 +1,5 @@
 import { Stack, Compute, Storage, Network, Database, Fn, Messaging, Cache } from '@iacmp/core';
-import { AzureProvider } from '../src';
+import { AzureProvider, emitBicep } from '../src';
 
 function synth(stack: Stack): string {
   return new AzureProvider().synthesize(stack);
@@ -307,5 +307,28 @@ describe('AzureProvider (Bicep)', () => {
     expect(out).toContain("publicAccess: 'Blob'");
     // originPath '/web' na route
     expect(out).toContain("originPath: '/web'");
+  });
+});
+
+describe('Network.CDN — accountTier free (Front Door proibido em Free Trial)', () => {
+  test('free: NÃO emite recursos Microsoft.Cdn; Url sai do endpoint blob público', () => {
+    const stack = new Stack('site');
+    new Storage.Bucket(stack, 'AppBucket', {});
+    new Network.CDN(stack, 'AppCDN', { defaultRootObject: 'index.html', origins: [{ id: 'o', domainName: '', bucketRef: 'AppBucket' }] });
+    const bicep = emitBicep(stack, { accountTier: 'free' });
+    expect(bicep).not.toContain('Standard_AzureFrontDoor');
+    expect(bicep).not.toContain('Microsoft.Cdn/');
+    expect(bicep).toContain("output AppCDNUrl string = '${appBucket.properties.primaryEndpoints.blob}web'");
+    // o bucket referenciado continua ganhando o container web público
+    expect(bicep).toContain("'web'");
+    expect(bicep).toContain('allowBlobPublicAccess: true');
+  });
+
+  test('standard (default): mantém Front Door', () => {
+    const stack = new Stack('site');
+    new Storage.Bucket(stack, 'AppBucket', {});
+    new Network.CDN(stack, 'AppCDN', { defaultRootObject: 'index.html', origins: [{ id: 'o', domainName: '', bucketRef: 'AppBucket' }] });
+    const bicep = emitBicep(stack);
+    expect(bicep).toContain('Standard_AzureFrontDoor');
   });
 });
