@@ -42,6 +42,12 @@ Status AWS = bateria jun/jul + re-validações pós-refactors. Status Azure = s�
 7. **Workflow** (14): decisão — Logic Apps (declarativo, mais próximo do ASL) vs Durable Functions
 8. **WebSocket** (19): Azure Web PubSub + handlers de evento
 
+## Correções pré-re-run do p02 (achados do ciclo 2026-07-03; aplicar na janela entre ciclos)
+
+1. **Guard de synth: env vars dos handlers** — o modelo gera handler lendo `process.env.TABLE_NAME` mas omite `environment` no `Fn.Lambda` (CRUD inteiro 502 em runtime). Fix na altitude certa: validador de synth (padrão `validateHandlerDynamoNoSql`) que extrai os `process.env.X` do fonte do handler e exige a chave no `environment` do construct — erro claro que o loop de auto-correção conserta. + regra curta no system-prompt.
+2. **`iacmp init` sem controle de região Azure** — gera `azureRegion: 'eastus'` fixo; os ciclos precisam de westus e dependem de edição manual do iacmp.json (setup frágil, dois agentes já esqueceram). Fix: flag `--azureRegion` no init (e considerar default westus enquanto East US estiver sem capacidade Cosmos).
+3. **Prompt Azure: cenário "DynamoDB" ⇒ `Database.DynamoDB` SEMPRE** — o modelo escolheu `Database.DocumentDB` (Mongo) e o `COSMOS_CONNECTION` saiu como resource ID ARM (DocumentDB não tem ConnectionString no AZURE_ATTR_MAP). Fix: proibição explícita na seção condicional Azure + (opcional) suporte a ConnectionString no DocumentDB via listConnectionStrings.
+
 ## Itens de ferramenta já registrados (fora da matriz)
 
 - Deploy Azure sem Docker local (blob+SAS) — adiado, ver plano-p4
