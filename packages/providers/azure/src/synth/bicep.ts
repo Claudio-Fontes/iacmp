@@ -46,7 +46,7 @@ const AZURE_ATTR_MAP: Record<string, Record<string, string>> = {
   'Network.Subnet':        { SubnetId: 'id' },
   'Network.SecurityGroup': { GroupId: 'id' },
   'Storage.Bucket':        { Arn: 'id', Name: 'name', ConnectionString: '__blob_connection_string__' },
-  'Function.Lambda':       { Arn: 'id' },
+  'Function.Lambda':       { Arn: 'id', Fqdn: 'properties.configuration.ingress.fqdn' },
   'Database.SQL':          { Endpoint: 'properties.fullyQualifiedDomainName', SecretArn: 'id', Password: 'id', Username: 'id' },
   'Database.DocumentDB':   { Endpoint: 'properties.documentEndpoint', SecretArn: 'id' },
   'Database.DynamoDB':     { Arn: 'id', Name: 'name', ConnectionString: '__connection_string__' },
@@ -987,6 +987,9 @@ function synthesizeConstruct(
       });
       outputs.push({ name: `${construct.id}Id`, type: 'string', value: `${sym}.id` });
       outputs.push({ name: `${construct.id}PrincipalId`, type: 'string', value: `${sym}.identity.principalId` });
+      // Fqdn: APIM (cross-stack) consome este output para montar a URL do backend.
+      // O FQDN só está disponível após criação com ingress externo — ARM resolve em deploy-time.
+      outputs.push({ name: `${construct.id}Fqdn`, type: 'string', value: `${sym}.properties.configuration.ingress.fqdn` });
       break;
     }
 
@@ -998,15 +1001,111 @@ function synthesizeConstruct(
       // Bicep string interpolation: resolvida em deploy-time, não em synth-time
       const apimName = expr(`'${apimBase}-\${uniqueString(resourceGroup().id)}'`);
       const authorizerLambdaId = props.authorizerLambdaId as string | undefined;
+      const routes = (props.routes as Array<Record<string, unknown>>) ?? [];
+
       // SEM restore:true — com restore, o ARM falha com ServiceUndeleteNotPossible quando
       // NÃO existe instância soft-deletada com esse nome (caso normal de 1º deploy).
       // Colisão com soft-delete (redeploy no mesmo RG após destroy) se resolve com
       // `az apim deletedservice purge` antes do deploy.
       resources.push({ sym, type: 'Microsoft.ApiManagement/service', apiVersion: '2023-05-01-preview', name: apimName, location: 'location', tags: tag(construct.id), sku: { name: 'Consumption', capacity: 0 }, properties: { publisherEmail: 'admin@example.com', publisherName: construct.id, virtualNetworkType: 'None', customProperties: { 'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls10': 'false', 'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls11': 'false' } } });
-      if (authorizerLambdaId) {
-        const authFnSym = toSym(authorizerLambdaId);
-        resources.push({ sym: `${sym}AuthorizerBackend`, type: 'Microsoft.ApiManagement/service/backends', apiVersion: '2023-05-01-preview', parent: sym, name: 'authorizer-backend', properties: { description: `Lambda authorizer backend (${authorizerLambdaId})`, url: expr(`'https://${authFnSym}.azurewebsites.net'`), protocol: 'http' } });
+
+      // API — um único recurso de API contém todas as operações (rotas).
+      // subscriptionRequired:false = SAS/token da app, sem subscription key do APIM.
+      const apiSym = `${sym}Api`;
+      resources.push({
+        sym: apiSym,
+        type: 'Microsoft.ApiManagement/service/apis',
+        apiVersion: '2023-05-01-preview',
+        parent: sym,
+        name: 'main',
+        properties: { displayName: rawName, path: '', protocols: ['https'], subscriptionRequired: false, serviceUrl: '' },
+      });
+
+      // CORS no nível da API — sem ele o browser bloqueia a SAS request (preflight OPTIONS).
+      if (props.cors) {
+        const corsXml = `<policies><inbound><base /><cors allow-credentials="false"><allowed-origins><origin>*</origin></allowed-origins><allowed-methods preflight-result-max-age="300"><method>*</method></allowed-methods><allowed-headers><header>*</header></allowed-headers></cors></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>`;
+        resources.push({ sym: `${sym}ApiPolicy`, type: 'Microsoft.ApiManagement/service/apis/policies', apiVersion: '2023-05-01-preview', parent: apiSym, name: 'policy', properties: { value: corsXml, format: 'xml' } });
       }
+
+      // Backends — um por lambdaId único nas rotas. URL = FQDN do Container App.
+      // Same-stack: referencia o sym diretamente (ARM resolve em deploy-time).
+      // Cross-stack: usa param Bicep (output Fqdn da outra stack, coletado pelo
+      // azureOutputAccumulator no deploy e injetado como --parameters).
+      const uniqueLambdaIds = [...new Set(routes.filter(r => r.lambdaId).map(r => r.lambdaId as string))];
+      const backendNameMap = new Map<string, string>();
+      for (const lambdaId of uniqueLambdaIds) {
+        const backendName = `backend-${lambdaId.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+        backendNameMap.set(lambdaId, backendName);
+        let backendUrl: string;
+        if (idx.get(lambdaId)) {
+          // Mesma stack: sym do Container App disponível localmente
+          const lambdaSym = toSym(lambdaId);
+          backendUrl = expr(`'https://\${${lambdaSym}.properties.configuration.ingress.fqdn}'`);
+        } else {
+          // Stack diferente: param cross-stack gerado a partir do output Fqdn da outra stack
+          const fqdnParam = crossParamName(lambdaId, 'Fqdn');
+          crossParams.set(fqdnParam, 'string');
+          backendUrl = expr(`'https://\${${fqdnParam}}'`);
+        }
+        resources.push({
+          sym: `${sym}Backend${lambdaId.replace(/[^a-zA-Z0-9]/g, '')}`,
+          type: 'Microsoft.ApiManagement/service/backends',
+          apiVersion: '2023-05-01-preview',
+          parent: sym,
+          name: backendName,
+          properties: {
+            url: backendUrl,
+            protocol: 'http',
+            description: `Container App backend for ${lambdaId}`,
+          },
+        });
+      }
+
+      // Operações + políticas — uma por rota declarada no construct.
+      for (let ri = 0; ri < routes.length; ri++) {
+        const route = routes[ri];
+        const method = (route.method as string) ?? 'GET';
+        const path = (route.path as string) ?? '/';
+        const lambdaId = route.lambdaId as string | undefined;
+        const opSym = `${sym}Op${ri}`;
+        const sanitizedPath = path.replace(/\{(\w+)\+\}/g, '{$1}');
+        const templateParams = [...sanitizedPath.matchAll(/\{(\w+)\}/g)].map(m => ({ name: m[1], required: true, type: 'string' }));
+        resources.push({
+          sym: opSym,
+          type: 'Microsoft.ApiManagement/service/apis/operations',
+          apiVersion: '2023-05-01-preview',
+          parent: apiSym,
+          name: `op-${method.toLowerCase()}-${ri}`,
+          properties: {
+            displayName: `${method} ${path}`,
+            method,
+            urlTemplate: sanitizedPath,
+            description: (route.description as string) ?? `${method} ${path}`,
+            ...(templateParams.length > 0 ? { templateParameters: templateParams } : {}),
+          },
+        });
+        if (lambdaId) {
+          const backendId = backendNameMap.get(lambdaId) ?? `backend-${lambdaId.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+          const opXml = `<policies><inbound><base /><set-backend-service backend-id="${backendId}" /></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>`;
+          resources.push({ sym: `${sym}Policy${ri}`, type: 'Microsoft.ApiManagement/service/apis/operations/policies', apiVersion: '2023-05-01-preview', parent: opSym, name: 'policy', properties: { value: opXml, format: 'xml' } });
+        }
+      }
+
+      // Authorizer backend (se definido no nível do gateway) — same vs. cross-stack
+      if (authorizerLambdaId) {
+        let authUrl: string;
+        if (idx.get(authorizerLambdaId)) {
+          const authFnSym = toSym(authorizerLambdaId);
+          authUrl = expr(`'https://\${${authFnSym}.properties.configuration.ingress.fqdn}'`);
+        } else {
+          const authFqdnParam = crossParamName(authorizerLambdaId, 'Fqdn');
+          crossParams.set(authFqdnParam, 'string');
+          authUrl = expr(`'https://\${${authFqdnParam}}'`);
+        }
+        resources.push({ sym: `${sym}AuthorizerBackend`, type: 'Microsoft.ApiManagement/service/backends', apiVersion: '2023-05-01-preview', parent: sym, name: 'authorizer-backend', properties: { description: `Lambda authorizer backend (${authorizerLambdaId})`, url: authUrl, protocol: 'http' } });
+      }
+
+      outputs.push({ name: `${construct.id}Url`, type: 'string', value: `${sym}.properties.gatewayUrl` });
       break;
     }
 

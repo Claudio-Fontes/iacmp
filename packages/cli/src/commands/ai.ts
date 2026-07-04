@@ -380,23 +380,41 @@ async function runGeneration(
     if (!result.valid) {
       const spinner = ora({ text: 'Validação TypeScript falhou — corrigindo...', spinner: 'dots', discardStdin: false }).start();
       const originalFileCount = parsed.files.length;
-      // O hint Azure precisa ser ciente do DATASTORE do projeto: mandar
-      // data-tables num projeto Database.SQL (postgres) cria a espiral inversa
-      // (foi a causa do 5/5 do ciclo p01az4). data-tables é SÓ para DynamoDB.
-      const stacksBlob = parsed.files.filter(f => f.path.startsWith('stacks/')).map(f => f.content).join('\n');
-      const hasDynamo = stacksBlob.includes('Database.DynamoDB');
-      const hasSql = stacksBlob.includes('Database.SQL');
-      const tsHint = iacProvider === 'azure'
-        ? (hasSql && !hasDynamo
-          ? `\n\nEste projeto Azure usa Database.SQL (PostgreSQL flexible server) — os handlers usam o driver pg NORMAL:\n` +
-            `  import { Client } from 'pg';\n` +
-            `  const db = new Client({ host: process.env.DB_HOST, port: Number(process.env.DB_PORT ?? 5432), user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME ?? 'postgres', ssl: { rejectUnauthorized: false } });\n` +
-            `NUNCA use @azure/data-tables (é Cosmos DB Table, outro produto) nem @aws-sdk/*.`
-          : `\n\nEste projeto usa Azure Container Apps — use APENAS @azure/data-tables para acesso a Cosmos DB:\n` +
-            `  import { TableClient } from '@azure/data-tables';\n` +
-            `  const client = TableClient.fromConnectionString(process.env.COSMOS_CONNECTION!, process.env.TABLE_NAME!);\n` +
-            `NUNCA use @aws-sdk/* (DynamoDBClient, etc.) — não funciona no Azure.`)
-        : ``;
+      // Prioridade: detectar SDK errado no Azure ANTES do hint genérico.
+      // @aws-sdk/* é a causa mais comum de "Cannot find module" em projetos Azure —
+      // o hint genérico abaixo (data-tables) seria o SDK ERRADO para blob.
+      // buildAzureSdkCorrection já tem a lógica correta por datastore.
+      const azureSdkFirst = iacProvider === 'azure' ? buildAzureSdkCorrection(parsed.files) : null;
+      let tsHint: string;
+      if (azureSdkFirst) {
+        tsHint = `\n\n${azureSdkFirst}`;
+      } else {
+        // O hint Azure precisa ser ciente do DATASTORE do projeto: mandar
+        // data-tables num projeto Database.SQL (postgres) cria a espiral inversa
+        // (foi a causa do 5/5 do ciclo p01az4). data-tables é SÓ para DynamoDB.
+        // Storage.Bucket sem DynamoDB → storage-blob (não data-tables).
+        const stacksBlob = parsed.files.filter(f => f.path.startsWith('stacks/')).map(f => f.content).join('\n');
+        const hasDynamo = stacksBlob.includes('Database.DynamoDB');
+        const hasSql = stacksBlob.includes('Database.SQL');
+        const hasBlob = stacksBlob.includes('Storage.Bucket');
+        tsHint = iacProvider === 'azure'
+          ? (hasSql && !hasDynamo
+            ? `\n\nEste projeto Azure usa Database.SQL (PostgreSQL flexible server) — os handlers usam o driver pg NORMAL:\n` +
+              `  import { Client } from 'pg';\n` +
+              `  const db = new Client({ host: process.env.DB_HOST, port: Number(process.env.DB_PORT ?? 5432), user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME ?? 'postgres', ssl: { rejectUnauthorized: false } });\n` +
+              `NUNCA use @azure/data-tables (é Cosmos DB Table, outro produto) nem @aws-sdk/*.`
+            : (hasBlob && !hasDynamo)
+            ? `\n\nEste projeto Azure é de ARQUIVOS/BLOB (Storage.Bucket). Use @azure/storage-blob:\n` +
+              `  import { BlobServiceClient, generateBlobSASQueryParameters, BlobSASPermissions, StorageSharedKeyCredential } from '@azure/storage-blob';\n` +
+              `  const svc = BlobServiceClient.fromConnectionString(process.env.BLOB_CONNECTION!);\n` +
+              `  const container = svc.getContainerClient('uploads'); await container.createIfNotExists();\n` +
+              `NUNCA use @azure/data-tables (é NoSQL Cosmos, não blob) nem @aws-sdk/*.`
+            : `\n\nEste projeto usa Azure Container Apps — use APENAS @azure/data-tables para acesso a Cosmos DB:\n` +
+              `  import { TableClient } from '@azure/data-tables';\n` +
+              `  const client = TableClient.fromConnectionString(process.env.COSMOS_CONNECTION!, process.env.TABLE_NAME!);\n` +
+              `NUNCA use @aws-sdk/* (DynamoDBClient, etc.) — não funciona no Azure.`)
+          : ``;
+      }
       session.addUserMessage(
         `Erros TypeScript:\n${result.errors.join('\n')}\n\n` +
         `Corrija e retorne o JSON completo de novo, com TODOS os ${originalFileCount} arquivo(s) da resposta anterior ` +
@@ -590,9 +608,16 @@ export default class AI extends Command {
       ragSpinner.stop();
     }
     const provider = createContextualProvider(aiProvider, projectContext, iacProvider);
-    session.addUserMessage(args.prompt);
+    // Quando provider=azure, o prompt pode mencionar SDKs AWS explicitamente (ex: o
+    // prompt 04 diz "@aws-sdk/client-s3"). O GPT-4o tende a seguir a instrução do
+    // usuário literalmente mesmo com override no system prompt. Sufixo garante que a
+    // tradução Azure seja aplicada antes de enviar à IA.
+    const finalPrompt = iacProvider === 'azure' && /\@aws-sdk\/|aws-sdk|s3-request-presigner|DynamoDBClient|ScanCommand|PutCommand|GetCommand|DeleteCommand/.test(args.prompt ?? '')
+      ? `${args.prompt}\n\n[AZURE OVERRIDE: Este prompt menciona SDKs AWS. NUNCA gere @aws-sdk/* neste projeto Azure. Substituições obrigatórias: S3/presigned-URL → Storage.Bucket + @azure/storage-blob + BlobServiceClient.fromConnectionString + SAS (generateBlobSASQueryParameters); DynamoDB → Database.DynamoDB + @azure/data-tables. Gere TODOS os handlers com SDKs Azure.]`
+      : args.prompt!;
+    session.addUserMessage(finalPrompt);
     try {
-      await runGeneration(provider, session, cwd, dryRun, iacProvider, ask, args.prompt);
+      await runGeneration(provider, session, cwd, dryRun, iacProvider, ask, finalPrompt);
     } finally {
       close();
     }
