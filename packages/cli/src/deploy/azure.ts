@@ -140,6 +140,12 @@ function buildFunctionBundle(
     target: 'node20',
     format: 'cjs',
     external: [],
+    // @azure/storage-blob (e outros SDKs) usam `createRequire(import.meta.url)`
+    // internamente. Em bundle CJS o esbuild deixa import.meta.url como undefined
+    // → createRequire(undefined) crasha o container no boot. O banner define uma
+    // file URL válida do próprio bundle e o define redireciona import.meta.url.
+    banner: { js: `const __iacmp_meta_url = require('url').pathToFileURL(__filename).href;` },
+    define: { 'import.meta.url': '__iacmp_meta_url' },
     logLevel: 'silent',
   });
 

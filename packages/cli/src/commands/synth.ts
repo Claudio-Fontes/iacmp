@@ -1,6 +1,7 @@
 import { Command, Flags } from '@oclif/core';
 import * as fs from 'fs';
 import * as path from 'path';
+import { spawnSync } from 'child_process';
 import { AWSProvider } from '@iacmp/provider-aws';
 import { AzureProvider } from '@iacmp/provider-azure';
 import { GCPProvider } from '@iacmp/provider-gcp';
@@ -18,7 +19,7 @@ export default class Synth extends Command {
   static description = 'Sintetiza as stacks para o formato nativo do provider';
 
   static flags = {
-    provider: Flags.string({ char: 'p', description: 'Provider alvo (aws, azure, gcp, terraform)', default: 'aws' }),
+    provider: Flags.string({ char: 'p', description: 'Provider alvo (aws, azure, gcp, terraform) — default: o provider do iacmp.json' }),
     stack: Flags.string({ char: 's', description: 'Nome da stack específica' }),
   };
 
@@ -291,6 +292,158 @@ export default class Synth extends Command {
         this.error(`Falha ao sintetizar '${stackName}': ${(err as Error).message}`);
       }
     }
+
+    // ── Validação via CLI do provider (após synth) ────────────────────────────
+    if (provider === 'aws') {
+      this.validateAwsTemplates(cwd, flags.stack);
+    } else if (provider === 'azure') {
+      this.validateAzureTemplates(cwd, config.resourceGroup, flags.stack);
+    }
+  }
+
+  /**
+   * Valida templates CloudFormation gerados com `aws cloudformation validate-template`.
+   * Requer aws CLI configurado e credenciais ativas. Skipa silenciosamente se
+   * a ferramenta não estiver disponível.
+   */
+  private validateAwsTemplates(cwd: string, stack?: string): void {
+    const awsCheck = spawnSync('aws', ['--version'], { encoding: 'utf-8' });
+    if (awsCheck.error) {
+      this.log('  aws CLI não encontrado — aws cloudformation validate-template skipped.');
+      return;
+    }
+
+    const dir = providerOutDir(cwd, 'aws');
+    if (!fs.existsSync(dir)) return;
+
+    const files = fs.readdirSync(dir).filter(
+      f => f.endsWith('.json') && !f.startsWith('_') && (!stack || f === `${stack}.json`),
+    );
+
+    let hasError = false;
+    for (const file of files) {
+      const filePath = path.join(dir, file);
+      const stackName = file.replace('.json', '');
+      const result = spawnSync(
+        'aws',
+        ['cloudformation', 'validate-template', '--template-body', `file://${filePath}`],
+        { encoding: 'utf-8' },
+      );
+      if (result.status !== 0) {
+        this.warn(`aws cloudformation validate-template falhou para '${stackName}':\n${result.stderr || result.stdout}`);
+        hasError = true;
+      } else {
+        this.log(`  CFN validate OK: ${stackName}`);
+      }
+    }
+
+    if (hasError) {
+      this.error('Validação CloudFormation encontrou erros. Corrija antes de fazer deploy.');
+    }
+  }
+
+  /**
+   * Valida templates Bicep gerados em dois estágios:
+   *   1. `az bicep build --stdout` — sintaxe/compilação (sem resource group)
+   *   2. `az deployment group validate` — validação via API Azure (requer RG ativo)
+   * Skipa graciosamente se az CLI não estiver disponível.
+   */
+  private validateAzureTemplates(cwd: string, resourceGroup?: string, stack?: string): void {
+    const azCheck = spawnSync('az', ['--version'], { encoding: 'utf-8' });
+    if (azCheck.error) {
+      this.log('  az CLI não encontrado — validação Azure skipped.');
+      return;
+    }
+
+    const dir = providerOutDir(cwd, 'azure');
+    if (!fs.existsSync(dir)) return;
+
+    const files = fs.readdirSync(dir).filter(
+      f => f.endsWith('.bicep') && !f.startsWith('_') && (!stack || f === `${stack}.bicep`),
+    );
+    if (files.length === 0) return;
+
+    // Estágio 1: compilação Bicep (detecta erros de sintaxe sem precisar de RG)
+    let hasError = false;
+    for (const file of files) {
+      const filePath = path.join(dir, file);
+      const stackName = file.replace('.bicep', '');
+      const result = spawnSync('az', ['bicep', 'build', '--file', filePath, '--stdout'], { encoding: 'utf-8' });
+      if (result.status !== 0) {
+        this.warn(`az bicep build falhou para '${stackName}':\n${result.stderr || result.stdout}`);
+        hasError = true;
+      } else {
+        this.log(`  Bicep build OK: ${stackName}`);
+      }
+    }
+    if (hasError) {
+      this.error('Erro de sintaxe Bicep. Corrija antes de fazer deploy.');
+    }
+
+    // Estágio 2: validação via API Azure (requer resource group configurado e existente)
+    if (!resourceGroup) {
+      this.log('  az deployment validate: resourceGroup não configurado no iacmp.json — skipped.');
+      return;
+    }
+    const rgCheck = spawnSync(
+      'az',
+      ['group', 'show', '--name', resourceGroup, '--query', 'name', '-o', 'tsv'],
+      { encoding: 'utf-8' },
+    );
+    if (rgCheck.status !== 0) {
+      this.log(`  az deployment validate: resource group "${resourceGroup}" não existe — skipped.`);
+      return;
+    }
+
+    for (const file of files) {
+      const filePath = path.join(dir, file);
+      const stackName = file.replace('.bicep', '');
+      const params = this.detectBicepRequiredParams(filePath);
+      const paramArgs = Object.entries(params).flatMap(([k, v]) => ['--parameters', `${k}=${v}`]);
+      const result = spawnSync(
+        'az',
+        [
+          'deployment', 'group', 'validate',
+          '--resource-group', resourceGroup,
+          '--template-file', filePath,
+          '--mode', 'Incremental',
+          ...paramArgs,
+        ],
+        { encoding: 'utf-8' },
+      );
+      if (result.status !== 0) {
+        this.warn(`az deployment group validate falhou para '${stackName}':\n${result.stderr || result.stdout}`);
+        hasError = true;
+      } else {
+        this.log(`  az deployment validate OK: ${stackName}`);
+      }
+    }
+
+    if (hasError) {
+      this.error('Validação Azure encontrou erros. Corrija antes de fazer deploy.');
+    }
+  }
+
+  /**
+   * Detecta params Bicep sem valor default (obrigatórios) e retorna um mapa
+   * `nome → valor dummy` tipado, para passar ao `az deployment group validate`
+   * sem travar por "missing required parameter".
+   */
+  private detectBicepRequiredParams(filePath: string): Record<string, string> {
+    const content = fs.readFileSync(filePath, 'utf-8');
+    const params: Record<string, string> = {};
+    for (const line of content.split('\n')) {
+      // Param obrigatório: `param <nome> <tipo>` sem `= <default>` ao final
+      const m = line.match(/^param\s+(\w+)\s+(\w+)\s*$/);
+      if (!m) continue;
+      const [, name, type] = m;
+      switch (type) {
+        case 'int':  params[name] = '0'; break;
+        case 'bool': params[name] = 'false'; break;
+        default:     params[name] = 'dummy'; break;
+      }
+    }
+    return params;
   }
 
   /**
