@@ -129,6 +129,14 @@ new Storage.Bucket(stack, 'LogicalId', {
       transitionToGlacierDays?: number,
     }
   ],
+  cors?: [                   // CORS do bucket — para upload/download direto do browser (presigned URL)
+    {
+      allowedMethods: ['GET' | 'PUT' | 'POST' | 'DELETE' | 'HEAD'],  // obrigatório
+      allowedOrigins?: string[],   // ex: ['*'] ou ['https://meuapp.com']
+      allowedHeaders?: string[],   // ex: ['*']
+      maxAgeSeconds?: number,
+    }
+  ],
   eventNotifications?: [      // dispara uma Lambda quando um objeto é criado no bucket (S3 → Lambda)
     {
       lambdaId: string,      // id de uma Fn.Lambda
@@ -140,6 +148,8 @@ new Storage.Bucket(stack, 'LogicalId', {
 });
 export default stack;
 \`\`\`
+**REGRA — CORS do S3:** para permitir upload/download do browser (presigned URL, SPA), use a prop \`cors\` DO PRÓPRIO \`Storage.Bucket\`: \`cors: [{ allowedMethods: ['GET','PUT','POST'], allowedOrigins: ['*'], allowedHeaders: ['*'] }]\` — o synth gera a \`CorsConfiguration\` no bucket. NUNCA implemente CORS com \`Custom.Resource\` / \`AWS::S3::BucketPolicy\` (BucketPolicy é controle de ACESSO, não CORS; e o preflight OPTIONS do browser não funciona assim).
+**REGRA — nome do bucket para os handlers:** a env var com o nome do bucket (ex: \`BUCKET_NAME\`) usa \`ref('MeuBucket', 'Name')\` — NUNCA \`ref('MeuBucket','Arn')\` (o ARN não é aceito como Bucket nas chamadas do SDK S3). Atributos válidos do \`Storage.Bucket\`: \`Arn\` (para Policy.IAM resources) e \`Name\` (para o SDK).
 **REGRA — pipeline "S3 dispara Lambda" (ObjectCreated):** quando uma Lambda deve ser ACIONADA por upload de arquivo no S3, declare o trigger em \`Storage.Bucket.eventNotifications: [{ lambdaId: 'MinhaFn', events: ['s3:ObjectCreated:*'] }]\` — o synth gera a NotificationConfiguration e a Lambda::Permission. NUNCA exponha essa Lambda por \`Fn.ApiGateway\` (o pipeline dispara sozinho no upload, não por HTTP) e NÃO invente rotas HTTP. O handler recebe o evento S3 (\`event.Records[].s3.object.key\`), não um request HTTP.
 
 ### Storage.FileSystem — EFS, Azure Files, Filestore
