@@ -114,15 +114,16 @@ function buildAzureSdkCorrection(files: Array<{ path: string; content: string }>
       `Env vars: DB_HOST: ref('AppDB','Endpoint'), DB_PORT: ref('AppDB','Port'), DB_USER: ref('AppDB','Username'), DB_PASSWORD: ref('AppDB','Password').\n` +
       `NUNCA @azure/data-tables/@azure/cosmos (é Cosmos, outro produto) nem @aws-sdk/*.`
     : blobOnly
-    ? `Este projeto é de ARQUIVOS/BLOB (Storage.Bucket, sem banco). Reescreva APENAS esses handlers com @azure/storage-blob (presigned = SAS URL). ATENÇÃO: getSignedUrl/generateBlobSASQueryParameters NÃO existem em @azure/data-tables:\n` +
+    ? `Este projeto é de ARQUIVOS/BLOB (Storage.Bucket, sem banco). Reescreva APENAS esses handlers com @azure/storage-blob (presigned = SAS URL). Use fromConnectionString (NÃO invente BLOB_KEY placeholder) e crie o container:\n` +
       `\`\`\`typescript\n` +
       `import { BlobServiceClient, generateBlobSASQueryParameters, BlobSASPermissions, StorageSharedKeyCredential } from '@azure/storage-blob';\n` +
-      `const cred = new StorageSharedKeyCredential(process.env.BLOB_ACCOUNT!, process.env.BLOB_KEY!);\n` +
-      `const svc = new BlobServiceClient(\`https://\${process.env.BLOB_ACCOUNT}.blob.core.windows.net\`, cred);\n` +
-      `// SAS upload: generateBlobSASQueryParameters({ containerName, blobName, permissions: BlobSASPermissions.parse('cw'), expiresOn: new Date(Date.now()+3e5) }, cred).toString()\n` +
-      `// list: for await (const b of svc.getContainerClient(c).listBlobsFlat()){...}  // delete: await svc.getContainerClient(c).deleteBlob(name)\n` +
+      `const svc = BlobServiceClient.fromConnectionString(process.env.BLOB_CONNECTION!);\n` +
+      `const container = svc.getContainerClient('uploads'); await container.createIfNotExists();\n` +
+      `const cred = svc.credential as StorageSharedKeyCredential;\n` +
+      `// SAS: generateBlobSASQueryParameters({ containerName:'uploads', blobName, permissions: BlobSASPermissions.parse('cw'), expiresOn: new Date(Date.now()+3e5) }, cred).toString()\n` +
+      `// list: for await (const b of container.listBlobsFlat()){...}  // delete: await container.deleteBlob(name)\n` +
       `\`\`\`\n\n` +
-      `Env vars: BLOB_ACCOUNT: ref('<Bucket>','Name'). NÃO gere COSMOS_CONNECTION/TABLE_NAME. NUNCA @azure/data-tables/@azure/cosmos nem @aws-sdk/*.`
+      `Env var ÚNICA: BLOB_CONNECTION: ref('<Bucket>','ConnectionString'). NÃO gere BLOB_KEY/BLOB_ACCOUNT/COSMOS_CONNECTION/TABLE_NAME. NUNCA @azure/data-tables/@azure/cosmos nem @aws-sdk/*.`
     : `Reescreva APENAS esses handlers usando @azure/data-tables:\n` +
       `\`\`\`typescript\n` +
       `import { TableClient } from '@azure/data-tables';\n` +

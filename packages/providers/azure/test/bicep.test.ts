@@ -427,3 +427,13 @@ describe('Storage.Bucket Azure — CORS e env undefined (p04az)', () => {
     expect(() => emitBicep(stack)).toThrow(/undefined|process\.env/i);
   });
 });
+
+test('Storage.Bucket ConnectionString → listKeys (não placeholder) + output cross-stack (p04az5)', () => {
+  const stack = new Stack('s');
+  const b = new Storage.Bucket(stack, 'Uploads', { cors: [{ allowedMethods: ['PUT'] } as any] });
+  new Fn.Lambda(stack, 'Fn', { runtime: 'nodejs20', handler: 'dist/h.handler', code: '.', environment: { BLOB_CONNECTION: ref('Uploads', 'ConnectionString') } });
+  const bicep = emitBicep(stack);
+  expect(bicep).toContain('listKeys().keys[0].value');
+  expect(bicep).toContain('output UploadsConnectionString');
+  expect(bicep).not.toContain('your-blob-storage-key');
+});

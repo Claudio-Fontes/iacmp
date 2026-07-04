@@ -1136,7 +1136,15 @@ O projeto usa provider=azure. O backend de Database.DynamoDB no Azure é o **Cos
 ### Escolha de construct no Azure (NUNCA troque)
 - Cenário pede "DynamoDB"/tabela chave-valor → \`Database.DynamoDB\` SEMPRE. NUNCA \`Database.DocumentDB\` (Mongo — outro produto, sem ConnectionString de Table).
 - Cenário pede PostgreSQL/MySQL → \`Database.SQL\` (vira Azure Database flexible server). O handler usa o driver \`pg\`/\`mysql2\` NORMAL (o protocolo é o mesmo do RDS) com \`ref('AppDB','Endpoint'/'Port'/'Password'/'Username')\` — NUNCA \`@azure/data-tables\` para SQL.
-- Cenário de ARQUIVOS/BLOB (\`Storage.Bucket\` sem banco — upload/download, presigned URL) → o handler usa \`@azure/storage-blob\`, NUNCA \`@azure/data-tables\` (Table é NoSQL, não é blob). Presigned no Azure = SAS URL: \`import { BlobServiceClient, generateBlobSASQueryParameters, BlobSASPermissions, StorageSharedKeyCredential } from '@azure/storage-blob';\`. Env vars: \`BLOB_ACCOUNT: ref('MeuBucket','Name')\` e a chave/conn string do storage. NÃO gere COSMOS_CONNECTION/TABLE_NAME num cenário que não tem \`Database.DynamoDB\`.
+- Cenário de ARQUIVOS/BLOB (\`Storage.Bucket\` sem banco — upload/download, presigned URL) → o handler usa \`@azure/storage-blob\`, NUNCA \`@azure/data-tables\` (Table é NoSQL, não é blob). Use \`fromConnectionString\` (a chave vem junto — NÃO invente BLOB_KEY placeholder) e CRIE o container se não existir. Env var ÚNICA: \`BLOB_CONNECTION: ref('MeuBucket','ConnectionString')\`. NÃO gere COSMOS_CONNECTION/TABLE_NAME.
+\`\`\`typescript
+import { BlobServiceClient, generateBlobSASQueryParameters, BlobSASPermissions, StorageSharedKeyCredential } from '@azure/storage-blob';
+const svc = BlobServiceClient.fromConnectionString(process.env.BLOB_CONNECTION!);
+const container = svc.getContainerClient('uploads');
+await container.createIfNotExists();                 // o container NÃO existe por padrão
+// SAS: const cred = svc.credential as StorageSharedKeyCredential;
+// generateBlobSASQueryParameters({ containerName:'uploads', blobName:key, permissions:BlobSASPermissions.parse('cw'), expiresOn:new Date(Date.now()+3e5) }, cred).toString()
+\`\`\`
 - **env var NUNCA recebe \`process.env.X\` no código da STACK** — o valor é resolvido em synth-time; use string literal ou \`ref('Recurso','Attr')\`. \`process.env\` só existe DENTRO do handler (runtime), não na stack.
 - **Atributos válidos de \`ref()\` por tipo (NÃO invente outros):** \`Database.SQL\` → \`Endpoint, Port, SecretArn, Password, Username\` (NÃO existe \`ConnectionString\`); \`Database.DynamoDB\` → \`Arn, Name, ConnectionString\` (Name = nome da TABELA).
 - Frontend estático no Azure = \`Storage.Bucket\` (privado) + \`Network.CDN\` com \`bucketRef\`, MESMA stack — igual à AWS. CDN NUNCA é um \`Storage.Bucket\`; cada construct id aparece UMA vez por stack.

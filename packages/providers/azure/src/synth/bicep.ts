@@ -45,7 +45,7 @@ const AZURE_ATTR_MAP: Record<string, Record<string, string>> = {
   'Network.VPC':           { VpcId: 'id' },
   'Network.Subnet':        { SubnetId: 'id' },
   'Network.SecurityGroup': { GroupId: 'id' },
-  'Storage.Bucket':        { Arn: 'id', Name: 'name' },
+  'Storage.Bucket':        { Arn: 'id', Name: 'name', ConnectionString: '__blob_connection_string__' },
   'Function.Lambda':       { Arn: 'id' },
   'Database.SQL':          { Endpoint: 'properties.fullyQualifiedDomainName', SecretArn: 'id', Password: 'id', Username: 'id' },
   'Database.DocumentDB':   { Endpoint: 'properties.documentEndpoint', SecretArn: 'id' },
@@ -77,6 +77,12 @@ function resolveRef(r: Ref, idx: Map<string, BaseConstruct>, crossParams: Map<st
   // Name do Cosmos = nome da TABELA (child resource, = construct.id), não o da conta.
   if (c.type === 'Database.DynamoDB' && r.attribute === 'Name') {
     return r.constructId;
+  }
+  // ConnectionString do Storage.Bucket (blob) — com a account key via listKeys().
+  // O handler usa BlobServiceClient.fromConnectionString; antes o modelo punha
+  // BLOB_KEY: 'your-key' literal (placeholder) → SAS 403 (ciclo p04az5).
+  if (c.type === 'Storage.Bucket' && r.attribute === 'ConnectionString') {
+    return expr(`'DefaultEndpointsProtocol=https;AccountName=\${${sym}.name};AccountKey=\${${sym}.listKeys().keys[0].value};EndpointSuffix=core.windows.net'`);
   }
   // Database.SQL: Password/Username/Port viram valores REAIS (o attr map genérico
   // caía em `.id` — resource ID do ARM ia parar na env do handler; ciclo p01az6).
@@ -445,6 +451,9 @@ function synthesizeConstruct(
       }
       outputs.push({ name: `${construct.id}Id`, type: 'string', value: `${sym}.id` });
       outputs.push({ name: `${construct.id}Name`, type: 'string', value: `${sym}.name` });
+      // ConnectionString (com a account key) — cross-stack para o handler blob
+      // (BlobServiceClient.fromConnectionString). Ver resolveRef Storage.Bucket.
+      outputs.push({ name: `${construct.id}ConnectionString`, type: 'string', value: `'DefaultEndpointsProtocol=https;AccountName=\${${sym}.name};AccountKey=\${${sym}.listKeys().keys[0].value};EndpointSuffix=core.windows.net'` });
       break;
     }
 
