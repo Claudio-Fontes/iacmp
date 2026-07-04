@@ -59,9 +59,12 @@ function tryInstallMissingModules(errors: string[], cwd: string, iacProvider: st
     .filter(pkg => !pkg.startsWith('.') && !pkg.startsWith('@iacmp/'))
     .filter((v, i, a) => a.indexOf(v) === i);
   const stacksBlob = files.filter(f => f.path.startsWith('stacks/')).map(f => f.content).join('\n');
-  const sqlOnlyAzure = iacProvider === 'azure' && stacksBlob.includes('Database.SQL') && !stacksBlob.includes('Database.DynamoDB');
+  // data-tables só é o SDK certo quando há Database.DynamoDB — em projeto sem
+  // DynamoDB (SQL→pg, blob→storage-blob), NÃO instalar (mascararia o SDK errado
+  // e o detector do loop nunca forçaria a troca).
+  const noDynamoAzure = iacProvider === 'azure' && !stacksBlob.includes('Database.DynamoDB');
   const modulesToInstall = iacProvider === 'azure'
-    ? missingModules.filter(pkg => !pkg.startsWith('@aws-sdk/') && !(sqlOnlyAzure && pkg === '@azure/data-tables'))
+    ? missingModules.filter(pkg => !pkg.startsWith('@aws-sdk/') && !(noDynamoAzure && pkg === '@azure/data-tables'))
     : missingModules;
   if (modulesToInstall.length === 0) return false;
   const installSpinner = ora({ text: `Instalando dependências: ${modulesToInstall.join(', ')}...`, spinner: 'dots', discardStdin: false }).start();
@@ -410,13 +413,19 @@ async function runGeneration(
           // quando o contexto tem muitas instruções AWS.
           if (iacProvider === 'azure') {
             const loopStacksBlob = parsed.files.filter(f => f.path.startsWith('stacks/')).map(f => f.content).join('\n');
-            const loopSqlOnly = loopStacksBlob.includes('Database.SQL') && !loopStacksBlob.includes('Database.DynamoDB');
+            const hasDynamo = loopStacksBlob.includes('Database.DynamoDB');
+            const loopSqlOnly = loopStacksBlob.includes('Database.SQL') && !hasDynamo;
+            // Cenário de blob: Storage.Bucket sem NENHUM banco → o handler é
+            // @azure/storage-blob; data-tables aqui é o SDK errado (o gpt-4o-mini
+            // insiste em adaptar S3→Cosmos ignorando a regra de prosa do prompt).
+            const loopBlobOnly = loopStacksBlob.includes('Storage.Bucket') && !hasDynamo && !loopStacksBlob.includes('Database.SQL');
             const handlerFiles = parsed.files.filter(
               f => (f.path.startsWith('src/') || f.path.endsWith('.ts')) && !f.path.startsWith('stacks/')
             );
             const awsSdkFiles = handlerFiles.filter(f => f.content.includes('@aws-sdk/'));
-            // Projeto SQL: data-tables no handler é o SDK errado (Cosmos ≠ Postgres).
-            const wrongTableFiles = loopSqlOnly ? handlerFiles.filter(f => f.content.includes('@azure/data-tables')) : [];
+            // data-tables só é correto quando há Database.DynamoDB — em projeto
+            // SQL (→pg) ou blob (→storage-blob) é o SDK errado.
+            const wrongTableFiles = (loopSqlOnly || loopBlobOnly) ? handlerFiles.filter(f => f.content.includes('@azure/data-tables')) : [];
             if (awsSdkFiles.length > 0 || wrongTableFiles.length > 0) {
               const fileList = [...new Set([...awsSdkFiles, ...wrongTableFiles].map(f => f.path))].join(', ');
               spinner.fail(`Azure: handlers com SDK errado (${fileList}) — corrigindo...`);
@@ -428,6 +437,16 @@ async function runGeneration(
                   `\`\`\`\n\n` +
                   `Env vars que o Fn.Lambda DEVE ter: DB_HOST: ref('AppDB','Endpoint'), DB_PORT: ref('AppDB','Port'), DB_USER: ref('AppDB','Username'), DB_PASSWORD: ref('AppDB','Password').\n` +
                   `NUNCA use @azure/data-tables (Cosmos Table — outro produto) nem @aws-sdk/*.`
+                : loopBlobOnly
+                ? `Este projeto é de ARQUIVOS/BLOB (Storage.Bucket, sem banco). Reescreva APENAS esses handlers com @azure/storage-blob (presigned = SAS URL):\n` +
+                  `\`\`\`typescript\n` +
+                  `import { BlobServiceClient, generateBlobSASQueryParameters, BlobSASPermissions, StorageSharedKeyCredential } from '@azure/storage-blob';\n` +
+                  `const cred = new StorageSharedKeyCredential(process.env.BLOB_ACCOUNT!, process.env.BLOB_KEY!);\n` +
+                  `const svc = new BlobServiceClient(\\\`https://\\\${process.env.BLOB_ACCOUNT}.blob.core.windows.net\\\`, cred);\n` +
+                  `// upload SAS: const sas = generateBlobSASQueryParameters({ containerName, blobName, permissions: BlobSASPermissions.parse('cw'), expiresOn: new Date(Date.now()+3e5) }, cred).toString();\n` +
+                  `// list: for await (const b of svc.getContainerClient(c).listBlobsFlat()) {...}  // delete: await svc.getContainerClient(c).deleteBlob(name)\n` +
+                  `\`\`\`\n\n` +
+                  `Env vars: BLOB_ACCOUNT: ref('<Bucket>','Name'). NÃO gere COSMOS_CONNECTION/TABLE_NAME (não há Cosmos). NUNCA @azure/data-tables nem @aws-sdk/*.`
                 : `Reescreva APENAS esses handlers usando @azure/data-tables. Exemplo completo de CRUD:\n` +
                   `\`\`\`typescript\n` +
                   `import { TableClient } from '@azure/data-tables';\n` +
