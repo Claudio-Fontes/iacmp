@@ -141,8 +141,8 @@ function createDirectAsk(): { ask: AskFn; close: () => void } {
   };
 }
 
-function createContextualProvider(base: AIProvider, projectContext: string): AIProvider {
-  const systemPrompt = buildSystemPrompt(projectContext);
+function createContextualProvider(base: AIProvider, projectContext: string, iacProvider: string): AIProvider {
+  const systemPrompt = buildSystemPrompt(projectContext, undefined, iacProvider);
   return {
     name: base.name,
     async chat(messages) {
@@ -288,10 +288,16 @@ async function runGeneration(
         .filter(pkg => !pkg.startsWith('.') && !pkg.startsWith('@iacmp/'))
         .filter((v, i, a) => a.indexOf(v) === i);
 
-      if (missingModules.length > 0) {
-        const installSpinner = ora({ text: `Instalando dependências: ${missingModules.join(', ')}...`, spinner: 'dots', discardStdin: false }).start();
+      // Para projetos Azure, @aws-sdk/* não deve ser instalado — o erro TS
+      // "Cannot find module '@aws-sdk/...'" forçará a IA a usar @azure/data-tables.
+      const modulesToInstall = iacProvider === 'azure'
+        ? missingModules.filter(pkg => !pkg.startsWith('@aws-sdk/'))
+        : missingModules;
+
+      if (modulesToInstall.length > 0) {
+        const installSpinner = ora({ text: `Instalando dependências: ${modulesToInstall.join(', ')}...`, spinner: 'dots', discardStdin: false }).start();
         try {
-          cp.execSync(`npm install ${missingModules.join(' ')}`, { cwd, stdio: 'pipe' });
+          cp.execSync(`npm install ${modulesToInstall.join(' ')}`, { cwd, stdio: 'pipe' });
           // Alguns pacotes (ex: pg) não trazem tipos embutidos. Sem o @types/*
           // correspondente, o `npm run build` (tsc com noImplicitAny) do projeto
           // do usuário quebra com TS7016 — mesmo a validação interna (lenient)
@@ -304,10 +310,10 @@ async function runGeneration(
           for (const t of typesPkgs) {
             try { cp.execSync(`npm install -D ${t}`, { cwd, stdio: 'pipe' }); } catch { /* sem pacote @types — ignora */ }
           }
-          installSpinner.succeed(`Instalado: ${[...missingModules, ...typesPkgs].join(', ')}`);
+          installSpinner.succeed(`Instalado: ${[...modulesToInstall, ...typesPkgs].join(', ')}`);
           result = validateTypeScript(tsFiles, cwd);
         } catch (installErr) {
-          installSpinner.fail(`Falha ao instalar ${missingModules.join(', ')}`);
+          installSpinner.fail(`Falha ao instalar ${modulesToInstall.join(', ')}`);
         }
       }
     }
@@ -315,10 +321,17 @@ async function runGeneration(
     if (!result.valid) {
       const spinner = ora({ text: 'Validação TypeScript falhou — corrigindo...', spinner: 'dots', discardStdin: false }).start();
       const originalFileCount = parsed.files.length;
+      const tsHint = iacProvider === 'azure'
+        ? `\n\nEste projeto usa Azure Container Apps — use APENAS @azure/data-tables para acesso a Cosmos DB:\n` +
+          `  import { TableClient } from '@azure/data-tables';\n` +
+          `  const client = TableClient.fromConnectionString(process.env.COSMOS_CONNECTION!, process.env.TABLE_NAME!);\n` +
+          `NUNCA use @aws-sdk/* (DynamoDBClient, etc.) — não funciona no Azure.`
+        : ``;
       session.addUserMessage(
         `Erros TypeScript:\n${result.errors.join('\n')}\n\n` +
         `Corrija e retorne o JSON completo de novo, com TODOS os ${originalFileCount} arquivo(s) da resposta anterior ` +
-        `(não só o(s) que tinha(m) erro) — os arquivos que já estavam corretos devem vir de volta sem alteração.`
+        `(não só o(s) que tinha(m) erro) — os arquivos que já estavam corretos devem vir de volta sem alteração.` +
+        tsHint
       );
       const retryChunks: string[] = [];
       try {
@@ -369,15 +382,52 @@ async function runGeneration(
         const currentTs = parsed.files.filter(f => f.path.endsWith('.ts'));
         const tsResult = currentTs.length > 0 ? validateTypeScript(currentTs, cwd) : { valid: true, errors: [] };
         if (tsResult.valid) {
-          spinner.succeed('Synth validado');
-          synthOk = true;
-          break;
+          // Azure: handlers que acessam Database.DynamoDB NÃO devem usar @aws-sdk/*.
+          // Detecção programática porque o modelo tende a ignorar o override no prompt
+          // quando o contexto tem muitas instruções AWS.
+          if (iacProvider === 'azure') {
+            const awsSdkFiles = parsed.files.filter(
+              f => (f.path.startsWith('src/') || f.path.endsWith('.ts')) &&
+                   !f.path.startsWith('stacks/') &&
+                   f.content.includes('@aws-sdk/')
+            );
+            if (awsSdkFiles.length > 0) {
+              spinner.fail(`Azure: handlers usando @aws-sdk/* (incompatível) — corrigindo...`);
+              const fileList = awsSdkFiles.map(f => f.path).join(', ');
+              correctionMsg =
+                `ERRO AZURE: os handlers ${fileList} usam @aws-sdk/* que NÃO funciona no Azure Container Apps — causa "Region is missing" em runtime.\n\n` +
+                `Reescreva APENAS esses handlers usando @azure/data-tables. Exemplo completo de CRUD:\n` +
+                `\`\`\`typescript\n` +
+                `import { TableClient } from '@azure/data-tables';\n` +
+                `import { randomUUID } from 'crypto';\n` +
+                `const client = TableClient.fromConnectionString(process.env.COSMOS_CONNECTION!, process.env.TABLE_NAME!);\n` +
+                `// CREATE: await client.createEntity({ partitionKey: 'items', rowKey: randomUUID(), name, description })\n` +
+                `// LIST:   const items=[]; for await (const e of client.listEntities()) items.push({id:e.rowKey, name:e.name})\n` +
+                `// GET:    const e = await client.getEntity('items', id)\n` +
+                `// UPDATE: await client.updateEntity({ partitionKey: 'items', rowKey: id, name, description }, 'Replace')\n` +
+                `// DELETE: await client.deleteEntity('items', id)\n` +
+                `\`\`\`\n\n` +
+                `Env vars que o Fn.Lambda DEVE ter:\n` +
+                `  COSMOS_CONNECTION: ref('ItemsTable', 'ConnectionString')\n` +
+                `  TABLE_NAME: ref('ItemsTable', 'Name')\n\n` +
+                `NUNCA use DynamoDBClient, DynamoDBDocumentClient, ScanCommand, GetCommand, PutCommand, DeleteCommand ou qualquer @aws-sdk/*.\n\n` +
+                `Retorne o JSON completo com TODOS os ${parsed.files.length} arquivo(s) da resposta anterior (corrija os handlers + atualize as env vars dos Fn.Lambda nas stacks).`;
+              // Não usa break/continue — cai no bloco abaixo que envia correctionMsg para a IA
+            }
+          }
+          if (!correctionMsg) {
+            spinner.succeed('Synth validado');
+            synthOk = true;
+            break;
+          }
+          // correctionMsg já setado (azure check) — cai para envio abaixo
+        } else {
+          spinner.fail('Handler com erro de TypeScript — corrigindo automaticamente...');
+          correctionMsg =
+            `O synth passou, mas os handlers têm erros de TypeScript (o build do deploy vai falhar):\n\n${tsResult.errors.join('\n')}\n\n` +
+            `Corrija e retorne o JSON completo com TODOS os ${parsed.files.length} arquivo(s) da resposta anterior. ` +
+            `Lembre: DynamoDBClient vem de '@aws-sdk/client-dynamodb'; GetCommand/PutCommand/QueryCommand/ScanCommand vêm de '@aws-sdk/lib-dynamodb' e exigem DynamoDBDocumentClient.from(new DynamoDBClient({})).`;
         }
-        spinner.fail('Handler com erro de TypeScript — corrigindo automaticamente...');
-        correctionMsg =
-          `O synth passou, mas os handlers têm erros de TypeScript (o build do deploy vai falhar):\n\n${tsResult.errors.join('\n')}\n\n` +
-          `Corrija e retorne o JSON completo com TODOS os ${parsed.files.length} arquivo(s) da resposta anterior. ` +
-          `Lembre: DynamoDBClient vem de '@aws-sdk/client-dynamodb'; GetCommand/PutCommand/QueryCommand/ScanCommand vêm de '@aws-sdk/lib-dynamodb' e exigem DynamoDBDocumentClient.from(new DynamoDBClient({})).`;
       }
       if (attempt === MAX_SYNTH_RETRIES || !correctionMsg) break;
       session.addUserMessage(correctionMsg);
@@ -488,7 +538,7 @@ export default class AI extends Command {
     } else {
       ragSpinner.stop();
     }
-    const provider = createContextualProvider(aiProvider, projectContext);
+    const provider = createContextualProvider(aiProvider, projectContext, iacProvider);
     session.addUserMessage(args.prompt);
     try {
       await runGeneration(provider, session, cwd, dryRun, iacProvider, ask, args.prompt);

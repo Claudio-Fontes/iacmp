@@ -174,7 +174,7 @@ export const CONSTRUCT_TYPES: Record<ConstructType, ConstructTypeInfo> = {
         gcp: 'Bigtable',
       },
     },
-    attributes: ['Arn', 'Name'],
+    attributes: ['Arn', 'Name', 'ConnectionString'],
   },
   'Database.SQL': {
     layer: 'database',

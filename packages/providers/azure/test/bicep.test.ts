@@ -226,4 +226,43 @@ describe('AzureProvider (Bicep)', () => {
     expect(out).toContain("'Microsoft.Web/staticSites@2023-01-01'");
     expect(out).toContain('repositoryUrl');
   });
+
+  test('Database.DynamoDB → conta Cosmos + tabela filha + output ConnectionString', () => {
+    const stack = new Stack('test');
+    new Database.DynamoDB(stack, 'ItemsTable', { partitionKey: 'id' });
+    const out = synth(stack);
+    // Conta Cosmos DB (Table API)
+    expect(out).toContain("'Microsoft.DocumentDB/databaseAccounts@2023-04-15'");
+    expect(out).toContain('EnableTable');
+    // Tabela filha — sem ela o SDK falha com TableNotFound
+    expect(out).toContain("'Microsoft.DocumentDB/databaseAccounts/tables@2023-04-15'");
+    // Output ConnectionString com listKeys()
+    expect(out).toContain('ConnectionString');
+    expect(out).toContain('listKeys().primaryMasterKey');
+    expect(out).toContain('table.cosmos.azure.com');
+    // Output Name e Arn
+    expect(out).toContain('ItemsTableName');
+    expect(out).toContain('ItemsTableArn');
+  });
+
+  test('Database.DynamoDB → ref ConnectionString same-stack resolve para expressão listKeys()', () => {
+    const stack = new Stack('test');
+    const { ref: coreRef } = require('@iacmp/core');
+    new Database.DynamoDB(stack, 'ItemsTable', { partitionKey: 'id' });
+    new Fn.Lambda(stack, 'ApiFn', {
+      runtime: 'nodejs20',
+      handler: 'index.handler',
+      code: 'dist/',
+      environment: {
+        COSMOS_CONNECTION: coreRef('ItemsTable', 'ConnectionString'),
+        TABLE_NAME: coreRef('ItemsTable', 'Name'),
+      },
+    });
+    const out = synth(stack);
+    // A env var COSMOS_CONNECTION deve conter a expressão listKeys() inline
+    expect(out).toContain('COSMOS_CONNECTION');
+    expect(out).toContain('listKeys().primaryMasterKey');
+    // TABLE_NAME deve conter referência ao .name da conta
+    expect(out).toContain('TABLE_NAME');
+  });
 });

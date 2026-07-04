@@ -27,7 +27,7 @@ export interface ConstructAttributeMap {
   'Secret.Vault':          'SecretArn' | 'Arn';
   'Database.SQL':          'Endpoint' | 'Port' | 'SecretArn' | 'Password' | 'Username';
   'Database.DocumentDB':   'Endpoint' | 'Port' | 'SecretArn' | 'Password';
-  'Database.DynamoDB':     'Arn' | 'Name';
+  'Database.DynamoDB':     'Arn' | 'Name' | 'ConnectionString';
   'Cache.Redis':           'Endpoint' | 'Port';
   'Messaging.Queue':       'Arn' | 'QueueUrl' | 'QueueArn';
   'Messaging.Topic':       'Arn' | 'TopicArn';

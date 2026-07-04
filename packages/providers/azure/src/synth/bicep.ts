@@ -49,7 +49,7 @@ const AZURE_ATTR_MAP: Record<string, Record<string, string>> = {
   'Function.Lambda':       { Arn: 'id' },
   'Database.SQL':          { Endpoint: 'properties.fullyQualifiedDomainName', SecretArn: 'id', Password: 'id', Username: 'id' },
   'Database.DocumentDB':   { Endpoint: 'properties.documentEndpoint', SecretArn: 'id' },
-  'Database.DynamoDB':     { Arn: 'id', Name: 'name' },
+  'Database.DynamoDB':     { Arn: 'id', Name: 'name', ConnectionString: '__connection_string__' },
   'Messaging.Topic':       { Arn: 'id', TopicArn: 'id' },
   'Messaging.Queue':       { Arn: 'id', QueueUrl: 'id', QueueArn: 'id' },
   'Cache.Redis':           { Endpoint: 'properties.hostName', Port: 'properties.sslPort' },
@@ -70,6 +70,14 @@ function resolveRef(r: Ref, idx: Map<string, BaseConstruct>, crossParams: Map<st
     return expr(pName);
   }
   const sym = toSym(r.constructId);
+  // ConnectionString do Cosmos DB (Table API) é computada com listKeys() — não é property simples.
+  if (c.type === 'Database.DynamoDB' && r.attribute === 'ConnectionString') {
+    return expr(`'DefaultEndpointsProtocol=https;AccountName=\${${sym}.name};AccountKey=\${${sym}.listKeys().primaryMasterKey};TableEndpoint=https://\${${sym}.name}.table.cosmos.azure.com:443/;'`);
+  }
+  // Name do Cosmos = nome da TABELA (child resource, = construct.id), não o da conta.
+  if (c.type === 'Database.DynamoDB' && r.attribute === 'Name') {
+    return r.constructId;
+  }
   const attr = AZURE_ATTR_MAP[c.type]?.[r.attribute] ?? 'id';
   return expr(`${sym}.${attr}`);
 }
@@ -708,9 +716,31 @@ function synthesizeConstruct(
           backupPolicy: { type: 'Periodic', periodicModeProperties: { backupIntervalInMinutes: 1440, backupRetentionIntervalInHours: 168 } },
         },
       });
+      // Tabela dentro da conta — sem ela o SDK falha com TableNotFound.
+      const tableSym = `${sym}Table`;
+      resources.push({
+        sym: tableSym,
+        type: 'Microsoft.DocumentDB/databaseAccounts/tables',
+        apiVersion: '2023-04-15',
+        parent: sym,
+        name: construct.id,
+        properties: {
+          resource: { id: construct.id },
+          options: {},
+        },
+      });
       outputs.push({ name: `${construct.id}Endpoint`, type: 'string', value: `${sym}.properties.documentEndpoint` });
-      outputs.push({ name: crossParamName(construct.id, 'Name'), type: 'string', value: `${sym}.name` });
+      // Name = nome da TABELA (o que o SDK @azure/data-tables endereça), NÃO o da
+      // conta — a conta (com uniqueString) é detalhe interno, já embutido na
+      // ConnectionString. TABLE_NAME com o nome da conta dava ResourceNotFound.
+      outputs.push({ name: crossParamName(construct.id, 'Name'), type: 'string', value: `'${construct.id}'` });
       outputs.push({ name: crossParamName(construct.id, 'Arn'), type: 'string', value: `${sym}.id` });
+      // ConnectionString computada com listKeys() — usada pelos handlers via @azure/data-tables.
+      outputs.push({
+        name: crossParamName(construct.id, 'ConnectionString'),
+        type: 'string',
+        value: `'DefaultEndpointsProtocol=https;AccountName=\${${sym}.name};AccountKey=\${${sym}.listKeys().primaryMasterKey};TableEndpoint=https://\${${sym}.name}.table.cosmos.azure.com:443/;'`,
+      });
       break;
     }
 

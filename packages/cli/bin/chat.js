@@ -140,7 +140,7 @@ function resolveProvider() {
 }
 
 function createContextualProvider(base, projectContext, responseLang) {
-  const systemPrompt = buildSystemPrompt(projectContext, responseLang);
+  const systemPrompt = buildSystemPrompt(projectContext, responseLang, iacProvider);
   return {
     name: base.name,
     chat: (msgs) => base.chat([{ role: 'system', content: systemPrompt }, ...msgs]),
