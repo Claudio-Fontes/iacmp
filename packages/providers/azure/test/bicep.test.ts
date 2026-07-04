@@ -349,7 +349,7 @@ describe('Database.SQL — cadeia da senha e refs de conexão (ciclo p01az6)', (
     const bicep = emitBicep(stack);
     expect(bicep).toContain('@secure()');
     expect(bicep).toMatch(/param adminPassword string\n/); // SEM default
-    expect(bicep).toContain("value: 'pgadmin'");
+    expect(bicep).toContain("AppDBUsername string = 'dbadmin'");
     expect(bicep).toContain("value: '5432'");
     expect(bicep).toContain('value: adminPassword');
     expect(bicep).not.toMatch(/DB_PASSWORD'[\s\S]{0,40}\.id/);
@@ -389,5 +389,25 @@ describe('accountTier free → SKUs mais baratas (paridade de custo com AWS free
     expect(free).toContain('enableFreeTier: true');
     const std = emitBicep(stack, { accountTier: 'standard' });
     expect(std).toContain('enableFreeTier: false');
+  });
+});
+
+describe('Database.SQL Azure — firewall + admin dbadmin (ciclo p01az8: ETIMEDOUT + auth)', () => {
+  test('postgres → firewallRule AllowAzure (0.0.0.0/0.0.0.0) e admin dbadmin', () => {
+    const stack = new Stack('db');
+    new Database.SQL(stack, 'AppDB', { engine: 'postgres' });
+    const bicep = emitBicep(stack);
+    expect(bicep).toContain('Microsoft.DBforPostgreSQL/flexibleServers/firewallRules');
+    expect(bicep).toContain("startIpAddress: '0.0.0.0'");
+    expect(bicep).toContain("administratorLogin: 'dbadmin'");
+    expect(bicep).toContain("AppDBUsername string = 'dbadmin'");
+    expect(bicep).not.toContain("'pgadmin'");
+  });
+  test('ref Username → dbadmin (bate com o admin do servidor)', () => {
+    const stack = new Stack('app');
+    new Database.SQL(stack, 'AppDB', { engine: 'postgres' });
+    new Fn.Lambda(stack, 'Fn', { runtime: 'nodejs20', handler: 'dist/h.handler', code: '.', environment: { DB_USER: ref('AppDB', 'Username') } });
+    const bicep = emitBicep(stack);
+    expect(bicep).toMatch(/DB_USER'[\s\S]{0,40}'dbadmin'/);
   });
 });

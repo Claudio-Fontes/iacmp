@@ -89,7 +89,7 @@ function resolveRef(r: Ref, idx: Map<string, BaseConstruct>, crossParams: Map<st
       return expr('adminPassword');
     }
     if (r.attribute === 'Username') {
-      return ({ postgres: 'pgadmin', mysql: 'mysqladmin', sqlserver: 'sqladmin', mariadb: 'mariadbadmin' } as Record<string, string>)[engine] ?? 'pgadmin';
+      return ({ postgres: 'dbadmin', mysql: 'dbadmin', sqlserver: 'sqladmin', mariadb: 'mariadbadmin' } as Record<string, string>)[engine] ?? 'dbadmin';
     }
     if (r.attribute === 'Port') {
       return ({ postgres: '5432', mysql: '3306', sqlserver: '1433', mariadb: '3306' } as Record<string, string>)[engine] ?? '5432';
@@ -801,18 +801,27 @@ function synthesizeConstruct(
       const dbSku = flexibleServerSku(accountTier);
       needsAdminPassword.value = true;
 
+      // Admin login = 'dbadmin' (mesma convenção do RDS na AWS) — os handlers
+      // gerados escrevem DB_USER: 'dbadmin' por hábito; alinhar mata o mismatch
+      // (antes era pgadmin/mysqladmin e a conexão falhava com auth error).
+      // Regra de firewall "Allow Azure services" (0.0.0.0/0.0.0.0): sem ela o
+      // flexible server com publicNetworkAccess bloqueia até os Container Apps
+      // (mesma sub, mas IP de egress público) → ETIMEDOUT na 5432/3306.
+      const fwRule = { sym: `${sym}Fw`, type: `${'x'}`, apiVersion: '', parent: sym, name: 'AllowAzure', properties: { startIpAddress: '0.0.0.0', endIpAddress: '0.0.0.0' } };
       if (engine === 'mysql') {
-        resources.push({ sym, type: 'Microsoft.DBforMySQL/flexibleServers', apiVersion: '2023-06-30', name: serverName, location: 'location', tags: tag(construct.id), sku: dbSku, properties: { administratorLogin: 'mysqladmin', administratorLoginPassword: expr('adminPassword'), version: '8.0.21', storage: { storageSizeGB: props.storageGb ?? 20, autoGrow: 'Enabled' }, backup: { backupRetentionDays: Math.max(Number(props.backupRetentionDays ?? 7), 7), geoRedundantBackup: 'Disabled' }, highAvailability: { mode: zoneRedundant ? 'ZoneRedundant' : 'Disabled' } } });
+        resources.push({ sym, type: 'Microsoft.DBforMySQL/flexibleServers', apiVersion: '2023-06-30', name: serverName, location: 'location', tags: tag(construct.id), sku: dbSku, properties: { administratorLogin: 'dbadmin', administratorLoginPassword: expr('adminPassword'), version: '8.0.21', storage: { storageSizeGB: props.storageGb ?? 20, autoGrow: 'Enabled' }, backup: { backupRetentionDays: Math.max(Number(props.backupRetentionDays ?? 7), 7), geoRedundantBackup: 'Disabled' }, highAvailability: { mode: zoneRedundant ? 'ZoneRedundant' : 'Disabled' } } });
+        resources.push({ ...fwRule, type: 'Microsoft.DBforMySQL/flexibleServers/firewallRules', apiVersion: '2023-06-30' });
         outputs.push({ name: `${construct.id}Endpoint`, type: 'string', value: `${sym}.properties.fullyQualifiedDomainName` });
         outputs.push({ name: `${construct.id}Port`, type: 'string', value: `'3306'` });
-        outputs.push({ name: `${construct.id}Username`, type: 'string', value: `'mysqladmin'` });
+        outputs.push({ name: `${construct.id}Username`, type: 'string', value: `'dbadmin'` });
         break;
       }
       if (engine === 'postgres') {
-        resources.push({ sym, type: 'Microsoft.DBforPostgreSQL/flexibleServers', apiVersion: '2023-06-01-preview', name: serverName, location: 'location', tags: tag(construct.id), sku: dbSku, properties: { administratorLogin: 'pgadmin', administratorLoginPassword: expr('adminPassword'), version: '15', storage: { storageSizeGB: props.storageGb ?? 32 }, backup: { backupRetentionDays: Math.max(Number(props.backupRetentionDays ?? 7), 7), geoRedundantBackup: 'Disabled' }, highAvailability: { mode: zoneRedundant ? 'ZoneRedundant' : 'Disabled' } } });
+        resources.push({ sym, type: 'Microsoft.DBforPostgreSQL/flexibleServers', apiVersion: '2023-06-01-preview', name: serverName, location: 'location', tags: tag(construct.id), sku: dbSku, properties: { administratorLogin: 'dbadmin', administratorLoginPassword: expr('adminPassword'), version: '15', storage: { storageSizeGB: props.storageGb ?? 32 }, backup: { backupRetentionDays: Math.max(Number(props.backupRetentionDays ?? 7), 7), geoRedundantBackup: 'Disabled' }, highAvailability: { mode: zoneRedundant ? 'ZoneRedundant' : 'Disabled' } } });
+        resources.push({ ...fwRule, type: 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules', apiVersion: '2023-06-01-preview' });
         outputs.push({ name: `${construct.id}Endpoint`, type: 'string', value: `${sym}.properties.fullyQualifiedDomainName` });
         outputs.push({ name: `${construct.id}Port`, type: 'string', value: `'5432'` });
-        outputs.push({ name: `${construct.id}Username`, type: 'string', value: `'pgadmin'` });
+        outputs.push({ name: `${construct.id}Username`, type: 'string', value: `'dbadmin'` });
         break;
       }
       if (engine === 'mariadb') {
