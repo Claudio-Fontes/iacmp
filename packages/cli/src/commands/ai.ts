@@ -46,6 +46,42 @@ function hasBundledTypes(cwd: string, mod: string): boolean {
   return fs.existsSync(path.join(modDir, 'index.d.ts'));
 }
 
+
+// Instala módulos "Cannot find module" dos erros TS (com os filtros de SDK do
+// Azure) e retorna true se instalou algo. Usado ANTES do loop e DENTRO do loop
+// de synth — sem isso, um SDK trocado no meio das correções (ex: data-tables→pg)
+// nunca instala e o loop queima todas as rodadas em TS2307 (ciclo p01az7).
+function tryInstallMissingModules(errors: string[], cwd: string, iacProvider: string, files: Array<{ path: string; content: string }>): boolean {
+  const missingModules = errors
+    .map(e => e.match(/Cannot find module '([^']+)'/))
+    .filter(Boolean)
+    .map(m => m![1])
+    .filter(pkg => !pkg.startsWith('.') && !pkg.startsWith('@iacmp/'))
+    .filter((v, i, a) => a.indexOf(v) === i);
+  const stacksBlob = files.filter(f => f.path.startsWith('stacks/')).map(f => f.content).join('\n');
+  const sqlOnlyAzure = iacProvider === 'azure' && stacksBlob.includes('Database.SQL') && !stacksBlob.includes('Database.DynamoDB');
+  const modulesToInstall = iacProvider === 'azure'
+    ? missingModules.filter(pkg => !pkg.startsWith('@aws-sdk/') && !(sqlOnlyAzure && pkg === '@azure/data-tables'))
+    : missingModules;
+  if (modulesToInstall.length === 0) return false;
+  const installSpinner = ora({ text: `Instalando dependências: ${modulesToInstall.join(', ')}...`, spinner: 'dots', discardStdin: false }).start();
+  try {
+    cp.execSync(`npm install ${modulesToInstall.join(' ')}`, { cwd, stdio: 'pipe' });
+    const typesPkgs = modulesToInstall
+      .filter(m => !m.startsWith('@'))
+      .filter(m => !hasBundledTypes(cwd, m))
+      .map(m => `@types/${m}`);
+    for (const t of typesPkgs) {
+      try { cp.execSync(`npm install -D ${t}`, { cwd, stdio: 'pipe' }); } catch { /* sem @types — ignora */ }
+    }
+    installSpinner.succeed(`Instalado: ${[...modulesToInstall, ...typesPkgs].join(', ')}`);
+    return true;
+  } catch {
+    installSpinner.fail(`Falha ao instalar ${modulesToInstall.join(', ')}`);
+    return false;
+  }
+}
+
 function stripProtectedFiles(parsed: AIGeneratedResponse): void {
   const dropped = parsed.files.filter(f => PROTECTED_FILES.has(f.path.split('/').pop() ?? ''));
   if (dropped.length > 0) {
@@ -281,45 +317,8 @@ async function runGeneration(
     // Detecta "Cannot find module 'X'" e instala os pacotes faltantes antes de
     // mandar pra IA — evita que a IA troque por outra lib que também não existe.
     if (!result.valid) {
-      const missingModules = result.errors
-        .map(e => e.match(/Cannot find module '([^']+)'/))
-        .filter(Boolean)
-        .map(m => m![1])
-        .filter(pkg => !pkg.startsWith('.') && !pkg.startsWith('@iacmp/'))
-        .filter((v, i, a) => a.indexOf(v) === i);
-
-      // Para projetos Azure, o SDK ERRADO não deve ser instalado — o erro TS
-      // "Cannot find module" força a IA a trocar pro SDK certo via tsHint:
-      // @aws-sdk/* nunca; @azure/data-tables só se o projeto tem Database.DynamoDB
-      // (num projeto Database.SQL o driver é pg — instalar data-tables mascararia
-      // o handler errado até o runtime).
-      const stacksForSdk = parsed.files.filter(f => f.path.startsWith('stacks/')).map(f => f.content).join('\n');
-      const sqlOnlyAzure = iacProvider === 'azure' && stacksForSdk.includes('Database.SQL') && !stacksForSdk.includes('Database.DynamoDB');
-      const modulesToInstall = iacProvider === 'azure'
-        ? missingModules.filter(pkg => !pkg.startsWith('@aws-sdk/') && !(sqlOnlyAzure && pkg === '@azure/data-tables'))
-        : missingModules;
-
-      if (modulesToInstall.length > 0) {
-        const installSpinner = ora({ text: `Instalando dependências: ${modulesToInstall.join(', ')}...`, spinner: 'dots', discardStdin: false }).start();
-        try {
-          cp.execSync(`npm install ${modulesToInstall.join(' ')}`, { cwd, stdio: 'pipe' });
-          // Alguns pacotes (ex: pg) não trazem tipos embutidos. Sem o @types/*
-          // correspondente, o `npm run build` (tsc com noImplicitAny) do projeto
-          // do usuário quebra com TS7016 — mesmo a validação interna (lenient)
-          // passando. Instala o @types de cada módulo sem tipos próprios,
-          // best-effort (pacote @types inexistente é ignorado).
-          const typesPkgs = missingModules
-            .filter(m => !m.startsWith('@')) // scoped (@aws-sdk/*) trazem tipos próprios
-            .filter(m => !hasBundledTypes(cwd, m))
-            .map(m => `@types/${m}`);
-          for (const t of typesPkgs) {
-            try { cp.execSync(`npm install -D ${t}`, { cwd, stdio: 'pipe' }); } catch { /* sem pacote @types — ignora */ }
-          }
-          installSpinner.succeed(`Instalado: ${[...modulesToInstall, ...typesPkgs].join(', ')}`);
-          result = validateTypeScript(tsFiles, cwd);
-        } catch (installErr) {
-          installSpinner.fail(`Falha ao instalar ${modulesToInstall.join(', ')}`);
-        }
+      if (tryInstallMissingModules(result.errors, cwd, iacProvider, parsed.files)) {
+        result = validateTypeScript(tsFiles, cwd);
       }
     }
 
@@ -401,7 +400,10 @@ async function runGeneration(
         // revalidar TypeScript — um import quebrado (ex: DynamoDBClient vindo de
         // @aws-sdk/lib-dynamodb) só apareceria no build do deploy. Revalida aqui.
         const currentTs = parsed.files.filter(f => f.path.endsWith('.ts'));
-        const tsResult = currentTs.length > 0 ? validateTypeScript(currentTs, cwd) : { valid: true, errors: [] };
+        let tsResult = currentTs.length > 0 ? validateTypeScript(currentTs, cwd) : { valid: true, errors: [] };
+        if (!tsResult.valid && tryInstallMissingModules(tsResult.errors, cwd, iacProvider, parsed.files)) {
+          tsResult = validateTypeScript(currentTs, cwd);
+        }
         if (tsResult.valid) {
           // Azure: handlers que acessam Database.DynamoDB NÃO devem usar @aws-sdk/*.
           // Detecção programática porque o modelo tende a ignorar o override no prompt

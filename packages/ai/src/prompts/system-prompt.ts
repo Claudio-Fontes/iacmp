@@ -1116,6 +1116,8 @@ O projeto usa provider=azure. O backend de Database.DynamoDB no Azure é o **Cos
 - Cenário pede PostgreSQL/MySQL → \`Database.SQL\` (vira Azure Database flexible server). O handler usa o driver \`pg\`/\`mysql2\` NORMAL (o protocolo é o mesmo do RDS) com \`ref('AppDB','Endpoint'/'Port'/'Password'/'Username')\` — NUNCA \`@azure/data-tables\` para SQL.
 - **Atributos válidos de \`ref()\` por tipo (NÃO invente outros):** \`Database.SQL\` → \`Endpoint, Port, SecretArn, Password, Username\` (NÃO existe \`ConnectionString\`); \`Database.DynamoDB\` → \`Arn, Name, ConnectionString\` (Name = nome da TABELA).
 - Frontend estático no Azure = \`Storage.Bucket\` (privado) + \`Network.CDN\` com \`bucketRef\`, MESMA stack — igual à AWS. CDN NUNCA é um \`Storage.Bucket\`; cada construct id aparece UMA vez por stack.
+- **Policy.IAM para \`Database.SQL\`: NÃO gere.** O acesso ao Postgres/MySQL é por usuário/senha via env vars — não existe IAM de data-plane. Policies com \`ref('AppDB','Arn')\` (atributo inexistente) ou actions de dynamodb/secretsmanager para um banco SQL são ERRO. Só gere Policy.IAM quando o handler usa um serviço com IAM real (fila, storage, tabela NoSQL).
+- Getter do bucket é \`bucket.name\` — \`bucket.bucketName\` NÃO existe.
 
 ### EXEMPLO OBRIGATÓRIO — cenário SQL/PostgreSQL no Azure (COPIE este padrão)
 \`\`\`typescript
