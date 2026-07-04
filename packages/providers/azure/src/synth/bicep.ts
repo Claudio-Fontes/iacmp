@@ -212,6 +212,7 @@ function synthesizeConstruct(
   crossParams: Map<string, string>,
   functionImageParams: Set<string>,
   sharedContainerEnvSym: string | null,
+  cdnBucketRefs: Set<string>,
 ): void {
   const props = construct.props as Record<string, unknown>;
   const sym = toSym(construct.id);
@@ -623,19 +624,113 @@ function synthesizeConstruct(
     }
 
     case 'Network.CDN': {
-      const origins = (props.origins as Array<Record<string, unknown>>) ?? [];
+      // Azure CDN Classic (Standard_Microsoft) não aceita mais novos perfis —
+      // "Azure CDN from Microsoft (classic) no longer support new profile creation".
+      // Migrado para Azure Front Door Standard (Microsoft.Cdn/profiles com sku
+      // Standard_AzureFrontDoor), que usa os mesmos tipos de recurso mas APIs distintas.
       const profileSym = `${sym}Profile`;
-      const endpointSym = `${sym}Endpoint`;
-      resources.push({ sym: profileSym, type: 'Microsoft.Cdn/profiles', apiVersion: '2023-05-01', name: `${construct.id}-profile`, location: 'location', sku: { name: 'Standard_Microsoft' }, tags: tag(construct.id), properties: {} });
+      const endpointSym = `${sym}Ep`;
+      const ogSym = `${sym}Og`;
+      const originSym = `${sym}Origin`;
+      const routeSym = `${sym}Route`;
+
+      // AFD Standard Profile (recurso global)
       resources.push({
-        sym: endpointSym, type: 'Microsoft.Cdn/profiles/endpoints', apiVersion: '2023-05-01', parent: profileSym, name: construct.id, location: 'location', tags: tag(construct.id),
+        sym: profileSym,
+        type: 'Microsoft.Cdn/profiles',
+        apiVersion: '2023-05-01',
+        name: `${construct.id}-profile`,
+        // 'global' como string literal (EXPR strip produz texto raw no Bicep)
+        location: "'global'",
+        sku: { name: 'Standard_AzureFrontDoor' },
+        tags: tag(construct.id),
+        properties: {},
+      });
+
+      // AFD Endpoint
+      resources.push({
+        sym: endpointSym,
+        type: 'Microsoft.Cdn/profiles/afdEndpoints',
+        apiVersion: '2023-05-01',
+        parent: profileSym,
+        name: construct.id,
+        location: "'global'",
+        tags: tag(construct.id),
+        properties: { enabledState: 'Enabled' },
+      });
+
+      // Origin Group com health probe e load balancing mínimos
+      resources.push({
+        sym: ogSym,
+        type: 'Microsoft.Cdn/profiles/originGroups',
+        apiVersion: '2023-05-01',
+        parent: profileSym,
+        name: `${construct.id}-og`,
         properties: {
-          originHostHeader: origins[0]?.domainName ?? '',
-          isHttpAllowed: false, isHttpsAllowed: true,
-          origins: origins.map(o => ({ name: (o.id as string) ?? 'origin1', properties: { hostName: o.domainName as string, httpPort: 80, httpsPort: 443 } })),
-          deliveryPolicy: { rules: [{ name: 'enforceHttps', order: 1, conditions: [{ name: 'RequestScheme', parameters: { operator: 'Equal', matchValues: ['HTTP'] } }], actions: [{ name: 'UrlRedirect', parameters: { redirectType: 'Moved', destinationProtocol: 'Https' } }] }] },
+          loadBalancingSettings: { sampleSize: 4, successfulSamplesRequired: 3, additionalLatencyInMilliseconds: 50 },
+          healthProbeSettings: { probePath: '/', probeRequestType: 'HEAD', probeProtocol: 'Https', probeIntervalInSeconds: 100 },
         },
       });
+
+      // Origin: quando o primeiro origin tem bucketRef, usa o blob endpoint da storage.
+      // O conteúdo deve estar em blob/web (sem static-website, que é data-plane).
+      // A storage referenciada é patcheada em emitBicep para allowBlobPublicAccess: true
+      // + container 'web' público — faça upload de web/index.html para testar.
+      const origins = (props.origins as Array<Record<string, unknown>>) ?? [];
+      const bucketRefId = origins[0]?.bucketRef as string | undefined;
+      let hostNameExpr: unknown;
+      let originPath: string | undefined;
+
+      if (bucketRefId) {
+        const bucketSym = toSym(bucketRefId);
+        // Strip 'https://' e '/' do endpoint blob — ex: "myacct.blob.core.windows.net"
+        hostNameExpr = expr(`replace(replace(${bucketSym}.properties.primaryEndpoints.blob,'https://',''),'/','')`);
+        originPath = '/web';
+        cdnBucketRefs.add(bucketRefId);
+      } else {
+        hostNameExpr = origins[0]?.domainName ?? '';
+      }
+
+      resources.push({
+        sym: originSym,
+        type: 'Microsoft.Cdn/profiles/originGroups/origins',
+        apiVersion: '2023-05-01',
+        parent: ogSym,
+        name: `${construct.id}-origin`,
+        properties: {
+          hostName: hostNameExpr,
+          originHostHeader: hostNameExpr,
+          httpPort: 80,
+          httpsPort: 443,
+          priority: 1,
+          weight: 1000,
+          enabledState: 'Enabled',
+        },
+      });
+
+      // Route: liga endpoint → origin group
+      const routeProps: Record<string, unknown> = {
+        originGroup: { id: expr(`${ogSym}.id`) },
+        supportedProtocols: ['Http', 'Https'],
+        patternsToMatch: ['/*'],
+        forwardingProtocol: 'HttpsOnly',
+        linkToDefaultDomain: 'Enabled',
+        httpsRedirect: 'Enabled',
+        enabledState: 'Enabled',
+      };
+      if (originPath) routeProps.originPath = originPath;
+
+      resources.push({
+        sym: routeSym,
+        type: 'Microsoft.Cdn/profiles/afdEndpoints/routes',
+        apiVersion: '2023-05-01',
+        parent: endpointSym,
+        name: `${construct.id}-route`,
+        properties: routeProps,
+      });
+
+      // Output: hostname público do endpoint AFD
+      outputs.push({ name: `${construct.id}Url`, type: 'string', value: `${endpointSym}.properties.hostName` });
       break;
     }
 
@@ -1001,6 +1096,9 @@ export function emitBicep(stack: Stack): string {
   const crossParams = new Map<string, string>();
   // functionImageParams: param Bicep por Function.Lambda (imagem buildada no ACR)
   const functionImageParams = new Set<string>();
+  // cdnBucketRefs: Storage.Buckets referenciados por Network.CDN via bucketRef —
+  // precisam de allowBlobPublicAccess: true + container 'web' para servir conteúdo.
+  const cdnBucketRefs = new Set<string>();
 
   // ManagedEnvironment compartilhado — free tier Azure limita a 1 env por região.
   // Criado uma única vez se o stack tiver alguma Function.Lambda.
@@ -1020,7 +1118,36 @@ export function emitBicep(stack: Stack): string {
   }
 
   for (const construct of stack.constructs) {
-    synthesizeConstruct(construct, idx, resources, outputs, needsAdminPassword, crossParams, functionImageParams, sharedContainerEnvSym);
+    synthesizeConstruct(construct, idx, resources, outputs, needsAdminPassword, crossParams, functionImageParams, sharedContainerEnvSym, cdnBucketRefs);
+  }
+
+  // Post-processing: Storage.Buckets referenciados por CDN via bucketRef ganham
+  // allowBlobPublicAccess: true + blobServices + container 'web' com publicAccess Blob.
+  for (const bucketId of cdnBucketRefs) {
+    const bucketSym = toSym(bucketId);
+    const bucketResource = resources.find(r => r.sym === bucketSym);
+    if (bucketResource) {
+      bucketResource.properties.allowBlobPublicAccess = true;
+    }
+    const blobSvcSym = `${bucketSym}BlobService`;
+    if (!resources.find(r => r.sym === blobSvcSym)) {
+      resources.push({
+        sym: blobSvcSym,
+        type: 'Microsoft.Storage/storageAccounts/blobServices',
+        apiVersion: '2023-01-01',
+        parent: bucketSym,
+        name: 'default',
+        properties: {},
+      });
+    }
+    resources.push({
+      sym: `${bucketSym}WebContainer`,
+      type: 'Microsoft.Storage/storageAccounts/blobServices/containers',
+      apiVersion: '2023-01-01',
+      parent: blobSvcSym,
+      name: 'web',
+      properties: { publicAccess: 'Blob' },
+    });
   }
 
   // Choke point global: NENHUM Ref tipado pode chegar cru ao render (viraria

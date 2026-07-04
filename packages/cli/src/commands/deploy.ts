@@ -102,6 +102,9 @@ export default class Deploy extends Command {
         if (dryRun) {
           this.log(`Resource group "${config.resourceGroup}" ainda não existe — seria criado:`);
           this.log(chalk.dim('  $ ') + formatCommand(createCmd));
+        } else if (!process.stdin.isTTY) {
+          // Não-TTY (CI, pipe): cria o RG automaticamente sem perguntar
+          execFileSync(createCmd.bin, createCmd.args, { stdio: 'inherit' });
         } else {
           const proceed = await confirm(`Resource group "${config.resourceGroup}" não existe. Criar agora em ${region}?`);
           if (!proceed) {

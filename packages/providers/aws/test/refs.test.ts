@@ -188,3 +188,37 @@ test('eventSources.queueId via getter (queue.arn) → EventSourceMapping SQS cor
   expect(esm.StartingPosition).toBeUndefined(); // SQS NUNCA leva StartingPosition
   expect(esm.BisectBatchOnFunctionError).toBeUndefined();
 });
+
+// ── Fix 1: guard de atributo não-ARN em Policy.IAM resources ─────────────────
+
+test('Policy.IAM: ref com atributo não-ARN (Endpoint) em resources lança erro no synth', () => {
+  const s = new Stack('app-stack', { region: 'us-east-1' });
+  new Database.SQL(s, 'AppDB', { engine: 'postgres' });
+  new Fn.Lambda(s, 'ApiFn', { runtime: 'nodejs20', handler: 'index.handler', code: 'dist/' });
+  new Policy.IAM(s, 'DbPolicy', {
+    attachTo: 'ApiFn',
+    attachType: 'lambda',
+    statements: [{
+      effect: 'Allow',
+      actions: ['rds:DescribeDBInstances'],
+      resources: [ref('AppDB', 'Endpoint')],
+    }],
+  });
+  expect(() => provider.synthesize(s, [s])).toThrow(/Policy\.IAM.*AppDB.*Endpoint.*não é um ARN/);
+});
+
+test('Policy.IAM: "AppDB.Endpoint" (string) em resources lança erro no synth', () => {
+  const s = new Stack('app-stack', { region: 'us-east-1' });
+  new Database.SQL(s, 'AppDB', { engine: 'postgres' });
+  new Fn.Lambda(s, 'ApiFn', { runtime: 'nodejs20', handler: 'index.handler', code: 'dist/' });
+  new Policy.IAM(s, 'DbPolicy', {
+    attachTo: 'ApiFn',
+    attachType: 'lambda',
+    statements: [{
+      effect: 'Allow',
+      actions: ['rds:DescribeDBInstances'],
+      resources: ['AppDB.Endpoint'],
+    }],
+  });
+  expect(() => provider.synthesize(s, [s])).toThrow(/Policy\.IAM.*AppDB.*Endpoint.*não é um ARN/);
+});

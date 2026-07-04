@@ -460,7 +460,7 @@ export function synthFunction(
               Statement: statements.map(s => ({
                 Effect: s.effect as string,
                 Action: s.actions as string[],
-                Resource: ((s.resources as Array<string | Ref>) ?? ['*']).map(r => isRef(r) ? resolveRef(r, ctx) : resolvePolicyResource(r as string, ctx)),
+                Resource: ((s.resources as Array<string | Ref>) ?? ['*']).map(r => resolvePolicyResource(r, ctx)),
                 ...(s.conditions ? { Condition: s.conditions } : {}),
               })),
             },

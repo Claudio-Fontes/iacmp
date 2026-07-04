@@ -370,8 +370,25 @@ export function resolveQueueArn(value: string | Ref, ctx: SynthContext): unknown
   return resolveRef(parsed, ctx);
 }
 
+// Atributos que produzem ARNs válidos para uso em Policy.IAM resources.
+// Qualquer outro atributo (Endpoint, Port, DnsName, VpcId…) é rejeitado em synth
+// pois IAM exige ARN ou '*' — um hostname DNS em Resource causa 400 no deploy.
+const ARN_ATTRS = new Set(['Arn', 'SecretArn', 'QueueArn', 'TopicArn', 'TargetGroupArn']);
+
+function assertPolicyResourceIsArn(r: Ref): void {
+  if (!ARN_ATTRS.has(r.attribute)) {
+    throw new Error(
+      `Policy.IAM: ref('${r.constructId}','${r.attribute}') em resources não é um ARN (IAM exige ARN ou '*'). ` +
+      `Use ref('${r.constructId}','SecretArn') para o secret do banco, o id do construct para o ARN do recurso, ou '*'.`,
+    );
+  }
+}
+
 export function resolvePolicyResource(value: unknown, ctx: SynthContext): unknown {
-  if (isRef(value)) return resolveRef(value, ctx);
+  if (isRef(value)) {
+    assertPolicyResourceIsArn(value as Ref);
+    return resolveRef(value as Ref, ctx);
+  }
   if (typeof value !== 'string') return value; // null/undefined pass through → validateNoNullValues
   if (value.startsWith('arn:') || value === '*') return value;
   // S3 bucket ARN com sufixo de path opcional: 'UploadsBucket.arn/*' ou 'UploadsBucket/*'.
@@ -388,6 +405,7 @@ export function resolvePolicyResource(value: unknown, ctx: SynthContext): unknow
   }
   const parsed = parseStringRef(value, ctx);
   if ('literal' in parsed) return value;
+  assertPolicyResourceIsArn(parsed);
   return resolveRef(parsed, ctx);
 }
 

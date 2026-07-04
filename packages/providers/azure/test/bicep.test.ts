@@ -265,4 +265,47 @@ describe('AzureProvider (Bicep)', () => {
     // TABLE_NAME deve conter referência ao .name da conta
     expect(out).toContain('TABLE_NAME');
   });
+
+  // ── Network.CDN → Azure Front Door Standard ────────────────────────────────
+
+  test('Network.CDN → sku Standard_AzureFrontDoor (não Standard_Microsoft)', () => {
+    const stack = new Stack('test');
+    new Network.CDN(stack, 'MyCdn', { origins: [{ domainName: 'example.com' }] } as any);
+    const out = synth(stack);
+    expect(out).toContain('Standard_AzureFrontDoor');
+    expect(out).not.toContain('Standard_Microsoft');
+  });
+
+  test('Network.CDN → emite afdEndpoints, originGroups, origins, routes', () => {
+    const stack = new Stack('test');
+    new Network.CDN(stack, 'MyCdn', { origins: [{ domainName: 'api.example.com' }] } as any);
+    const out = synth(stack);
+    expect(out).toContain("'Microsoft.Cdn/profiles/afdEndpoints@2023-05-01'");
+    expect(out).toContain("'Microsoft.Cdn/profiles/originGroups@2023-05-01'");
+    expect(out).toContain("'Microsoft.Cdn/profiles/originGroups/origins@2023-05-01'");
+    expect(out).toContain("'Microsoft.Cdn/profiles/afdEndpoints/routes@2023-05-01'");
+    // Output URL do endpoint
+    expect(out).toContain('output MyCdnUrl');
+    expect(out).toContain('properties.hostName');
+  });
+
+  test('Network.CDN com bucketRef em origins → hostName usa primaryEndpoints.blob (não string vazia)', () => {
+    const stack = new Stack('test');
+    new Storage.Bucket(stack, 'SiteBucket', {});
+    new Network.CDN(stack, 'SiteCdn', {
+      origins: [{ domainName: 'placeholder.blob.core.windows.net', id: 'site', bucketRef: 'SiteBucket' }],
+    });
+    const out = synth(stack);
+    // O origin hostName deve referenciar o blob endpoint da storage — não string vazia
+    expect(out).toContain('primaryEndpoints.blob');
+    expect(out).toContain("replace(replace(siteBucket.properties.primaryEndpoints.blob,'https://',''),'/','')");
+    // A storage referenciada ganha allowBlobPublicAccess: true
+    expect(out).toContain('allowBlobPublicAccess: true');
+    // Container 'web' criado para servir o conteúdo
+    expect(out).toContain("'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01'");
+    expect(out).toContain("name: 'web'");
+    expect(out).toContain("publicAccess: 'Blob'");
+    // originPath '/web' na route
+    expect(out).toContain("originPath: '/web'");
+  });
 });
