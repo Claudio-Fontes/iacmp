@@ -27,7 +27,7 @@ export class OpenAIProvider implements AIProvider {
 
     const response = await withRetry(() => this.client.chat.completions.create({
       model: this.model,
-      max_tokens: 16384,
+      max_tokens: 12000,
       temperature: this.temperature,
       messages: openaiMessages,
     }));
@@ -57,7 +57,7 @@ export class OpenAIProvider implements AIProvider {
 
       const stream = await this.client.chat.completions.create({
         model: this.model,
-        max_tokens: 16384,
+        max_tokens: 12000,
         temperature: this.temperature,
         messages: openaiMessages,
         stream: true,

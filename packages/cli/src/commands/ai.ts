@@ -166,7 +166,8 @@ async function retrieveGenerationContext(cwd: string, prompt: string, systemProm
     const indexes = await buildIndexes({ projectDir: cwd, systemPromptTemplate });
     // Foco em docs (API dos constructs) e knowledge (padrões/limites) — as
     // stacks do projeto já entram via readProjectContext.
-    const results = retrieve(indexes, prompt, { projectK: 0, sourceK: 0, docsK: 4, knowledgeK: 6 });
+    // docsK=0: docs já estão no system prompt (redundante + pesa no TPM do gpt-4o)
+    const results = retrieve(indexes, prompt, { projectK: 0, sourceK: 0, docsK: 0, knowledgeK: 4 });
     return formatRetrievedContext(results);
   } catch {
     return '';
