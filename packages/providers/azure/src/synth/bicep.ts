@@ -418,15 +418,29 @@ function synthesizeConstruct(
           minimumTlsVersion: 'TLS1_2',
         },
       });
-      if (props.versioning) {
-        const blobSym = `${sym}BlobService`;
+      // blobServices 'default': versioning e/ou CORS (upload/download do browser).
+      const corsRules = props.cors as Array<Record<string, unknown>> | undefined;
+      if (props.versioning || (corsRules && corsRules.length > 0)) {
+        const blobProps: Record<string, unknown> = {};
+        if (props.versioning) blobProps.isVersioningEnabled = true;
+        if (corsRules && corsRules.length > 0) {
+          blobProps.cors = {
+            corsRules: corsRules.map(c => ({
+              allowedMethods: (c.allowedMethods as string[]) ?? ['GET'],
+              allowedOrigins: (c.allowedOrigins as string[]) ?? ['*'],
+              allowedHeaders: (c.allowedHeaders as string[]) ?? ['*'],
+              exposedHeaders: (c.exposedHeaders as string[]) ?? ['*'],
+              maxAgeInSeconds: (c.maxAgeSeconds as number) ?? 3600,
+            })),
+          };
+        }
         resources.push({
-          sym: blobSym,
+          sym: `${sym}BlobService`,
           type: 'Microsoft.Storage/storageAccounts/blobServices',
           apiVersion: '2023-01-01',
           parent: sym,
           name: 'default',
-          properties: { isVersioningEnabled: true },
+          properties: blobProps,
         });
       }
       outputs.push({ name: `${construct.id}Id`, type: 'string', value: `${sym}.id` });
@@ -926,7 +940,16 @@ function synthesizeConstruct(
       // Default 'node:20-alpine' serve apenas para validação estática do template.
       const imageParamName = `${sym}Image`;
       functionImageParams.add(imageParamName);
-      const envVars = Object.entries(environment).map(([k, v]) => ({ name: k, value: resolveValue(v, idx, crossParams) }));
+      const envVars = Object.entries(environment).map(([k, v]) => {
+        const value = resolveValue(v, idx, crossParams);
+        // Container Apps rejeita env sem value ("ContainerAppEnvVarValueMissing").
+        // Valor undefined = a IA pôs `process.env.X!` (runtime) no código da STACK,
+        // que não existe em synth-time. Barrar com erro claro que o loop conserta.
+        if (value === undefined || value === null) {
+          throw new Error(`Fn.Lambda "${construct.id}": env var "${k}" resolveu para undefined. No código da STACK, o valor de environment deve ser uma string literal ou ref('X','Attr') — nunca process.env.${k} (isso é runtime, não existe no synth).`);
+        }
+        return { name: k, value };
+      });
       resources.push({
         sym,
         type: 'Microsoft.App/containerApps',

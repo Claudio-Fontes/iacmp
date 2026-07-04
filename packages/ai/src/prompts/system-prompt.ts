@@ -493,14 +493,14 @@ export default stack;
   - Para serviços com API HTTP simples (ex: Anthropic, OpenAI, qualquer REST externo), use \`fetch\` nativo (disponível sem instalar nada no runtime \`nodejs18\`/\`nodejs20\`) em vez de instalar o SDK oficial do serviço — evita dependência extra que o iacmp não gerencia.
   - Para serviços da própria cloud que exigem assinatura de requisição (ex: DynamoDB, S3), use o SDK correspondente (\`@aws-sdk/client-dynamodb\`, etc.) — não dá pra assinar SigV4 só com \`fetch\`.
   - **Use SEMPRE o AWS SDK v3 (\`@aws-sdk/*\`), NUNCA o v2 (\`aws-sdk\`).** O runtime \`nodejs20\` provê o v3 embutido (imports \`@aws-sdk/*\` são externalizados no bundle); o pacote \`aws-sdk\` (v2) NÃO vem no runtime e ainda incha o bundle. Para S3 use \`@aws-sdk/client-s3\` com comandos: \`import { S3Client, GetObjectCommand, PutObjectCommand, CopyObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3'\`. NUNCA \`import { S3 } from 'aws-sdk'\` nem \`.promise()\` (padrão v2). Para ler o corpo de um objeto no v3: \`const r = await s3.send(new GetObjectCommand({...})); const body = await r.Body.transformToString();\`.
-  - **Presigned URL do S3 (upload/download direto do browser) — SÓ a forma v3.** \`getSignedUrl\` recebe um COMMAND, nunca params inline (isso é v2 e não compila). Import: \`import { getSignedUrl } from '@aws-sdk/s3-request-presigner';\` (avise no nextSteps que precisa desse pacote). Padrão EXATO:
+  - **Presigned URL do S3 (upload/download direto do browser) — SÓ a forma v3.** \`getSignedUrl\` recebe um COMMAND object (instanciado com \`new\`), NUNCA um objeto literal com os params diretos — o TypeScript ACEITA o objeto literal sem erro, mas falha em RUNTIME com "EndpointError: A region must be set". Import: \`import { getSignedUrl } from '@aws-sdk/s3-request-presigner';\` (avise no nextSteps que precisa desse pacote). Padrão EXATO:
 \`\`\`typescript
 import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-const s3 = new S3Client({});
+const s3 = new S3Client({ region: process.env.AWS_REGION });
 const url = await getSignedUrl(s3, new PutObjectCommand({ Bucket: process.env.BUCKET_NAME, Key: key }), { expiresIn: 300 });
 \`\`\`
-    NUNCA \`getSignedUrl(s3, { Bucket, Key, ExpiresIn })\` (v2, quebra o build com TS2353).
+    NUNCA \`getSignedUrl(s3, { Bucket, Key, ExpiresIn })\` — compila mas falha em runtime (EndpointError: region not set).
   - **Handler HTTP + strict null:** \`event.pathParameters\`, \`event.queryStringParameters\` e \`event.body\` podem ser null — SEMPRE use optional chaining + default: \`const id = event.pathParameters?.id ?? '';\` (sem isso o tsc do deploy falha com TS18047).
   - **DynamoDB — use SEMPRE o DocumentClient** (\`@aws-sdk/lib-dynamodb\`: \`DynamoDBDocumentClient\`, \`PutCommand\`, \`GetCommand\`, \`ScanCommand\`, \`DeleteCommand\`, \`QueryCommand\`), que aceita JSON simples (\`{ id: '1', name: 'x' }\`). Os imports EXATOS (o \`DynamoDBClient\` vem de OUTRO pacote — nunca de \`lib-dynamodb\`):
 \`\`\`typescript
@@ -1134,6 +1134,8 @@ O projeto usa provider=azure. O backend de Database.DynamoDB no Azure é o **Cos
 ### Escolha de construct no Azure (NUNCA troque)
 - Cenário pede "DynamoDB"/tabela chave-valor → \`Database.DynamoDB\` SEMPRE. NUNCA \`Database.DocumentDB\` (Mongo — outro produto, sem ConnectionString de Table).
 - Cenário pede PostgreSQL/MySQL → \`Database.SQL\` (vira Azure Database flexible server). O handler usa o driver \`pg\`/\`mysql2\` NORMAL (o protocolo é o mesmo do RDS) com \`ref('AppDB','Endpoint'/'Port'/'Password'/'Username')\` — NUNCA \`@azure/data-tables\` para SQL.
+- Cenário de ARQUIVOS/BLOB (\`Storage.Bucket\` sem banco — upload/download, presigned URL) → o handler usa \`@azure/storage-blob\`, NUNCA \`@azure/data-tables\` (Table é NoSQL, não é blob). Presigned no Azure = SAS URL: \`import { BlobServiceClient, generateBlobSASQueryParameters, BlobSASPermissions, StorageSharedKeyCredential } from '@azure/storage-blob';\`. Env vars: \`BLOB_ACCOUNT: ref('MeuBucket','Name')\` e a chave/conn string do storage. NÃO gere COSMOS_CONNECTION/TABLE_NAME num cenário que não tem \`Database.DynamoDB\`.
+- **env var NUNCA recebe \`process.env.X\` no código da STACK** — o valor é resolvido em synth-time; use string literal ou \`ref('Recurso','Attr')\`. \`process.env\` só existe DENTRO do handler (runtime), não na stack.
 - **Atributos válidos de \`ref()\` por tipo (NÃO invente outros):** \`Database.SQL\` → \`Endpoint, Port, SecretArn, Password, Username\` (NÃO existe \`ConnectionString\`); \`Database.DynamoDB\` → \`Arn, Name, ConnectionString\` (Name = nome da TABELA).
 - Frontend estático no Azure = \`Storage.Bucket\` (privado) + \`Network.CDN\` com \`bucketRef\`, MESMA stack — igual à AWS. CDN NUNCA é um \`Storage.Bucket\`; cada construct id aparece UMA vez por stack.
 - **Policy.IAM para \`Database.SQL\`: NÃO gere.** O acesso ao Postgres/MySQL é por usuário/senha via env vars — não existe IAM de data-plane. Policies com \`ref('AppDB','Arn')\` (atributo inexistente) ou actions de dynamodb/secretsmanager para um banco SQL são ERRO. Só gere Policy.IAM quando o handler usa um serviço com IAM real (fila, storage, tabela NoSQL).

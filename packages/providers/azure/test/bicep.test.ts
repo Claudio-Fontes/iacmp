@@ -411,3 +411,19 @@ describe('Database.SQL Azure — firewall + admin dbadmin (ciclo p01az8: ETIMEDO
     expect(bicep).toMatch(/DB_USER'[\s\S]{0,40}'dbadmin'/);
   });
 });
+
+describe('Storage.Bucket Azure — CORS e env undefined (p04az)', () => {
+  test('cors → blobServices com corsRules (não só versioning)', () => {
+    const stack = new Stack('s');
+    new Storage.Bucket(stack, 'Uploads', { cors: [{ allowedMethods: ['GET','PUT'], allowedOrigins: ['*'], allowedHeaders: ['*'], maxAgeSeconds: 3000 } as any] });
+    const bicep = emitBicep(stack);
+    expect(bicep).toContain('Microsoft.Storage/storageAccounts/blobServices');
+    expect(bicep).toContain('corsRules');
+    expect(bicep).toContain('maxAgeInSeconds: 3000');
+  });
+  test('env var resolvendo undefined (process.env.X na stack) → erro claro no synth', () => {
+    const stack = new Stack('s');
+    new Fn.Lambda(stack, 'Fn', { runtime: 'nodejs20', handler: 'dist/h.handler', code: '.', environment: { X: undefined as any } });
+    expect(() => emitBicep(stack)).toThrow(/undefined|process\.env/i);
+  });
+});
