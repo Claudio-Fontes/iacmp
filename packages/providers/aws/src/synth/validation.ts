@@ -59,6 +59,7 @@ export function validateResourceReferences(resources: Record<string, CloudFormat
 export function validateNoNullValues(resources: Record<string, CloudFormationResource>): void {
   const bad: string[] = [];
   const stringified: string[] = [];
+  const placeholderArns: string[] = [];
   const walk = (node: unknown, pathStr: string): void => {
     if (node === null || node === undefined) {
       bad.push(pathStr);
@@ -69,6 +70,13 @@ export function validateNoNullValues(resources: Record<string, CloudFormationRes
       // (ex: ref('B','Arn') + '/*' → "[object Object]/*"). O deploy falharia
       // com 400 — barrar aqui dá erro que o loop de geração conserta.
       stringified.push(pathStr);
+      return;
+    }
+    if (typeof node === 'string' && node.includes('123456789012')) {
+      // Account id placeholder da doc AWS — a IA hardcodou um ARN literal em vez
+      // de ref('Recurso','Arn'). O deploy sobe mas a policy aponta pra conta
+      // errada (AccessDenied em runtime). Barrar no synth p/ o loop consertar.
+      placeholderArns.push(pathStr);
       return;
     }
     if (Array.isArray(node)) {
@@ -86,6 +94,13 @@ export function validateNoNullValues(resources: Record<string, CloudFormationRes
       `Causa: um ref(...) tipado foi concatenado com string no código da stack ` +
       `(ex: ref('MeuBucket','Arn') + '/*'). NÃO concatene refs — para "objetos dentro do bucket" ` +
       `num resource de Policy.IAM use a STRING 'MeuBucket/*' (o synth resolve para '<arn>/*').`
+    );
+  }
+  if (placeholderArns.length > 0) {
+    throw new Error(
+      `Account id placeholder "123456789012" no template em ${placeholderArns.map(p => `"${p}"`).join(', ')}. ` +
+      `A IA hardcodou um ARN literal. Use ref('Recurso','Arn') (o synth gera o ARN com a conta real) ` +
+      `ou, para um ARN construído à mão, '\${AWS::AccountId}' num Fn::Sub — NUNCA um account id fixo.`
     );
   }
   if (bad.length > 0) {

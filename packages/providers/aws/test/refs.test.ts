@@ -247,3 +247,14 @@ test('Events.EventBridge scheduleExpression completa → ScheduleExpression (nã
   expect(rule.Properties.ScheduleExpression).toBe('cron(0 8 * * ? *)');
   expect(rule.Properties.EventPattern).toBeUndefined();
 });
+
+test('ARN com account id placeholder 123456789012 → erro claro no synth (p05aws3)', () => {
+  const s = new Stack('p', { region: 'us-east-1' });
+  new Messaging.Queue(s, 'Q', {});
+  new Policy.IAM(s, 'Pol', {
+    attachTo: 'Fn', attachType: 'lambda',
+    statements: [{ effect: 'Allow', actions: ['dynamodb:Scan'], resources: ['arn:aws:dynamodb:us-east-1:123456789012:table/ReportsTable'] }],
+  });
+  new Fn.Lambda(s, 'Fn', { runtime: 'nodejs20', handler: 'i.h', code: 'dist/' });
+  expect(() => provider.synthesize(s, [s])).toThrow(/123456789012|placeholder|AWS::AccountId/);
+});

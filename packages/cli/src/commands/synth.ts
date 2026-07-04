@@ -212,6 +212,30 @@ export default class Synth extends Command {
       );
     }
 
+    // ── Validação GSI: handler consulta índice que a tabela não declara ─────
+    // A IA gera um handler com QueryCommand({ IndexName: 'TTLIndex' }) mas a
+    // Database.DynamoDB sai sem esse globalSecondaryIndexes. Deploya, mas a query
+    // falha em runtime (ValidationException: table does not have index). Barrar
+    // aqui dá ao loop de auto-correção o gatilho para consertar.
+    const gsiErrors = this.validateHandlerDynamoGsi(loadedStacks, cwd);
+    if (gsiErrors.length > 0) {
+      this.error(
+        `Handler consulta um GSI que a tabela DynamoDB não declara (ValidationException em runtime):\n\n` +
+        gsiErrors.map(e => `  • ${e}`).join('\n'),
+      );
+    }
+
+    // ── Validação nomes reservados DynamoDB em expressões (sem alias '#') ────
+    // FilterExpression: 'ttl < :now' → 'ttl' é reserved keyword → ValidationException
+    // em runtime. Forçar o alias '#ttl' aqui dá o gatilho pro loop se auto-corrigir.
+    const reservedErrors = this.validateHandlerDynamoReservedWords(loadedStacks, cwd);
+    if (reservedErrors.length > 0) {
+      this.error(
+        `Handler usa nome reservado do DynamoDB cru numa expressão (ValidationException em runtime):\n\n` +
+        reservedErrors.map(e => `  • ${e}`).join('\n'),
+      );
+    }
+
     // ── Passada 2: sintetiza e grava só as stacks que o --stack pediu ───────
     const targetStacks = loadedStacks.filter(s => !flags.stack || s.stackName === flags.stack);
     if (targetStacks.length === 0) {
@@ -607,6 +631,104 @@ export default class Synth extends Command {
         errors.push(
           `${path.relative(cwd, file)}: importa um driver SQL (pg/mysql/...) mas o projeto usa DynamoDB, que NÃO é SQL. ` +
           `Use o DocumentClient (@aws-sdk/lib-dynamodb: DynamoDBDocumentClient + GetCommand/PutCommand/QueryCommand/ScanCommand) — sem SELECT/INSERT nem pg.Client.`,
+        );
+      }
+    }
+    return errors;
+  }
+
+  /**
+   * Bloqueia handler que consulta um GSI (`IndexName: 'X'`) que nenhuma
+   * Database.DynamoDB do projeto declara em `globalSecondaryIndexes`. A IA gera
+   * QueryCommand num índice (típico: 'TTLIndex' pra limpeza por TTL) sem provisionar
+   * o GSI na tabela → deploya, mas a query estoura `ValidationException: The table
+   * does not have the specified index` em runtime. Cruza os IndexName usados nos
+   * handlers com os nomes de GSI declarados; nome inexistente → erro.
+   */
+  private validateHandlerDynamoGsi(loaded: LoadedStack[], cwd: string): string[] {
+    const errors: string[] = [];
+    const declaredIndexes = new Set<string>();
+    for (const { stack } of loaded) {
+      for (const c of stack.constructs) {
+        if (c.type !== 'Database.DynamoDB') continue;
+        const gsis = ((c.props as Record<string, unknown>).globalSecondaryIndexes as Array<Record<string, unknown>>) ?? [];
+        for (const g of gsis) if (typeof g.name === 'string') declaredIndexes.add(g.name);
+      }
+    }
+    const hasDynamo = loaded.some(({ stack }) => stack.constructs.some(c => c.type === 'Database.DynamoDB'));
+    if (!hasDynamo) return errors;
+
+    const srcDir = path.join(cwd, 'src');
+    if (!fs.existsSync(srcDir)) return errors;
+    const walk = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => {
+      const full = path.join(dir, e.name);
+      return e.isDirectory() ? walk(full) : (e.name.endsWith('.ts') || e.name.endsWith('.js')) ? [full] : [];
+    });
+    for (const file of walk(srcDir)) {
+      const content = fs.readFileSync(file, 'utf-8');
+      const used = new Set<string>();
+      for (const m of content.matchAll(/IndexName\s*:\s*['"]([^'"]+)['"]/g)) used.add(m[1]);
+      const missing = [...used].filter(name => !declaredIndexes.has(name)).sort();
+      if (missing.length > 0) {
+        errors.push(
+          `${path.relative(cwd, file)}: consulta o(s) índice(s) ${missing.map(n => `'${n}'`).join(', ')} ` +
+          `mas nenhuma Database.DynamoDB declara em globalSecondaryIndexes. ` +
+          `Ou declare o GSI na tabela (globalSecondaryIndexes: [{ name, partitionKey, ... }]) e libere ` +
+          `\`<TableArn>/index/*\` na Policy.IAM, ou — para limpeza por TTL — troque QueryCommand(IndexName) ` +
+          `por ScanCommand + FilterExpression 'attr < :now' (sem índice).`,
+        );
+      }
+    }
+    return errors;
+  }
+
+  /**
+   * Bloqueia handler que usa um nome de atributo RESERVADO do DynamoDB cru numa
+   * expressão (FilterExpression/KeyConditionExpression/ConditionExpression/
+   * ProjectionExpression) sem aliasar com `#`. Ex: `FilterExpression: 'ttl < :now'`
+   * — `ttl` é palavra reservada → `ValidationException: Attribute name is a
+   * reserved keyword` em runtime. Só considera palavras reservadas de alta
+   * confiança que colidem com nomes de atributo comuns; ignora `#alias`,
+   * `:placeholder` e chamadas de função (`attribute_exists(...)`, `size(...)`).
+   */
+  private validateHandlerDynamoReservedWords(loaded: LoadedStack[], cwd: string): string[] {
+    const errors: string[] = [];
+    const hasDynamo = loaded.some(({ stack }) => stack.constructs.some(c => c.type === 'Database.DynamoDB'));
+    if (!hasDynamo) return errors;
+    const srcDir = path.join(cwd, 'src');
+    if (!fs.existsSync(srcDir)) return errors;
+    // Subconjunto (alta confiança) dos reserved words do DynamoDB que colidem com
+    // nomes de atributo comuns em apps. Todos exigem `#alias` numa expressão.
+    const RESERVED = new Set([
+      'ttl', 'name', 'status', 'date', 'timestamp', 'type', 'data', 'value', 'count', 'size',
+      'order', 'user', 'source', 'region', 'hash', 'range', 'year', 'month', 'day', 'hour',
+      'minute', 'second', 'state', 'group', 'role', 'action', 'time', 'token', 'level', 'owner',
+      'comment', 'connection', 'filter', 'language', 'location', 'password', 'position', 'percent',
+      'view', 'zone', 'target', 'tag', 'duration', 'period', 'capacity', 'bytes', 'timezone', 'key',
+    ]);
+    const walk = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => {
+      const full = path.join(dir, e.name);
+      return e.isDirectory() ? walk(full) : (e.name.endsWith('.ts') || e.name.endsWith('.js')) ? [full] : [];
+    });
+    const EXPR = /(?:FilterExpression|KeyConditionExpression|ConditionExpression|ProjectionExpression)\s*:\s*(['"`])([^'"`]*)\1/g;
+    // palavra não precedida de # (alias) nem : (placeholder), com o char seguinte capturado p/ excluir função `word(`
+    const WORD = /(^|[^A-Za-z0-9_#:])([A-Za-z_][A-Za-z0-9_]*)\s*(\(?)/g;
+    for (const file of walk(srcDir)) {
+      const content = fs.readFileSync(file, 'utf-8');
+      const flagged = new Set<string>();
+      for (const m of content.matchAll(EXPR)) {
+        for (const t of m[2].matchAll(WORD)) {
+          if (t[3] === '(') continue; // chamada de função (attribute_exists, begins_with, size...)
+          const word = t[2].toLowerCase();
+          if (RESERVED.has(word)) flagged.add(t[2]);
+        }
+      }
+      if (flagged.size > 0) {
+        const list = [...flagged].sort();
+        errors.push(
+          `${path.relative(cwd, file)}: a(s) expressão(ões) DynamoDB usam nome(s) reservado(s) ${list.map(w => `'${w}'`).join(', ')} sem alias. ` +
+          `Aliase com ExpressionAttributeNames (${list.map(w => `{ '#${w.toLowerCase()}': '${w}' }`).join(', ')}) e use '#${list[0].toLowerCase()}' na expressão — ` +
+          `nome reservado cru estoura ValidationException: Attribute name is a reserved keyword em runtime.`,
         );
       }
     }
