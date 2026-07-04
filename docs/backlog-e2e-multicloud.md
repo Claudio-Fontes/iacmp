@@ -1,6 +1,6 @@
-# Backlog e2e multi-cloud
+# Backlog e2e — paridade por nuvem (AWS + Azure)
 
-> **Régua (definida pelo usuário, 2026-07-03):** um prompt só está testado end-to-end quando tem **deploy na AWS + deploy no Azure + testes funcionais nos dois + destroy nos dois**. Multi-cloud é o modo padrão de trabalho — não precisa ser repetido por tarefa. Ciclos sempre em projeto NOVO por cloud, zero edição em arquivos gerados.
+> **Régua (definida pelo usuário, 2026-07-03):** um prompt só está testado end-to-end quando tem **deploy na AWS + deploy no Azure + testes funcionais nos dois + destroy nos dois** — o MESMO cenário, em ciclos **isolados e independentes por nuvem**. Não existe (nem é objetivo) dependência cruzada entre nuvens: nenhum recurso AWS consome serviço Azure nem vice-versa. É o modo padrão de trabalho — não precisa ser repetido por tarefa. Ciclos sempre em projeto NOVO por cloud, zero edição em arquivos gerados.
 
 ## Matriz da bateria (01–20) pela régua dupla
 
