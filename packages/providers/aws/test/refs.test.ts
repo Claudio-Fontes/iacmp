@@ -222,3 +222,15 @@ test('Policy.IAM: "AppDB.Endpoint" (string) em resources lança erro no synth', 
   });
   expect(() => provider.synthesize(s, [s])).toThrow(/Policy\.IAM.*AppDB.*Endpoint.*não é um ARN/);
 });
+
+test('ref concatenado com string ([object Object]) → erro claro no synth (p04aws2)', () => {
+  const s = new Stack('s3', { region: 'us-east-1' });
+  const b = new Storage.Bucket(s, 'UploadsBucket', {});
+  // padrão errado que o modelo gerou: ref + '/*' vira "[object Object]/*"
+  new Policy.IAM(s, 'P', {
+    attachTo: 'Fn', attachType: 'lambda',
+    statements: [{ effect: 'Allow', actions: ['s3:PutObject'], resources: [(b.arn as any) + '/*'] }],
+  });
+  new Fn.Lambda(s, 'Fn', { runtime: 'nodejs20', handler: 'i.h', code: 'dist/' });
+  expect(() => provider.synthesize(s, [s])).toThrow(/object Object|MeuBucket\/\*|não concatene/i);
+});

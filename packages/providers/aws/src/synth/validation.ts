@@ -58,9 +58,17 @@ export function validateResourceReferences(resources: Record<string, CloudFormat
  */
 export function validateNoNullValues(resources: Record<string, CloudFormationResource>): void {
   const bad: string[] = [];
+  const stringified: string[] = [];
   const walk = (node: unknown, pathStr: string): void => {
     if (node === null || node === undefined) {
       bad.push(pathStr);
+      return;
+    }
+    if (typeof node === 'string' && node.includes('[object Object]')) {
+      // Sinal de um Ref tipado concatenado com string no código da stack
+      // (ex: ref('B','Arn') + '/*' → "[object Object]/*"). O deploy falharia
+      // com 400 — barrar aqui dá erro que o loop de geração conserta.
+      stringified.push(pathStr);
       return;
     }
     if (Array.isArray(node)) {
@@ -71,6 +79,14 @@ export function validateNoNullValues(resources: Record<string, CloudFormationRes
   };
   for (const [id, resource] of Object.entries(resources)) {
     walk(resource.Properties, id);
+  }
+  if (stringified.length > 0) {
+    throw new Error(
+      `"[object Object]" no template em ${stringified.map(p => `"${p}"`).join(', ')}. ` +
+      `Causa: um ref(...) tipado foi concatenado com string no código da stack ` +
+      `(ex: ref('MeuBucket','Arn') + '/*'). NÃO concatene refs — para "objetos dentro do bucket" ` +
+      `num resource de Policy.IAM use a STRING 'MeuBucket/*' (o synth resolve para '<arn>/*').`
+    );
   }
   if (bad.length > 0) {
     throw new Error(
