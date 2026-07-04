@@ -209,6 +209,14 @@ function resolveAzureImage(image: string): { imageReference: Record<string, unkn
   return { imageReference: { offer: image }, isWindows: false };
 }
 
+// SKU do flexible server (Postgres/MySQL) por tier. free = Burstable B1ms
+// (~$12/mês, a mais barata elegível); standard = GeneralPurpose.
+function flexibleServerSku(accountTier: 'free' | 'standard'): { name: string; tier: string } {
+  return accountTier === 'free'
+    ? { name: 'Standard_B1ms', tier: 'Burstable' }
+    : { name: 'Standard_D2ds_v5', tier: 'GeneralPurpose' };
+}
+
 const CACHE_SKU_MAP: Record<string, { name: string; family: string; capacity: number }> = {
   small:  { name: 'Standard', family: 'C', capacity: 1 },
   medium: { name: 'Standard', family: 'C', capacity: 2 },
@@ -788,18 +796,20 @@ function synthesizeConstruct(
       const engine = (props.engine as string) ?? 'mysql';
       const serverName = `${construct.id.toLowerCase()}-server`;
       const storageBytes = (props.storageGb as number ?? 20) * 1024 * 1024 * 1024;
-      const zoneRedundant = (props.multiAz as boolean) ?? false;
+      // free tier: sem HA (zone redundant é pago e Burstable nem suporta).
+      const zoneRedundant = accountTier === 'free' ? false : ((props.multiAz as boolean) ?? false);
+      const dbSku = flexibleServerSku(accountTier);
       needsAdminPassword.value = true;
 
       if (engine === 'mysql') {
-        resources.push({ sym, type: 'Microsoft.DBforMySQL/flexibleServers', apiVersion: '2023-06-30', name: serverName, location: 'location', tags: tag(construct.id), sku: { name: 'Standard_D2ds_v4', tier: 'GeneralPurpose' }, properties: { administratorLogin: 'mysqladmin', administratorLoginPassword: expr('adminPassword'), version: '8.0.21', storage: { storageSizeGB: props.storageGb ?? 20, autoGrow: 'Enabled' }, backup: { backupRetentionDays: Math.max(Number(props.backupRetentionDays ?? 7), 7), geoRedundantBackup: 'Disabled' }, highAvailability: { mode: zoneRedundant ? 'ZoneRedundant' : 'Disabled' } } });
+        resources.push({ sym, type: 'Microsoft.DBforMySQL/flexibleServers', apiVersion: '2023-06-30', name: serverName, location: 'location', tags: tag(construct.id), sku: dbSku, properties: { administratorLogin: 'mysqladmin', administratorLoginPassword: expr('adminPassword'), version: '8.0.21', storage: { storageSizeGB: props.storageGb ?? 20, autoGrow: 'Enabled' }, backup: { backupRetentionDays: Math.max(Number(props.backupRetentionDays ?? 7), 7), geoRedundantBackup: 'Disabled' }, highAvailability: { mode: zoneRedundant ? 'ZoneRedundant' : 'Disabled' } } });
         outputs.push({ name: `${construct.id}Endpoint`, type: 'string', value: `${sym}.properties.fullyQualifiedDomainName` });
         outputs.push({ name: `${construct.id}Port`, type: 'string', value: `'3306'` });
         outputs.push({ name: `${construct.id}Username`, type: 'string', value: `'mysqladmin'` });
         break;
       }
       if (engine === 'postgres') {
-        resources.push({ sym, type: 'Microsoft.DBforPostgreSQL/flexibleServers', apiVersion: '2023-06-01-preview', name: serverName, location: 'location', tags: tag(construct.id), sku: { name: 'Standard_D2ds_v5', tier: 'GeneralPurpose' }, properties: { administratorLogin: 'pgadmin', administratorLoginPassword: expr('adminPassword'), version: '15', storage: { storageSizeGB: props.storageGb ?? 32 }, backup: { backupRetentionDays: Math.max(Number(props.backupRetentionDays ?? 7), 7), geoRedundantBackup: 'Disabled' }, highAvailability: { mode: zoneRedundant ? 'ZoneRedundant' : 'Disabled' } } });
+        resources.push({ sym, type: 'Microsoft.DBforPostgreSQL/flexibleServers', apiVersion: '2023-06-01-preview', name: serverName, location: 'location', tags: tag(construct.id), sku: dbSku, properties: { administratorLogin: 'pgadmin', administratorLoginPassword: expr('adminPassword'), version: '15', storage: { storageSizeGB: props.storageGb ?? 32 }, backup: { backupRetentionDays: Math.max(Number(props.backupRetentionDays ?? 7), 7), geoRedundantBackup: 'Disabled' }, highAvailability: { mode: zoneRedundant ? 'ZoneRedundant' : 'Disabled' } } });
         outputs.push({ name: `${construct.id}Endpoint`, type: 'string', value: `${sym}.properties.fullyQualifiedDomainName` });
         outputs.push({ name: `${construct.id}Port`, type: 'string', value: `'5432'` });
         outputs.push({ name: `${construct.id}Username`, type: 'string', value: `'pgadmin'` });
@@ -829,7 +839,7 @@ function synthesizeConstruct(
       // Nome de conta Cosmos é GLOBALMENTE único (vira DNS <nome>.documents.azure.com)
       // — o construct id cru colide entre projetos e com tombstones de contas recém-
       // deletadas. Sufixo uniqueString(resourceGroup().id), mesmo padrão do APIM.
-      resources.push({ sym, type: 'Microsoft.DocumentDB/databaseAccounts', apiVersion: '2023-04-15', name: expr(`'${construct.id.toLowerCase()}-\${uniqueString(resourceGroup().id)}'`), location: 'location', tags: tag(construct.id), properties: { databaseAccountOfferType: 'Standard', kind: 'MongoDB', locations: [{ locationName: expr('location'), failoverPriority: 0, isZoneRedundant: false }], backupPolicy: { type: 'Periodic', periodicModeProperties: { backupIntervalInMinutes: 1440, backupRetentionIntervalInHours: 168 } }, enableAutomaticFailover: (props.deletionProtection as boolean) ?? false } });
+      resources.push({ sym, type: 'Microsoft.DocumentDB/databaseAccounts', apiVersion: '2023-04-15', name: expr(`'${construct.id.toLowerCase()}-\${uniqueString(resourceGroup().id)}'`), location: 'location', tags: tag(construct.id), properties: { databaseAccountOfferType: 'Standard', enableFreeTier: accountTier === 'free', kind: 'MongoDB', locations: [{ locationName: expr('location'), failoverPriority: 0, isZoneRedundant: false }], backupPolicy: { type: 'Periodic', periodicModeProperties: { backupIntervalInMinutes: 1440, backupRetentionIntervalInHours: 168 } }, enableAutomaticFailover: (props.deletionProtection as boolean) ?? false } });
       break;
     }
 
@@ -847,6 +857,7 @@ function synthesizeConstruct(
         tags: tag(construct.id),
         properties: {
           databaseAccountOfferType: 'Standard',
+          enableFreeTier: accountTier === 'free',
           capabilities: [{ name: 'EnableTable' }],
           locations: [{ locationName: expr('location'), failoverPriority: 0, isZoneRedundant: false }],
           backupPolicy: { type: 'Periodic', periodicModeProperties: { backupIntervalInMinutes: 1440, backupRetentionIntervalInHours: 168 } },
@@ -881,7 +892,10 @@ function synthesizeConstruct(
     }
 
     case 'Cache.Redis': {
-      const skuInfo = CACHE_SKU_MAP[(props.nodeType as string) ?? 'small'];
+      // free tier: Basic C0 (~$16/mês, o menor); standard usa o mapa por nodeType.
+      const skuInfo = accountTier === 'free'
+        ? { name: 'Basic', family: 'C', capacity: 0 }
+        : CACHE_SKU_MAP[(props.nodeType as string) ?? 'small'];
       resources.push({ sym, type: 'Microsoft.Cache/redis', apiVersion: '2023-08-01', name: construct.id, location: 'location', tags: tag(construct.id), sku: { name: skuInfo.name, family: skuInfo.family, capacity: skuInfo.capacity }, properties: { enableNonSslPort: false, minimumTlsVersion: '1.2', redisVersion: (props.version as string) ?? '7.0', redisConfiguration: { 'maxmemory-policy': 'volatile-lru' } } });
       outputs.push({ name: `${construct.id}Endpoint`, type: 'string', value: `${sym}.properties.hostName` });
       outputs.push({ name: `${construct.id}Port`, type: 'int', value: `${sym}.properties.sslPort` });

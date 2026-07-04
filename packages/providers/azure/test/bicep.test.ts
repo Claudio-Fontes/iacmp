@@ -363,3 +363,31 @@ test('Database.SQL postgres com backupRetentionDays: 0 (free) → piso de 7 (Azu
   expect(bicep).toContain('backupRetentionDays: 7');
   expect(bicep).not.toContain('backupRetentionDays: 0');
 });
+
+describe('accountTier free → SKUs mais baratas (paridade de custo com AWS free)', () => {
+  test('Database.SQL postgres free → Burstable B1ms (não GeneralPurpose)', () => {
+    const stack = new Stack('db');
+    new Database.SQL(stack, 'AppDB', { engine: 'postgres' });
+    const free = emitBicep(stack, { accountTier: 'free' });
+    expect(free).toContain("name: 'Standard_B1ms'");
+    expect(free).toContain("tier: 'Burstable'");
+    const std = emitBicep(stack, { accountTier: 'standard' });
+    expect(std).toContain("name: 'Standard_D2ds_v5'");
+  });
+
+  test('Cache.Redis free → Basic C0 (não Standard C1)', () => {
+    const stack = new Stack('c');
+    new Cache.Redis(stack, 'AppCache', { nodeType: 'small' });
+    const free = emitBicep(stack, { accountTier: 'free' });
+    expect(free).toMatch(/name: 'Basic'[\s\S]{0,40}capacity: 0/);
+  });
+
+  test('Database.DynamoDB free → enableFreeTier: true', () => {
+    const stack = new Stack('t');
+    new Database.DynamoDB(stack, 'ItemsTable', { partitionKey: 'id', partitionKeyType: 'S' } as any);
+    const free = emitBicep(stack, { accountTier: 'free' });
+    expect(free).toContain('enableFreeTier: true');
+    const std = emitBicep(stack, { accountTier: 'standard' });
+    expect(std).toContain('enableFreeTier: false');
+  });
+});
