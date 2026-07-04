@@ -73,6 +73,8 @@ interface AzureFunctionMeta {
   code: string;
   runtime: string;
   imageParamName: string;
+  /** Path patterns das rotas APIM que apontam pra este container app (ex: "/files/{key}", "/files/{key+}"). */
+  routePatterns?: string[];
 }
 
 function getSubscriptionId(): string {
@@ -149,10 +151,39 @@ function buildFunctionBundle(
     logLevel: 'silent',
   });
 
+  // routePatterns: path templates das rotas APIM para este container app.
+  // Injetados como literal JSON no server.js — avaliados em deploy-time (synth-time aqui).
+  const routePatternsJson = JSON.stringify(fn.routePatterns ?? []);
+
   const adapter = `'use strict';
 const http = require('http');
 const { handler } = require('./handler');
 const port = parseInt(process.env.PORT || '3000', 10);
+// Padrões de path das rotas APIM que apontam para este container app.
+// Permite extrair params NOMEADOS (ex: {key}, {key+}) em vez de hardcode id/proxy.
+const routePatterns = ${routePatternsJson};
+// Dado um pathname, tenta casar com um dos routePatterns e retorna os params nomeados.
+// Suporta {param} (segmento exato) e {param+} (greedy — captura o restante do path).
+function matchRoute(pathname) {
+  const segs = pathname.split('/').filter(Boolean);
+  for (const pattern of routePatterns) {
+    const parts = pattern.split('/').filter(Boolean);
+    const lastPart = parts.length > 0 ? parts[parts.length - 1] : '';
+    const isGreedy = /^\\{\\w+\\+\\}$/.test(lastPart);
+    if (isGreedy ? segs.length < parts.length : segs.length !== parts.length) continue;
+    const named = {};
+    let match = true;
+    for (let i = 0; i < parts.length; i++) {
+      const gm = parts[i].match(/^\\{(\\w+)\\+\\}$/);
+      if (gm) { named[gm[1]] = segs.slice(i).map(decodeURIComponent).join('/'); break; }
+      const nm = parts[i].match(/^\\{(\\w+)\\}$/);
+      if (nm) { named[nm[1]] = decodeURIComponent(segs[i]); }
+      else if (parts[i] !== segs[i]) { match = false; break; }
+    }
+    if (match) return named;
+  }
+  return null;
+}
 http.createServer(async (req, res) => {
   let body = '';
   req.on('data', c => { body += c; });
@@ -172,13 +203,15 @@ http.createServer(async (req, res) => {
     for (const [k, v] of Object.entries(req.headers)) {
       headers[k] = Array.isArray(v) ? v.join(',') : String(v);
     }
-    // pathParameters no formato Lambda-proxy: os handlers gerados leem
-    // event.pathParameters.id (rotas CRUD /recurso/{id}). Sem o template da
-    // rota, a convenção é: 2º segmento do path = id (cobre o padrão CRUD).
+    // pathParameters no formato Lambda-proxy.
+    // Estratégia: extrai params nomeados via matchRoute (usa templates das rotas APIM)
+    // e faz merge com a convenção legada { id, proxy } para não quebrar handlers CRUD
+    // que já leem event.pathParameters.id. Params nomeados têm precedência no merge.
     const segments = pathname.split('/').filter(Boolean);
+    const namedParams = routePatterns.length > 0 ? matchRoute(pathname) : null;
     const pathParameters = segments.length >= 2
-      ? { id: decodeURIComponent(segments[1]), proxy: segments.slice(1).join('/') }
-      : null;
+      ? { id: decodeURIComponent(segments[1]), proxy: segments.slice(1).join('/'), ...(namedParams || {}) }
+      : (namedParams && Object.keys(namedParams).length > 0 ? namedParams : null);
     const event = {
       httpMethod: req.method || 'GET',
       path: pathname,

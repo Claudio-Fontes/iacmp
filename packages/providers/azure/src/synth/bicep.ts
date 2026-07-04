@@ -1262,9 +1262,32 @@ export interface AzureFunctionMeta {
   code: string;
   runtime: string;
   imageParamName: string;
+  /** Path patterns (ex: "/files/{key}", "/files/{key+}") de todos os ApiGateway que apontam pra esse lambda. */
+  routePatterns: string[];
 }
 
-export function extractAzureFunctionMeta(stack: Stack): AzureFunctionMeta[] {
+export function extractAzureFunctionMeta(stack: Stack, allStacks?: Stack[]): AzureFunctionMeta[] {
+  // Monta mapa lambdaId → paths das rotas, varrendo os Function.ApiGateway de TODAS as
+  // stacks. O ApiGateway costuma ficar numa stack separada dos Function.Lambda (o gerador
+  // divide por domínio); sem o universo completo, routesByLambda fica vazio para os lambdas
+  // e o adaptador HTTP não consegue extrair os path params nomeados ({key}) → DELETE 400.
+  const universe = allStacks ?? [stack];
+  const routesByLambda = new Map<string, string[]>();
+  for (const s of universe) {
+    for (const c of s.constructs) {
+      if (c.type !== 'Function.ApiGateway') continue;
+      const routes = ((c.props as Record<string, unknown>).routes as Array<Record<string, unknown>>) ?? [];
+      for (const route of routes) {
+        const lambdaId = route.lambdaId as string | undefined;
+        const routePath = route.path as string | undefined;
+        if (lambdaId && routePath) {
+          if (!routesByLambda.has(lambdaId)) routesByLambda.set(lambdaId, []);
+          routesByLambda.get(lambdaId)!.push(routePath);
+        }
+      }
+    }
+  }
+
   return stack.constructs
     .filter(c => c.type === 'Function.Lambda')
     .map(c => {
@@ -1277,6 +1300,7 @@ export function extractAzureFunctionMeta(stack: Stack): AzureFunctionMeta[] {
         code: (props.code as string) ?? 'dist/',
         runtime: (props.runtime as string) ?? 'nodejs20',
         imageParamName: `${sym}Image`,
+        routePatterns: routesByLambda.get(c.id) ?? [],
       };
     });
 }
