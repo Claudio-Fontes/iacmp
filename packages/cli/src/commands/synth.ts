@@ -188,6 +188,17 @@ export default class Synth extends Command {
       );
     }
 
+    // ── Handler pg sem ssl contra RDS PostgreSQL ─────────────────────────────
+    // RDS Postgres 14+ exige conexão encriptada (pg_hba: "no encryption").
+    // Handler com pg.Client sem `ssl:` falha TODO request em runtime.
+    const pgSslErrors = this.validateHandlerPgSsl(loadedStacks, cwd);
+    if (pgSslErrors.length > 0) {
+      this.error(
+        `Handler conecta no PostgreSQL sem SSL (RDS rejeita com "no pg_hba.conf entry ... no encryption"):\n\n` +
+        pgSslErrors.map(e => `  • ${e}`).join('\n'),
+      );
+    }
+
     // ── Handler lê process.env.X que o construct não declara ─────────────────
     // A IA gera o handler certo mas ESQUECE o environment no Fn.Lambda — o CRUD
     // inteiro falha em runtime (ex: TABLE_NAME undefined → 502). Barrar aqui dá
@@ -443,6 +454,36 @@ export default class Synth extends Command {
         errors.push(
           `${path.relative(cwd, file)}: importa um driver SQL (pg/mysql/...) mas o projeto usa DynamoDB, que NÃO é SQL. ` +
           `Use o DocumentClient (@aws-sdk/lib-dynamodb: DynamoDBDocumentClient + GetCommand/PutCommand/QueryCommand/ScanCommand) — sem SELECT/INSERT nem pg.Client.`,
+        );
+      }
+    }
+    return errors;
+  }
+
+  /**
+   * Bloqueia handler que usa o driver `pg` sem `ssl` quando o projeto tem um
+   * Database.SQL postgres. RDS PostgreSQL moderno recusa conexão sem TLS —
+   * o erro só aparece em runtime ("no pg_hba.conf entry ... no encryption").
+   * Heurística: importa 'pg' e o fonte não contém `ssl:`.
+   */
+  private validateHandlerPgSsl(loaded: LoadedStack[], cwd: string): string[] {
+    const errors: string[] = [];
+    const hasPostgres = loaded.some(({ stack }) =>
+      stack.constructs.some(c => c.type === 'Database.SQL' && ((c.props as Record<string, unknown>).engine ?? 'postgres') === 'postgres'));
+    if (!hasPostgres) return errors;
+    const srcDir = path.join(cwd, 'src');
+    if (!fs.existsSync(srcDir)) return errors;
+    const walk = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => {
+      const full = path.join(dir, e.name);
+      return e.isDirectory() ? walk(full) : (e.name.endsWith('.ts') || e.name.endsWith('.js')) ? [full] : [];
+    });
+    for (const file of walk(srcDir)) {
+      const content = fs.readFileSync(file, 'utf-8');
+      const usesPg = /from\s+['"]pg['"]|require\(\s*['"]pg['"]\s*\)/.test(content);
+      if (usesPg && !/\bssl\s*:/.test(content)) {
+        errors.push(
+          `${path.relative(cwd, file)}: usa o driver pg sem \`ssl\` na config do Client. ` +
+          `Adicione \`ssl: { rejectUnauthorized: false }\` — RDS PostgreSQL exige conexão encriptada.`,
         );
       }
     }

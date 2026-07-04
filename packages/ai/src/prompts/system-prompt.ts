@@ -892,6 +892,7 @@ O nome \`AppDB\` deve corresponder ao ID do construct \`Database.SQL\` ou \`Data
 **REGRA ABSOLUTA — handlers Lambda com banco**: use \`pg\` (PostgreSQL), NÃO \`mysql2\`. Padrão obrigatório — \`new Client()\` SEMPRE dentro do handler (nunca no nível do módulo — Lambda reutiliza containers e o cliente não pode ser conectado duas vezes):
 \`\`\`typescript
 import { Client } from 'pg';
+// ssl é OBRIGATÓRIO: RDS PostgreSQL exige TLS ("no pg_hba.conf entry ... no encryption" sem ele)
 const cfg = { host: process.env.DB_HOST, port: Number(process.env.DB_PORT ?? 5432), user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME ?? 'postgres', ssl: { rejectUnauthorized: false } };
 export async function handler(event: any) {
   const db = new Client(cfg);
@@ -1114,6 +1115,47 @@ O projeto usa provider=azure. O backend de Database.DynamoDB no Azure é o **Cos
 - Cenário pede "DynamoDB"/tabela chave-valor → \`Database.DynamoDB\` SEMPRE. NUNCA \`Database.DocumentDB\` (Mongo — outro produto, sem ConnectionString de Table).
 - Cenário pede PostgreSQL/MySQL → \`Database.SQL\` (vira Azure Database flexible server). O handler usa o driver \`pg\`/\`mysql2\` NORMAL (o protocolo é o mesmo do RDS) com \`ref('AppDB','Endpoint'/'Port'/'Password'/'Username')\` — NUNCA \`@azure/data-tables\` para SQL.
 - **Atributos válidos de \`ref()\` por tipo (NÃO invente outros):** \`Database.SQL\` → \`Endpoint, Port, SecretArn, Password, Username\` (NÃO existe \`ConnectionString\`); \`Database.DynamoDB\` → \`Arn, Name, ConnectionString\` (Name = nome da TABELA).
+- Frontend estático no Azure = \`Storage.Bucket\` (privado) + \`Network.CDN\` com \`bucketRef\`, MESMA stack — igual à AWS. CDN NUNCA é um \`Storage.Bucket\`; cada construct id aparece UMA vez por stack.
+
+### EXEMPLO OBRIGATÓRIO — cenário SQL/PostgreSQL no Azure (COPIE este padrão)
+\`\`\`typescript
+// stacks/database/db-stack.ts
+import { Stack, Database } from '@iacmp/core';
+const stack = new Stack('db-stack');
+new Database.SQL(stack, 'AppDB', { engine: 'postgres', size: 'small' });
+export default stack;
+
+// stacks/compute/api-stack.ts — env com refs VÁLIDOS de Database.SQL
+import { Stack, Fn, ref } from '@iacmp/core';
+const stack = new Stack('api-stack');
+new Fn.Lambda(stack, 'ListItemsFn', {
+  runtime: 'nodejs20', handler: 'dist/listItems.handler', code: '.',
+  environment: {
+    DB_HOST: ref('AppDB', 'Endpoint'),
+    DB_PORT: ref('AppDB', 'Port'),
+    DB_USER: ref('AppDB', 'Username'),
+    DB_PASSWORD: ref('AppDB', 'Password'),
+    DB_NAME: 'postgres',
+  },
+});
+export default stack;
+\`\`\`
+\`\`\`typescript
+// src/listItems.ts — handler SQL no Azure usa pg, NUNCA @azure/data-tables
+import { Client } from 'pg';
+export async function handler() {
+  const db = new Client({
+    host: process.env.DB_HOST, port: Number(process.env.DB_PORT ?? 5432),
+    user: process.env.DB_USER, password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME ?? 'postgres',
+    ssl: { rejectUnauthorized: false },   // OBRIGATÓRIO — o servidor exige TLS
+  });
+  await db.connect();
+  const r = await db.query('SELECT * FROM items');
+  await db.end();
+  return { statusCode: 200, body: JSON.stringify(r.rows) };
+}
+\`\`\`
 
 ### PROIBIDO em handlers deste projeto (causa "Region is missing" em runtime):
 - \`import { DynamoDBClient } from '@aws-sdk/client-dynamodb'\`
