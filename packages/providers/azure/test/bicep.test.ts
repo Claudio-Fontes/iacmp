@@ -355,3 +355,11 @@ describe('Database.SQL — cadeia da senha e refs de conexão (ciclo p01az6)', (
     expect(bicep).not.toMatch(/DB_PASSWORD'[\s\S]{0,40}\.id/);
   });
 });
+
+test('Database.SQL postgres com backupRetentionDays: 0 (free) → piso de 7 (Azure exige mín 7)', () => {
+  const stack = new Stack('db');
+  new Database.SQL(stack, 'AppDB', { engine: 'postgres', backupRetentionDays: 0 });
+  const bicep = emitBicep(stack);
+  expect(bicep).toContain('backupRetentionDays: 7');
+  expect(bicep).not.toContain('backupRetentionDays: 0');
+});
