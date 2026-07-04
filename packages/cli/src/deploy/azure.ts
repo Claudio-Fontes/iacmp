@@ -154,9 +154,17 @@ http.createServer(async (req, res) => {
     for (const [k, v] of Object.entries(req.headers)) {
       headers[k] = Array.isArray(v) ? v.join(',') : String(v);
     }
+    // pathParameters no formato Lambda-proxy: os handlers gerados leem
+    // event.pathParameters.id (rotas CRUD /recurso/{id}). Sem o template da
+    // rota, a convenção é: 2º segmento do path = id (cobre o padrão CRUD).
+    const segments = pathname.split('/').filter(Boolean);
+    const pathParameters = segments.length >= 2
+      ? { id: decodeURIComponent(segments[1]), proxy: segments.slice(1).join('/') }
+      : null;
     const event = {
       httpMethod: req.method || 'GET',
       path: pathname,
+      pathParameters,
       queryStringParameters,
       headers,
       body: body || null,
@@ -230,7 +238,17 @@ export const azureExecutor: DeployExecutor = {
         for (const fn of functions) {
           const buildDir = buildFunctionBundle(ctx.cwd, fn, ctx.templatePath);
           if (buildDir) {
-            const fullImage = `${loginServer}/${fn.containerAppName}:latest`;
+            // Tag = hash do conteúdo do bundle, NUNCA :latest — com :latest, uma
+            // mudança só de código deixa o template Bicep idêntico, o deployment
+            // stack não vê diff e o Container App NÃO cria revisão nova (continua
+            // rodando a imagem velha). O hash muda o param → revisão nova.
+            const crypto = require('crypto') as typeof import('crypto');
+            const hash = crypto.createHash('sha256');
+            for (const f of fs.readdirSync(buildDir).sort()) {
+              hash.update(fs.readFileSync(path.join(buildDir, f)));
+            }
+            const tag = hash.digest('hex').slice(0, 12);
+            const fullImage = `${loginServer}/${fn.containerAppName}:${tag}`;
             // docker build + push localmente (Docker daemon obrigatório).
             // --platform linux/amd64: Azure Container Apps exige amd64;
             // sem isso, build em Apple Silicon gera ARM64 e o deploy rejeita.
