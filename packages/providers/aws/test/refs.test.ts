@@ -234,3 +234,16 @@ test('ref concatenado com string ([object Object]) → erro claro no synth (p04a
   new Fn.Lambda(s, 'Fn', { runtime: 'nodejs20', handler: 'i.h', code: 'dist/' });
   expect(() => provider.synthesize(s, [s])).toThrow(/object Object|MeuBucket\/\*|não concatene/i);
 });
+
+test('Events.EventBridge scheduleExpression completa → ScheduleExpression (não EventPattern) [p05aws2]', () => {
+  const s = new Stack('sched', { region: 'us-east-1' });
+  new Fn.Lambda(s, 'ReportFn', { runtime: 'nodejs20', handler: 'i.h', code: 'dist/' });
+  // modelo emitiu scheduleExpression completa em vez de cron/rate crus
+  new (require('@iacmp/core').Events).EventBridge(s, 'Sched', {
+    rules: [{ name: 'Daily', scheduleExpression: 'cron(0 8 * * ? *)', targetLambdaId: 'ReportFn' } as any],
+  });
+  const tpl = provider.synthesize(s, [s]) as any;
+  const rule = Object.values(tpl.Resources).find((r: any) => r.Type === 'AWS::Events::Rule') as any;
+  expect(rule.Properties.ScheduleExpression).toBe('cron(0 8 * * ? *)');
+  expect(rule.Properties.EventPattern).toBeUndefined();
+});

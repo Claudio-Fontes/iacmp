@@ -137,10 +137,14 @@ export function synthMessaging(
         if (r.detailTypes) pattern['detail-type'] = r.detailTypes;
 
         // Agendamento: cron('...') ou rate('...'). CloudFormation exige o wrapper.
+        // Tolera também `scheduleExpression` já completa (a IA às vezes emite
+        // 'cron(0 8 * * ? *)' direto em vez dos campos cron/rate crus).
         const scheduleExpression = r.cron
           ? `cron(${r.cron})`
           : r.rate
           ? `rate(${normalizeRate(r.rate as string)})`
+          : typeof r.scheduleExpression === 'string' && r.scheduleExpression
+          ? (/^(cron|rate)\(/.test(r.scheduleExpression as string) ? r.scheduleExpression as string : `cron(${r.scheduleExpression})`)
           : undefined;
 
         // Target: resolve targetLambdaId (ou targetArn com id) → ARN da Lambda.

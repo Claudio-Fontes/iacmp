@@ -628,15 +628,18 @@ new Events.EventBridge(stack, 'LogicalId', {
   rules?: [
     {
       name: string,
-      source?: string[],
+      cron?: string,             // agendamento cron CRU (sem wrapper): '0 8 * * ? *'
+      rate?: string,             // OU rate: '1 hour', '5 minutes' — um dos dois p/ rule agendada
+      source?: string[],         // OU rule por evento (source/detailTypes) — sem cron/rate
       detailTypes?: string[],
-      targetArn?: string,
+      targetLambdaId?: string,   // id da Fn.Lambda alvo (o synth resolve o ARN + a permission)
       description?: string,
     }
   ],
 });
 export default stack;
 \`\`\`
+**REGRA — rule agendada:** para "rodar a cada X / todo dia às Y", use \`cron\` (cru, ex: \`cron: '0 8 * * ? *'\`) OU \`rate\` (ex: \`rate: '1 hour'\`) — NUNCA um campo \`scheduleExpression\` com \`'cron(...)'\` já embrulhado (o synth adiciona o wrapper). O alvo é \`targetLambdaId\` (id da Fn.Lambda), não \`targetArn\` inventado. Rule agendada NÃO tem source/detailTypes.
 
 ### Workflow.StepFunctions — Step Functions / Logic Apps / Cloud Workflows
 \`\`\`typescript
