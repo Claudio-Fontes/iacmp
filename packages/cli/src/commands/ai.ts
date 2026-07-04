@@ -288,10 +288,15 @@ async function runGeneration(
         .filter(pkg => !pkg.startsWith('.') && !pkg.startsWith('@iacmp/'))
         .filter((v, i, a) => a.indexOf(v) === i);
 
-      // Para projetos Azure, @aws-sdk/* não deve ser instalado — o erro TS
-      // "Cannot find module '@aws-sdk/...'" forçará a IA a usar @azure/data-tables.
+      // Para projetos Azure, o SDK ERRADO não deve ser instalado — o erro TS
+      // "Cannot find module" força a IA a trocar pro SDK certo via tsHint:
+      // @aws-sdk/* nunca; @azure/data-tables só se o projeto tem Database.DynamoDB
+      // (num projeto Database.SQL o driver é pg — instalar data-tables mascararia
+      // o handler errado até o runtime).
+      const stacksForSdk = parsed.files.filter(f => f.path.startsWith('stacks/')).map(f => f.content).join('\n');
+      const sqlOnlyAzure = iacProvider === 'azure' && stacksForSdk.includes('Database.SQL') && !stacksForSdk.includes('Database.DynamoDB');
       const modulesToInstall = iacProvider === 'azure'
-        ? missingModules.filter(pkg => !pkg.startsWith('@aws-sdk/'))
+        ? missingModules.filter(pkg => !pkg.startsWith('@aws-sdk/') && !(sqlOnlyAzure && pkg === '@azure/data-tables'))
         : missingModules;
 
       if (modulesToInstall.length > 0) {
@@ -321,11 +326,22 @@ async function runGeneration(
     if (!result.valid) {
       const spinner = ora({ text: 'Validação TypeScript falhou — corrigindo...', spinner: 'dots', discardStdin: false }).start();
       const originalFileCount = parsed.files.length;
+      // O hint Azure precisa ser ciente do DATASTORE do projeto: mandar
+      // data-tables num projeto Database.SQL (postgres) cria a espiral inversa
+      // (foi a causa do 5/5 do ciclo p01az4). data-tables é SÓ para DynamoDB.
+      const stacksBlob = parsed.files.filter(f => f.path.startsWith('stacks/')).map(f => f.content).join('\n');
+      const hasDynamo = stacksBlob.includes('Database.DynamoDB');
+      const hasSql = stacksBlob.includes('Database.SQL');
       const tsHint = iacProvider === 'azure'
-        ? `\n\nEste projeto usa Azure Container Apps — use APENAS @azure/data-tables para acesso a Cosmos DB:\n` +
-          `  import { TableClient } from '@azure/data-tables';\n` +
-          `  const client = TableClient.fromConnectionString(process.env.COSMOS_CONNECTION!, process.env.TABLE_NAME!);\n` +
-          `NUNCA use @aws-sdk/* (DynamoDBClient, etc.) — não funciona no Azure.`
+        ? (hasSql && !hasDynamo
+          ? `\n\nEste projeto Azure usa Database.SQL (PostgreSQL flexible server) — os handlers usam o driver pg NORMAL:\n` +
+            `  import { Client } from 'pg';\n` +
+            `  const db = new Client({ host: process.env.DB_HOST, port: Number(process.env.DB_PORT ?? 5432), user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME ?? 'postgres', ssl: { rejectUnauthorized: false } });\n` +
+            `NUNCA use @azure/data-tables (é Cosmos DB Table, outro produto) nem @aws-sdk/*.`
+          : `\n\nEste projeto usa Azure Container Apps — use APENAS @azure/data-tables para acesso a Cosmos DB:\n` +
+            `  import { TableClient } from '@azure/data-tables';\n` +
+            `  const client = TableClient.fromConnectionString(process.env.COSMOS_CONNECTION!, process.env.TABLE_NAME!);\n` +
+            `NUNCA use @aws-sdk/* (DynamoDBClient, etc.) — não funciona no Azure.`)
         : ``;
       session.addUserMessage(
         `Erros TypeScript:\n${result.errors.join('\n')}\n\n` +
@@ -391,31 +407,43 @@ async function runGeneration(
           // Detecção programática porque o modelo tende a ignorar o override no prompt
           // quando o contexto tem muitas instruções AWS.
           if (iacProvider === 'azure') {
-            const awsSdkFiles = parsed.files.filter(
-              f => (f.path.startsWith('src/') || f.path.endsWith('.ts')) &&
-                   !f.path.startsWith('stacks/') &&
-                   f.content.includes('@aws-sdk/')
+            const loopStacksBlob = parsed.files.filter(f => f.path.startsWith('stacks/')).map(f => f.content).join('\n');
+            const loopSqlOnly = loopStacksBlob.includes('Database.SQL') && !loopStacksBlob.includes('Database.DynamoDB');
+            const handlerFiles = parsed.files.filter(
+              f => (f.path.startsWith('src/') || f.path.endsWith('.ts')) && !f.path.startsWith('stacks/')
             );
-            if (awsSdkFiles.length > 0) {
-              spinner.fail(`Azure: handlers usando @aws-sdk/* (incompatível) — corrigindo...`);
-              const fileList = awsSdkFiles.map(f => f.path).join(', ');
+            const awsSdkFiles = handlerFiles.filter(f => f.content.includes('@aws-sdk/'));
+            // Projeto SQL: data-tables no handler é o SDK errado (Cosmos ≠ Postgres).
+            const wrongTableFiles = loopSqlOnly ? handlerFiles.filter(f => f.content.includes('@azure/data-tables')) : [];
+            if (awsSdkFiles.length > 0 || wrongTableFiles.length > 0) {
+              const fileList = [...new Set([...awsSdkFiles, ...wrongTableFiles].map(f => f.path))].join(', ');
+              spinner.fail(`Azure: handlers com SDK errado (${fileList}) — corrigindo...`);
+              const sdkExample = loopSqlOnly
+                ? `Reescreva APENAS esses handlers usando o driver pg (o banco é PostgreSQL flexible server):\n` +
+                  `\`\`\`typescript\n` +
+                  `import { Client } from 'pg';\n` +
+                  `const db = new Client({ host: process.env.DB_HOST, port: Number(process.env.DB_PORT ?? 5432), user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME ?? 'postgres', ssl: { rejectUnauthorized: false } });\n` +
+                  `\`\`\`\n\n` +
+                  `Env vars que o Fn.Lambda DEVE ter: DB_HOST: ref('AppDB','Endpoint'), DB_PORT: ref('AppDB','Port'), DB_USER: ref('AppDB','Username'), DB_PASSWORD: ref('AppDB','Password').\n` +
+                  `NUNCA use @azure/data-tables (Cosmos Table — outro produto) nem @aws-sdk/*.`
+                : `Reescreva APENAS esses handlers usando @azure/data-tables. Exemplo completo de CRUD:\n` +
+                  `\`\`\`typescript\n` +
+                  `import { TableClient } from '@azure/data-tables';\n` +
+                  `import { randomUUID } from 'crypto';\n` +
+                  `const client = TableClient.fromConnectionString(process.env.COSMOS_CONNECTION!, process.env.TABLE_NAME!);\n` +
+                  `// CREATE: await client.createEntity({ partitionKey: 'items', rowKey: randomUUID(), name, description })\n` +
+                  `// LIST:   const items=[]; for await (const e of client.listEntities()) items.push({id:e.rowKey, name:e.name})\n` +
+                  `// GET:    const e = await client.getEntity('items', id)\n` +
+                  `// UPDATE: await client.updateEntity({ partitionKey: 'items', rowKey: id, name, description }, 'Replace')\n` +
+                  `// DELETE: await client.deleteEntity('items', id)\n` +
+                  `\`\`\`\n\n` +
+                  `Env vars que o Fn.Lambda DEVE ter:\n` +
+                  `  COSMOS_CONNECTION: ref('ItemsTable', 'ConnectionString')\n` +
+                  `  TABLE_NAME: ref('ItemsTable', 'Name')\n\n` +
+                  `NUNCA use DynamoDBClient, DynamoDBDocumentClient, ScanCommand, GetCommand, PutCommand, DeleteCommand ou qualquer @aws-sdk/*.`;
               correctionMsg =
-                `ERRO AZURE: os handlers ${fileList} usam @aws-sdk/* que NÃO funciona no Azure Container Apps — causa "Region is missing" em runtime.\n\n` +
-                `Reescreva APENAS esses handlers usando @azure/data-tables. Exemplo completo de CRUD:\n` +
-                `\`\`\`typescript\n` +
-                `import { TableClient } from '@azure/data-tables';\n` +
-                `import { randomUUID } from 'crypto';\n` +
-                `const client = TableClient.fromConnectionString(process.env.COSMOS_CONNECTION!, process.env.TABLE_NAME!);\n` +
-                `// CREATE: await client.createEntity({ partitionKey: 'items', rowKey: randomUUID(), name, description })\n` +
-                `// LIST:   const items=[]; for await (const e of client.listEntities()) items.push({id:e.rowKey, name:e.name})\n` +
-                `// GET:    const e = await client.getEntity('items', id)\n` +
-                `// UPDATE: await client.updateEntity({ partitionKey: 'items', rowKey: id, name, description }, 'Replace')\n` +
-                `// DELETE: await client.deleteEntity('items', id)\n` +
-                `\`\`\`\n\n` +
-                `Env vars que o Fn.Lambda DEVE ter:\n` +
-                `  COSMOS_CONNECTION: ref('ItemsTable', 'ConnectionString')\n` +
-                `  TABLE_NAME: ref('ItemsTable', 'Name')\n\n` +
-                `NUNCA use DynamoDBClient, DynamoDBDocumentClient, ScanCommand, GetCommand, PutCommand, DeleteCommand ou qualquer @aws-sdk/*.\n\n` +
+                `ERRO AZURE: os handlers ${fileList} usam o SDK errado para o datastore deste projeto.\n\n` +
+                sdkExample + `\n\n` +
                 `Retorne o JSON completo com TODOS os ${parsed.files.length} arquivo(s) da resposta anterior (corrija os handlers + atualize as env vars dos Fn.Lambda nas stacks).`;
               // Não usa break/continue — cai no bloco abaixo que envia correctionMsg para a IA
             }
