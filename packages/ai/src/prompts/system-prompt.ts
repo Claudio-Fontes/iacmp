@@ -493,6 +493,15 @@ export default stack;
   - Para serviços com API HTTP simples (ex: Anthropic, OpenAI, qualquer REST externo), use \`fetch\` nativo (disponível sem instalar nada no runtime \`nodejs18\`/\`nodejs20\`) em vez de instalar o SDK oficial do serviço — evita dependência extra que o iacmp não gerencia.
   - Para serviços da própria cloud que exigem assinatura de requisição (ex: DynamoDB, S3), use o SDK correspondente (\`@aws-sdk/client-dynamodb\`, etc.) — não dá pra assinar SigV4 só com \`fetch\`.
   - **Use SEMPRE o AWS SDK v3 (\`@aws-sdk/*\`), NUNCA o v2 (\`aws-sdk\`).** O runtime \`nodejs20\` provê o v3 embutido (imports \`@aws-sdk/*\` são externalizados no bundle); o pacote \`aws-sdk\` (v2) NÃO vem no runtime e ainda incha o bundle. Para S3 use \`@aws-sdk/client-s3\` com comandos: \`import { S3Client, GetObjectCommand, PutObjectCommand, CopyObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3'\`. NUNCA \`import { S3 } from 'aws-sdk'\` nem \`.promise()\` (padrão v2). Para ler o corpo de um objeto no v3: \`const r = await s3.send(new GetObjectCommand({...})); const body = await r.Body.transformToString();\`.
+  - **Presigned URL do S3 (upload/download direto do browser) — SÓ a forma v3.** \`getSignedUrl\` recebe um COMMAND, nunca params inline (isso é v2 e não compila). Import: \`import { getSignedUrl } from '@aws-sdk/s3-request-presigner';\` (avise no nextSteps que precisa desse pacote). Padrão EXATO:
+\`\`\`typescript
+import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+const s3 = new S3Client({});
+const url = await getSignedUrl(s3, new PutObjectCommand({ Bucket: process.env.BUCKET_NAME, Key: key }), { expiresIn: 300 });
+\`\`\`
+    NUNCA \`getSignedUrl(s3, { Bucket, Key, ExpiresIn })\` (v2, quebra o build com TS2353).
+  - **Handler HTTP + strict null:** \`event.pathParameters\`, \`event.queryStringParameters\` e \`event.body\` podem ser null — SEMPRE use optional chaining + default: \`const id = event.pathParameters?.id ?? '';\` (sem isso o tsc do deploy falha com TS18047).
   - **DynamoDB — use SEMPRE o DocumentClient** (\`@aws-sdk/lib-dynamodb\`: \`DynamoDBDocumentClient\`, \`PutCommand\`, \`GetCommand\`, \`ScanCommand\`, \`DeleteCommand\`, \`QueryCommand\`), que aceita JSON simples (\`{ id: '1', name: 'x' }\`). Os imports EXATOS (o \`DynamoDBClient\` vem de OUTRO pacote — nunca de \`lib-dynamodb\`):
 \`\`\`typescript
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
