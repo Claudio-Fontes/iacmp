@@ -65,9 +65,11 @@ function crossParamName(constructId: string, attribute: string): string {
 function resolveRef(r: Ref, idx: Map<string, BaseConstruct>, crossParams: Map<string, string>): string {
   const c = idx.get(r.constructId);
   if (!c) {
-    // Referência cross-stack — vira parâmetro no template
+    // Referência cross-stack — vira parâmetro no template.
+    // 'string:optional' gera default '' — permite deploy mesmo quando o construto
+    // referenciado não existe em nenhuma stack (env var fica vazia, não bloqueia ARM).
     const pName = crossParamName(r.constructId, r.attribute);
-    crossParams.set(pName, 'string');
+    if (!crossParams.has(pName)) crossParams.set(pName, 'string:optional');
     return expr(pName);
   }
   const sym = toSym(r.constructId);
@@ -1135,11 +1137,42 @@ function synthesizeConstruct(
       const authorizerLambdaId = props.authorizerLambdaId as string | undefined;
       const routes = (props.routes as Array<Record<string, unknown>>) ?? [];
 
+      // Coleta authorizer IDs por rota (per-route authorizerLambdaId, não apenas top-level).
+      const routeAuthorizerIds = [...new Set(routes.filter(r => r.authorizerLambdaId).map(r => r.authorizerLambdaId as string))];
+      const hasRouteAuthorizer = routeAuthorizerIds.length > 0;
+
+      // Quando há rotas protegidas, procura um Secret.Vault na mesma stack para usar como
+      // JWT signing key via APIM validate-jwt (Azure-native, sem precisar do Container App authorizer).
+      const kvEntry = hasRouteAuthorizer ? [...idx.entries()].find(([, c]) => c.type === 'Secret.Vault') : undefined;
+      const jwtKvSym = kvEntry ? toSym(kvEntry[0]) : undefined;
+      // sym do named value pré-computado para usar como dependsOn nas policies validate-jwt.
+      // Sem este dependsOn, o APIM tentaria criar as policies antes do named value existir → ValidationError.
+      const apimNamedValueSym = jwtKvSym ? `${sym}JwtNamedValue` : undefined;
+
       // SEM restore:true — com restore, o ARM falha com ServiceUndeleteNotPossible quando
       // NÃO existe instância soft-deletada com esse nome (caso normal de 1º deploy).
       // Colisão com soft-delete (redeploy no mesmo RG após destroy) se resolve com
       // `az apim deletedservice purge` antes do deploy.
-      resources.push({ sym, type: 'Microsoft.ApiManagement/service', apiVersion: '2023-05-01-preview', name: apimName, location: 'location', tags: tag(construct.id), sku: { name: 'Consumption', capacity: 0 }, properties: { publisherEmail: 'admin@example.com', publisherName: construct.id, virtualNetworkType: 'None', customProperties: { 'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls10': 'false', 'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls11': 'false' } } });
+      // SystemAssigned identity necessário para APIM acessar Key Vault via named value.
+      resources.push({
+        sym,
+        type: 'Microsoft.ApiManagement/service',
+        apiVersion: '2023-05-01-preview',
+        name: apimName,
+        location: 'location',
+        tags: tag(construct.id),
+        sku: { name: 'Consumption', capacity: 0 },
+        ...(jwtKvSym ? { identity: { type: 'SystemAssigned' } } : {}),
+        properties: {
+          publisherEmail: 'admin@example.com',
+          publisherName: construct.id,
+          virtualNetworkType: 'None',
+          customProperties: {
+            'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls10': 'false',
+            'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls11': 'false',
+          },
+        },
+      });
 
       // API — um único recurso de API contém todas as operações (rotas).
       // subscriptionRequired:false = SAS/token da app, sem subscription key do APIM.
@@ -1194,11 +1227,14 @@ function synthesizeConstruct(
       }
 
       // Operações + políticas — uma por rota declarada no construct.
+      // Rotas com authorizerLambdaId ganham validate-jwt via APIM native policy (Azure-native),
+      // sem precisar chamar o Container App authorizer como pré-flight.
       for (let ri = 0; ri < routes.length; ri++) {
         const route = routes[ri];
         const method = (route.method as string) ?? 'GET';
         const path = (route.path as string) ?? '/';
         const lambdaId = route.lambdaId as string | undefined;
+        const routeAuthId = route.authorizerLambdaId as string | undefined;
         const opSym = `${sym}Op${ri}`;
         const sanitizedPath = path.replace(/\{(\w+)\+\}/g, '{$1}');
         const templateParams = [...sanitizedPath.matchAll(/\{(\w+)\}/g)].map(m => ({ name: m[1], required: true, type: 'string' }));
@@ -1218,9 +1254,60 @@ function synthesizeConstruct(
         });
         if (lambdaId) {
           const backendId = backendNameMap.get(lambdaId) ?? `backend-${lambdaId.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
-          const opXml = `<policies><inbound><base /><set-backend-service backend-id="${backendId}" /></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>`;
-          resources.push({ sym: `${sym}Policy${ri}`, type: 'Microsoft.ApiManagement/service/apis/operations/policies', apiVersion: '2023-05-01-preview', parent: opSym, name: 'policy', properties: { value: opXml, format: 'xml' } });
+          // Rota com authorizerLambdaId e Key Vault disponível → validate-jwt nativo do APIM.
+          // O APIM verifica o Bearer token antes de rotear para o backend.
+          // dependsOn no named value garante que ele existe antes que a policy seja criada (sem ele → ValidationError).
+          const usesJwt = routeAuthId !== undefined && jwtKvSym !== undefined;
+          const opXml = usesJwt
+            ? `<policies><inbound><base /><validate-jwt header-name="Authorization" failed-validation-httpcode="401" failed-validation-error-message="Unauthorized" require-expiration-time="false"><issuer-signing-keys><key>{{jwt-signing-key}}</key></issuer-signing-keys></validate-jwt><set-backend-service backend-id="${backendId}" /></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>`
+            : `<policies><inbound><base /><set-backend-service backend-id="${backendId}" /></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>`;
+          resources.push({
+            sym: `${sym}Policy${ri}`,
+            type: 'Microsoft.ApiManagement/service/apis/operations/policies',
+            apiVersion: '2023-05-01-preview',
+            parent: opSym,
+            name: 'policy',
+            properties: { value: opXml, format: 'xml' },
+            ...(usesJwt && apimNamedValueSym ? { dependsOn: [apimNamedValueSym] } : {}),
+          });
         }
+      }
+
+      // validate-jwt infrastructure: KV access policy + APIM named value.
+      // O named value 'jwt-signing-key' é referenciado na policy acima como {{jwt-signing-key}}.
+      // dependsOn garante que o APIM já tem acesso ao KV antes de tentar sincronizar o named value.
+      if (jwtKvSym) {
+        const apimKvAccessPolicySym = `${sym}KvAccessPolicy`;
+        resources.push({
+          sym: apimKvAccessPolicySym,
+          type: 'Microsoft.KeyVault/vaults/accessPolicies',
+          apiVersion: '2023-02-01',
+          parent: jwtKvSym,
+          name: 'add',
+          properties: {
+            accessPolicies: [{
+              tenantId: expr('subscription().tenantId'),
+              objectId: expr(`${sym}.identity.principalId`),
+              permissions: { secrets: ['get'] },
+            }],
+          },
+        });
+        // Usa o sym pré-computado (mesmo valor, mas declarado antes do loop de rotas)
+        resources.push({
+          sym: `${sym}JwtNamedValue`,
+          type: 'Microsoft.ApiManagement/service/namedValues',
+          apiVersion: '2023-05-01-preview',
+          parent: sym,
+          name: 'jwt-signing-key',
+          properties: {
+            displayName: 'jwt-signing-key',
+            secret: true,
+            keyVault: {
+              secretIdentifier: expr(`'\${${jwtKvSym}.properties.vaultUri}secrets/secret-value'`),
+            },
+          },
+          dependsOn: [apimKvAccessPolicySym],
+        });
       }
 
       // Authorizer backend (se definido no nível do gateway) — same vs. cross-stack
@@ -1348,8 +1435,16 @@ function synthesizeConstruct(
 
     case 'Secret.Vault': {
       const kvName = `${construct.id.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 24)}-kv`;
-      resources.push({ sym, type: 'Microsoft.KeyVault/vaults', apiVersion: '2023-02-01', name: kvName, location: 'location', tags: tag(construct.id), properties: { sku: { family: 'A', name: 'standard' }, tenantId: expr('subscription().tenantId'), enableSoftDelete: true, softDeleteRetentionInDays: 90, enablePurgeProtection: true, enabledForDeployment: false, accessPolicies: [] } });
+      resources.push({ sym, type: 'Microsoft.KeyVault/vaults', apiVersion: '2023-02-01', name: kvName, location: 'location', tags: tag(construct.id), properties: { sku: { family: 'A', name: 'standard' }, tenantId: expr('subscription().tenantId'), enableSoftDelete: true, softDeleteRetentionInDays: 90, enablePurgeProtection: true, enableRbacAuthorization: false, enabledForDeployment: false, accessPolicies: [] } });
+      // Gera um secret com valor aleatório-mas-determinístico. Usado como signing key JWT
+      // pelo validate-jwt do APIM (via named value ligado ao Key Vault).
+      const kvSecretSym = `${sym}SecretValue`;
+      // Concatena 3 uniqueString (39 chars) antes de base64() para garantir ≥ 32 bytes após
+      // decodificação — mínimo exigido pelo validate-jwt do APIM para HS256 (256 bits).
+      // Para gerar JWT de teste: leia o secret do KV → base64-decode → use como signing key no jwt.sign().
+      resources.push({ sym: kvSecretSym, type: 'Microsoft.KeyVault/vaults/secrets', apiVersion: '2023-02-01', parent: sym, name: 'secret-value', properties: { value: expr(`base64(concat(uniqueString(resourceGroup().id, '${construct.id}', 'a'), uniqueString(resourceGroup().id, '${construct.id}', 'b'), uniqueString(resourceGroup().id, '${construct.id}', 'c')))`) } });
       outputs.push({ name: `${construct.id}Id`, type: 'string', value: `${sym}.id` });
+      outputs.push({ name: `${construct.id}VaultUri`, type: 'string', value: `${sym}.properties.vaultUri` });
       break;
     }
 
