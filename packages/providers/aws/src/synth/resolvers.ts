@@ -28,7 +28,7 @@ const RESOLVE_MAP: Record<string, Record<string, ResolutionEntry>> = {
       },
       exportSuffix: '', // dynamic ref — usa sameStack para cross-stack também
     },
-    'Username': { sameStack: (_, cid, __, ctx) => ctx.dbMasterUsername.get(cid) ?? 'dbadmin', exportSuffix: 'Username' },
+    'Username': { sameStack: (_, cid, __, ctx) => ctx.dbMasterUsername.get(cid) ?? 'dbadmin', exportSuffix: '' }, // literal — sempre usa sameStack (mesmo padrão do Password)
   },
   'Database.DocumentDB': {
     'Endpoint':  { sameStack: (l) => resourceRef(`${l}Cluster`, 'Endpoint'), exportSuffix: 'Endpoint' },
@@ -265,6 +265,25 @@ export function resolveLambdaRole(
   if (ctx.kinesisEventSourceLambdas.has(lambdaId)) {
     managedPolicies.push('arn:aws:iam::aws:policy/service-role/AWSLambdaKinesisExecutionRole');
   }
+  // Auto-inline policies para Lambdas sem Policy.IAM explícito que referenciam
+  // AWS services no environment — sem as permissões correspondentes o runtime
+  // falha com AccessDeniedException. Usamos Resource:'*' para evitar dependências
+  // cross-stack de ARNs (a Lambda::Permission já restringe o invocador correto).
+  const autoStatements: Array<{ Effect: string; Action: string[]; Resource: string }> = [];
+  if (ctx.sfnInitiatorLambdas.has(lambdaId)) {
+    autoStatements.push({ Effect: 'Allow', Action: ['states:StartExecution'], Resource: '*' });
+  }
+  if (ctx.dynamoRefLambdas.has(lambdaId)) {
+    autoStatements.push({ Effect: 'Allow', Action: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem', 'dynamodb:Query', 'dynamodb:Scan'], Resource: '*' });
+  }
+  if (ctx.sqsSenderRefLambdas.has(lambdaId)) {
+    autoStatements.push({ Effect: 'Allow', Action: ['sqs:SendMessage', 'sqs:GetQueueAttributes', 'sqs:GetQueueUrl'], Resource: '*' });
+  }
+  const autoPolicies = autoStatements.length > 0 ? [{
+    PolicyName: `${lambdaLogicalId}AutoPolicy`,
+    PolicyDocument: { Version: '2012-10-17', Statement: autoStatements },
+  }] : undefined;
+
   return {
     roleRef: { 'Fn::GetAtt': [defaultRoleLogicalId, 'Arn'] },
     extraResource: [defaultRoleLogicalId, {
@@ -275,6 +294,7 @@ export function resolveLambdaRole(
           Statement: [{ Effect: 'Allow', Principal: { Service: 'lambda.amazonaws.com' }, Action: 'sts:AssumeRole' }],
         },
         ManagedPolicyArns: managedPolicies,
+        ...(autoPolicies ? { Policies: autoPolicies } : {}),
       },
     }],
   };
