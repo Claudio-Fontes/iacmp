@@ -54,7 +54,7 @@ const AZURE_ATTR_MAP: Record<string, Record<string, string>> = {
   'Messaging.Topic':       { Arn: 'id', TopicArn: 'id' },
   'Messaging.Queue':       { Arn: 'id', QueueUrl: 'id', QueueArn: 'id' },
   'Cache.Redis':           { Endpoint: 'properties.hostName', Port: 'properties.sslPort' },
-  'Secret.Vault':          { SecretArn: 'id', Arn: 'id' },
+  'Secret.Vault':          { SecretArn: 'id', Arn: 'id', VaultUri: 'properties.vaultUri', Name: 'name' },
   'Network.LoadBalancer':  { TargetGroupArn: 'id', DnsName: 'properties.dnsName' },
   'Compute.Container':     { Arn: 'id', Fqdn: 'properties.configuration.ingress.fqdn', DnsName: 'properties.configuration.ingress.fqdn' },
 };
@@ -1557,8 +1557,11 @@ function synthesizeConstruct(
     }
 
     case 'Secret.Vault': {
-      const kvName = `${construct.id.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 24)}-kv`;
-      resources.push({ sym, type: 'Microsoft.KeyVault/vaults', apiVersion: '2023-02-01', name: kvName, location: 'location', tags: tag(construct.id), properties: { sku: { family: 'A', name: 'standard' }, tenantId: expr('subscription().tenantId'), enableSoftDelete: true, softDeleteRetentionInDays: 90, enablePurgeProtection: true, enableRbacAuthorization: false, enabledForDeployment: false, accessPolicies: [] } });
+      // uniqueString(resourceGroup().id, construct.id) → nome globalmente único, sem soft-delete collision
+      // enableRbacAuthorization: true → funciona com Policy.IAM (roleAssignments); sem accessPolicies.
+      // enablePurgeProtection: false → permite recriar após destroy sem az keyvault purge.
+      const kvName = expr(`'kv-${construct.id.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 10)}-\${uniqueString(resourceGroup().id, '${construct.id}')}'`);
+      resources.push({ sym, type: 'Microsoft.KeyVault/vaults', apiVersion: '2023-02-01', name: kvName, location: 'location', tags: tag(construct.id), properties: { sku: { family: 'A', name: 'standard' }, tenantId: expr('subscription().tenantId'), enableSoftDelete: false, enableRbacAuthorization: true, enabledForDeployment: false, accessPolicies: [] } });
       // Gera um secret com valor aleatório-mas-determinístico. Usado como signing key JWT
       // pelo validate-jwt do APIM (via named value ligado ao Key Vault).
       const kvSecretSym = `${sym}SecretValue`;
@@ -1568,6 +1571,7 @@ function synthesizeConstruct(
       resources.push({ sym: kvSecretSym, type: 'Microsoft.KeyVault/vaults/secrets', apiVersion: '2023-02-01', parent: sym, name: 'secret-value', properties: { value: expr(`base64(concat(uniqueString(resourceGroup().id, '${construct.id}', 'a'), uniqueString(resourceGroup().id, '${construct.id}', 'b'), uniqueString(resourceGroup().id, '${construct.id}', 'c')))`) } });
       outputs.push({ name: `${construct.id}Id`, type: 'string', value: `${sym}.id` });
       outputs.push({ name: `${construct.id}VaultUri`, type: 'string', value: `${sym}.properties.vaultUri` });
+      outputs.push({ name: `${construct.id}Name`, type: 'string', value: `${sym}.name` });
       break;
     }
 
