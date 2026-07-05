@@ -499,6 +499,66 @@ function synthesizeConstruct(
       // ConnectionString (com a account key) — cross-stack para o handler blob
       // (BlobServiceClient.fromConnectionString). Ver resolveRef Storage.Bucket.
       outputs.push({ name: `${construct.id}ConnectionString`, type: 'string', value: `'DefaultEndpointsProtocol=https;AccountName=\${${sym}.name};AccountKey=\${${sym}.listKeys().keys[0].value};EndpointSuffix=core.windows.net'` });
+      // Event Grid trigger — eventNotifications → systemTopic no storage account + eventSubscription por lambdaId.
+      // Abordagem: Event Grid (não KEDA). KEDA só escala réplicas, não entrega o payload BlobCreated ao handler.
+      // Event Grid envia o evento via webhook HTTP (/events) e o adaptador server.js traduz
+      // o payload EventGrid → Records[].s3 (formato que o handler gerado pelo modelo espera).
+      // Cross-stack: bucket e lambda podem estar em stacks diferentes — usa param Fqdn (mesmo padrão do APIM).
+      const eventNotifications = (props.eventNotifications as Array<Record<string, unknown>>) ?? [];
+      if (eventNotifications.length > 0) {
+        const topicSym = `${sym}EventTopic`;
+        resources.push({
+          sym: topicSym,
+          type: 'Microsoft.EventGrid/systemTopics',
+          apiVersion: '2022-06-15',
+          name: `${safeStorageName(construct.id)}-evttopic`,
+          location: 'location',
+          tags: tag(construct.id),
+          properties: {
+            source: expr(`${sym}.id`),
+            topicType: 'Microsoft.Storage.StorageAccounts',
+          },
+        });
+        for (let ni = 0; ni < eventNotifications.length; ni++) {
+          const notification = eventNotifications[ni];
+          const lambdaIdRaw = notification.lambdaId;
+          // lambdaId pode ser string ou Ref<'Arn'> — extrai o constructId.
+          const lambdaId = isRef(lambdaIdRaw) ? (lambdaIdRaw as Ref).constructId : lambdaIdRaw as string;
+          if (!lambdaId) continue;
+          const lambdaConstruct = idx.get(lambdaId);
+          const lambdaSym = toSym(lambdaId);
+          let webhookUrl: string;
+          if (lambdaConstruct) {
+            // Mesma stack: referência direta ao FQDN do Container App.
+            webhookUrl = expr(`'https://\${${lambdaSym}.properties.configuration.ingress.fqdn}/events'`);
+          } else {
+            // Stack diferente: param cross-stack — deploy injeta o output Fqdn da outra stack.
+            const fqdnParam = crossParamName(lambdaId, 'Fqdn');
+            crossParams.set(fqdnParam, 'string');
+            webhookUrl = expr(`'https://\${${fqdnParam}}/events'`);
+          }
+          resources.push({
+            sym: `${topicSym}Sub${ni}`,
+            type: 'Microsoft.EventGrid/systemTopics/eventSubscriptions',
+            apiVersion: '2022-06-15',
+            parent: topicSym,
+            name: `blob-created-${ni}`,
+            // dependsOn explícito garante que o Container App esteja criado antes do Event Grid
+            // tentar validar o webhook — sem isso, a validação pode falhar por cold start.
+            ...(lambdaConstruct ? { dependsOn: [lambdaSym] } : {}),
+            properties: {
+              eventDeliverySchema: 'EventGridSchema',
+              destination: {
+                endpointType: 'WebHook',
+                properties: { endpointUrl: webhookUrl },
+              },
+              filter: {
+                includedEventTypes: ['Microsoft.Storage.BlobCreated'],
+              },
+            },
+          });
+        }
+      }
       break;
     }
 

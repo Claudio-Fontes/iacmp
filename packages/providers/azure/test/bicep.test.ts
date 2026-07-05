@@ -596,3 +596,74 @@ describe('Network.LoadBalancer Azure — no-op com Compute.Container (p10az)', (
     expect(out).toContain('applicationGateways');
   });
 });
+
+describe('Storage.Bucket eventNotifications → Event Grid trigger (p11 Azure, pipeline Blob→ContainerApp)', () => {
+  test('Storage.Bucket com eventNotifications + Function.Lambda same-stack → systemTopic + eventSubscription BlobCreated', () => {
+    const stack = new Stack('p11');
+    new Fn.Lambda(stack, 'DataProcessorFn', { runtime: 'nodejs20', handler: 'dist/processor.handler', code: '.' });
+    new Storage.Bucket(stack, 'DataBucket', {
+      eventNotifications: [{ lambdaId: 'DataProcessorFn', events: ['s3:ObjectCreated:*'] }],
+    });
+    const bicep = emitBicep(stack);
+    // systemTopic no storage account
+    expect(bicep).toContain("'Microsoft.EventGrid/systemTopics@2022-06-15'");
+    expect(bicep).toContain("topicType: 'Microsoft.Storage.StorageAccounts'");
+    // source aponta para o storage account (expressão ARM)
+    expect(bicep).toContain('dataBucket.id');
+    // eventSubscription com filtro BlobCreated
+    expect(bicep).toContain("'Microsoft.EventGrid/systemTopics/eventSubscriptions@2022-06-15'");
+    expect(bicep).toContain("'Microsoft.Storage.BlobCreated'");
+    // webhook URL referencia o FQDN do Container App (mesmo stack — referência direta)
+    expect(bicep).toContain('dataProcessorFn.properties.configuration.ingress.fqdn');
+    expect(bicep).toContain('/events');
+    // dependsOn garante Container App criado antes do eventSubscription (evita cold-start na validação)
+    expect(bicep).toContain('dependsOn');
+    expect(bicep).toContain('dataProcessorFn');
+  });
+
+  test('Storage.Bucket eventNotifications sem lambda na stack → cross-stack param Fqdn + webhook correto', () => {
+    const stack = new Stack('storage-stack');
+    new Storage.Bucket(stack, 'DataBucket', {
+      eventNotifications: [{ lambdaId: 'DataProcessorFn', events: ['s3:ObjectCreated:*'] }],
+    });
+    const bicep = emitBicep(stack);
+    // Cross-stack: sem o construct DataProcessorFn nesta stack → gera param
+    expect(bicep).toContain('param DataProcessorFnFqdn string');
+    expect(bicep).toContain("'Microsoft.EventGrid/systemTopics@2022-06-15'");
+    expect(bicep).toContain("'Microsoft.EventGrid/systemTopics/eventSubscriptions@2022-06-15'");
+    expect(bicep).toContain("'Microsoft.Storage.BlobCreated'");
+    // webhook URL usa o param cross-stack
+    expect(bicep).toContain('DataProcessorFnFqdn');
+    expect(bicep).toContain('/events');
+    // sem dependsOn (lambda em outra stack, não há símbolo local)
+    expect(bicep).not.toContain('dependsOn');
+  });
+
+  test('Storage.Bucket sem eventNotifications → NÃO gera recursos Event Grid', () => {
+    const stack = new Stack('plain');
+    new Storage.Bucket(stack, 'SimpleBucket', { versioning: true });
+    const bicep = emitBicep(stack);
+    expect(bicep).not.toContain('EventGrid');
+    expect(bicep).not.toContain('systemTopics');
+    expect(bicep).not.toContain('eventSubscriptions');
+  });
+
+  test('Storage.Bucket com múltiplos eventNotifications → um systemTopic + um sub por lambda', () => {
+    const stack = new Stack('multi');
+    new Fn.Lambda(stack, 'Fn1', { runtime: 'nodejs20', handler: 'dist/fn1.handler', code: '.' });
+    new Fn.Lambda(stack, 'Fn2', { runtime: 'nodejs20', handler: 'dist/fn2.handler', code: '.' });
+    new Storage.Bucket(stack, 'SharedBucket', {
+      eventNotifications: [
+        { lambdaId: 'Fn1', events: ['s3:ObjectCreated:*'] },
+        { lambdaId: 'Fn2', events: ['s3:ObjectCreated:*'] },
+      ],
+    });
+    const bicep = emitBicep(stack);
+    // Exatamente 1 systemTopic para o bucket
+    expect(bicep.match(/'Microsoft\.EventGrid\/systemTopics@2022-06-15'/g)?.length).toBe(1);
+    // 2 eventSubscriptions (uma por lambda)
+    expect(bicep.match(/'Microsoft\.EventGrid\/systemTopics\/eventSubscriptions@2022-06-15'/g)?.length).toBe(2);
+    expect(bicep).toContain('fn1.properties.configuration.ingress.fqdn');
+    expect(bicep).toContain('fn2.properties.configuration.ingress.fqdn');
+  });
+});

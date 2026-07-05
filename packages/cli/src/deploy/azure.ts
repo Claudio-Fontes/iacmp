@@ -202,6 +202,47 @@ http.createServer(async (req, res) => {
     const rawUrl = req.url || '/';
     const qIdx = rawUrl.indexOf('?');
     const pathname = qIdx >= 0 ? rawUrl.slice(0, qIdx) : rawUrl;
+    // Event Grid blob trigger: detectado via header aeg-event-type (Azure) ou path /events.
+    // 1) Handshake de validação — obrigatório para criação do eventSubscription no ARM.
+    //    Sem este response (200 + validationResponse), o ARM rejeita o webhook.
+    // 2) BlobCreated → traduz payload EventGrid para Records[].s3 (formato AWS que o handler espera).
+    //    O subject do evento tem o formato: /blobServices/default/containers/<c>/blobs/<key>
+    if (pathname === '/events' || req.headers['aeg-event-type']) {
+      let egEvents;
+      try { egEvents = JSON.parse(body || '[]'); } catch (_) { egEvents = []; }
+      if (!Array.isArray(egEvents)) egEvents = [egEvents];
+      if (egEvents.length > 0 && egEvents[0].eventType === 'Microsoft.EventGrid.SubscriptionValidation') {
+        const validationCode = egEvents[0].data && egEvents[0].data.validationCode;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ validationResponse: validationCode }));
+        return;
+      }
+      const blobRecords = egEvents
+        .filter(function(e) { return e.eventType === 'Microsoft.Storage.BlobCreated'; })
+        .map(function(e) {
+          const subject = e.subject || '';
+          const blobIdx = subject.indexOf('/blobs/');
+          const key = blobIdx >= 0 ? subject.slice(blobIdx + 7) : '';
+          const contIdx = subject.indexOf('/containers/');
+          const contEnd = subject.indexOf('/', contIdx + 12);
+          const container = contIdx >= 0 ? subject.slice(contIdx + 12, contEnd >= 0 ? contEnd : undefined) : '';
+          return { eventSource: 'aws:s3', s3: { bucket: { name: container }, object: { key: decodeURIComponent(key) } } };
+        });
+      if (blobRecords.length > 0) {
+        try {
+          await handler({ Records: blobRecords }, {});
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end('{}');
+        } catch (egErr) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: String(egErr) }));
+        }
+      } else {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end('{}');
+      }
+      return;
+    }
     const queryString = qIdx >= 0 ? rawUrl.slice(qIdx + 1) : '';
     const queryStringParameters = {};
     if (queryString) {
