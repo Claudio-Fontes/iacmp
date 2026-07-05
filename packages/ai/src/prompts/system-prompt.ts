@@ -155,11 +155,21 @@ export default stack;
 **REGRA — path param de key S3 com barra:** se a key do objeto pode conter \`/\` (ex: \`uploads/123.png\`), a rota \`DELETE /files/{key}\` NÃO captura a barra (404). Use greedy \`{key+}\`. No handler: \`const key = event.pathParameters?.key ?? '';\` — NUNCA \`event.pathParameters.key\` sem \`?.\` (se for null, explode com "Cannot read properties of null").
 **REGRA — pipeline "S3 dispara Lambda" (ObjectCreated):** quando uma Lambda deve ser ACIONADA por upload de arquivo no S3, declare o trigger em \`Storage.Bucket.eventNotifications: [{ lambdaId: 'MinhaFn', events: ['s3:ObjectCreated:*'] }]\` — o synth gera a NotificationConfiguration e a Lambda::Permission. NUNCA exponha essa Lambda por \`Fn.ApiGateway\` (o pipeline dispara sozinho no upload, não por HTTP) e NÃO invente rotas HTTP. O handler recebe o evento S3; o NOME DO BUCKET vem de \`record.s3.bucket.name\` (não de env var) e a KEY vem de \`record.s3.object.key\`. Exemplo de handler:
 \`\`\`typescript
+import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
+const s3 = new S3Client({});
+
 export const handler = async (event: S3Event): Promise<void> => {
   for (const record of event.Records) {
-    const bucketName = record.s3.bucket.name;   // nome do bucket-trigger — NUNCA process.env.RAW_BUCKET_NAME
-    const key = decodeURIComponent(record.s3.object.key.replace(/\+/g, ' '));
-    // lê o objeto, processa, grava em outro bucket/tabela via env vars (PROCESSED_BUCKET_NAME, TABLE_NAME)
+    // ORIGEM (bucket-trigger): SEMPRE do evento — NUNCA process.env.RAW_BUCKET_NAME (o synth omite essa env var pra evitar o ciclo CFN; em runtime ela seria undefined)
+    const bucketName = record.s3.bucket.name;
+    const key = decodeURIComponent(record.s3.object.key.replace(/\+/g, ' '));  // '+' vira espaço; key vem URL-encoded
+
+    const obj = await s3.send(new GetObjectCommand({ Bucket: bucketName, Key: key }));
+    const body = await obj.Body!.transformToString();
+    // ... processa ...
+
+    // DESTINO (bucket SEM trigger, outra stack): PODE vir de env var via ref('ProcessedBucket','Name')
+    await s3.send(new PutObjectCommand({ Bucket: process.env.PROCESSED_BUCKET_NAME!, Key: key, Body: body }));
   }
 };
 \`\`\`

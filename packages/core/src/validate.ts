@@ -341,6 +341,12 @@ export function validateSemantics(stacks: Stack[], profile?: EnvironmentProfile)
     // Alias legado: código gerado antes de Function.Lambda existir usava Fn.Lambda
     'Fn.Lambda': 'compute',
   };
+  // Camadas que podem coexistir na mesma stack quando há um bucket-trigger.
+  // O par Storage.Bucket(eventNotifications→Lambda) + Function.Lambda é forçosamente
+  // acoplado (dependência circular cross-stack se separados). A Policy.IAM da Lambda
+  // e um eventual Secret.Vault (security) também pertencem a essa unidade de deploy.
+  const TRIGGER_EXEMPT_LAYERS = new Set(['storage', 'compute', 'security']);
+
   for (const s of stacks) {
     const layers = new Map<string, string[]>(); // camada → tipos encontrados
     for (const c of s.constructs) {
@@ -350,13 +356,34 @@ export function validateSemantics(stacks: Stack[], profile?: EnvironmentProfile)
       list.push(c.type);
       layers.set(layer, list);
     }
-    if (layers.size >= 3) {
-      errors.push(
-        `Stack "${s.name}" mistura ${layers.size} camadas (${[...layers.keys()].join(', ')}) num único arquivo — é um monolito. ` +
-        `Separe em stacks distintas por camada (stacks/network/, stacks/database/, stacks/compute/, stacks/storage/, stacks/security/, ...). ` +
-        `Cada camada em seu próprio arquivo permite deploy/destroy independente.`,
+    if (layers.size < 3) continue;
+
+    // Exceção: padrão S3-trigger — bucket com eventNotifications apontando para
+    // uma Lambda na mesma stack. Separar em stacks diferentes criaria dependência
+    // circular (bucket precisa do ARN da Lambda; Lambda precisa do nome do bucket).
+    // Só isenta quando as camadas são subconjunto de {storage, compute, security}.
+    const stackLambdaIds = new Set(
+      s.constructs
+        .filter(c => c.type === 'Function.Lambda' || c.type === 'Fn.Lambda')
+        .map(c => c.id),
+    );
+    const hasBucketTrigger = s.constructs.some(c => {
+      if (c.type !== 'Storage.Bucket') return false;
+      const notifications = (c.props as Record<string, unknown>).eventNotifications;
+      if (!Array.isArray(notifications) || notifications.length === 0) return false;
+      return (notifications as Array<Record<string, unknown>>).some(
+        n => typeof n.lambdaId === 'string' && stackLambdaIds.has(n.lambdaId),
       );
-    }
+    });
+    const layerKeys = [...layers.keys()];
+    const isTriggerPattern = hasBucketTrigger && layerKeys.every(l => TRIGGER_EXEMPT_LAYERS.has(l));
+    if (isTriggerPattern) continue;
+
+    errors.push(
+      `Stack "${s.name}" mistura ${layers.size} camadas (${layerKeys.join(', ')}) num único arquivo — é um monolito. ` +
+      `Separe em stacks distintas por camada (stacks/network/, stacks/database/, stacks/compute/, stacks/storage/, stacks/security/, ...). ` +
+      `Cada camada em seu próprio arquivo permite deploy/destroy independente.`,
+    );
   }
 
   return errors;
