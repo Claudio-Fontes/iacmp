@@ -391,9 +391,10 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
       const apigwType = (p.type as string) ?? 'HTTP';
       const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
       const stageName = (p.stageName as string) ?? (apigwType === 'REST' ? 'prod' : '$default');
-      const urlValue = apigwType === 'REST'
-        ? { 'Fn::Sub': `https://\${${logicalId}}.execute-api.\${AWS::Region}.amazonaws.com/${stageName}` }
-        : { 'Fn::GetAtt': [`${logicalId}Stage`, 'InvokeUrl'] };
+      // Para ambos os tipos (REST e HTTP/v2), a invoke URL é construída via Fn::Sub.
+      // AWS::ApiGatewayV2::Stage não expõe InvokeUrl como GetAtt — usar Fn::Sub com
+      // o Ref da API (que retorna o apiId) e o nome do stage.
+      const urlValue = { 'Fn::Sub': `https://\${${logicalId}}.execute-api.\${AWS::Region}.amazonaws.com/${stageName}` };
       outputs['ApiUrl'] = {
         Value: urlValue,
         Export: { Name: `${prefixStack(stack.name)}-${construct.id}-ApiUrl` },
