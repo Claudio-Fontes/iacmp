@@ -1427,7 +1427,12 @@ function synthesizeConstruct(
       resources.push({ sym: nsSym, type: 'Microsoft.ServiceBus/namespaces', apiVersion: '2022-10-01-preview', name: nsName, location: 'location', tags: tag(construct.id), sku: { name: 'Standard', tier: 'Standard' }, properties: {} });
       resources.push({ sym: topicSym, type: 'Microsoft.ServiceBus/namespaces/topics', apiVersion: '2022-10-01-preview', parent: nsSym, name: construct.id, properties: { defaultMessageTimeToLive: 'P14D', requiresDuplicateDetection: false } });
       subscriptions.forEach((s, i) => {
-        resources.push({ sym: `${sym}Sub${i}`, type: 'Microsoft.ServiceBus/namespaces/topics/subscriptions', apiVersion: '2022-10-01-preview', parent: topicSym, name: `sub-${i}`, properties: { lockDuration: 'PT30S', deadLetteringOnMessageExpiration: false, forwardTo: s.endpoint } });
+        // forwardTo is only valid for Service Bus queues/topics in the same namespace.
+        // Lambda/container protocol endpoints are external — omit forwardTo.
+        const isInternalForward = s.protocol !== 'lambda' && s.protocol !== 'function' && s.protocol !== 'container' && !isRef(s.endpoint as unknown);
+        const subProps: Record<string, unknown> = { lockDuration: 'PT30S', deadLetteringOnMessageExpiration: false };
+        if (isInternalForward) subProps.forwardTo = s.endpoint;
+        resources.push({ sym: `${sym}Sub${i}`, type: 'Microsoft.ServiceBus/namespaces/topics/subscriptions', apiVersion: '2022-10-01-preview', parent: topicSym, name: `sub-${i}`, properties: subProps });
       });
       outputs.push({ name: `${construct.id}Id`, type: 'string', value: `${nsSym}.id` });
       break;
@@ -1460,7 +1465,75 @@ function synthesizeConstruct(
     case 'Monitoring.Alarm': {
       const dimensions = props.dimensions as Record<string, string> | undefined;
       const operatorMap: Record<string, string> = { GreaterThanThreshold: 'GreaterThan', LessThanThreshold: 'LessThan', GreaterThanOrEqualToThreshold: 'GreaterThanOrEqual', LessThanOrEqualToThreshold: 'LessThanOrEqual' };
-      resources.push({ sym, type: 'Microsoft.Insights/metricAlerts', apiVersion: '2018-03-01', name: construct.id, location: 'global', tags: tag(construct.id), properties: { description: `Alarm for ${props.metricName}`, severity: 2, enabled: true, evaluationFrequency: `PT${(props.periodSeconds as number) ?? 60}S`, windowSize: `PT${((props.periodSeconds as number) ?? 60) * ((props.evaluationPeriods as number) ?? 2)}S`, criteria: { 'odata.type': 'Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria', allOf: [{ name: 'criterion1', metricName: props.metricName as string, metricNamespace: (props.namespace as string) ?? 'Microsoft.Web/sites', operator: operatorMap[(props.comparisonOperator as string) ?? 'GreaterThanThreshold'] ?? 'GreaterThan', threshold: props.threshold as number, timeAggregation: (props.statistic as string) ?? 'Average', dimensions: dimensions ? Object.entries(dimensions).map(([k, v]) => ({ name: k, operator: 'Include', values: [v] })) : [] }] }, actions: (props.alarmActions as string[] ?? []).map(a => ({ actionGroupId: a })) } });
+      // Azure Metric Alerts need actionGroups — refs to topics/lambdas are not valid.
+      // Auto-create a Microsoft.Insights/actionGroups and wire it to the alarm.
+      const rawAlarmActions = (props.alarmActions as unknown[]) ?? [];
+      let alarmActionList: Array<Record<string, unknown>> = [];
+      if (rawAlarmActions.length > 0) {
+        const agSym = `${sym}Ag`;
+        const agName = `${construct.id}-ag`;
+        const azureFunctionReceivers: Array<Record<string, unknown>> = [];
+        for (const action of rawAlarmActions) {
+          if (isRef(action as Record<string, unknown>)) {
+            const ref = action as Ref;
+            const target = idx.get(ref.constructId);
+            if (target && (target.type === 'Function.Lambda' || target.type === 'Compute.Container')) {
+              const tSym = toSym(ref.constructId);
+              azureFunctionReceivers.push({
+                name: `fn-${ref.constructId}`,
+                functionAppResourceId: expr(`${tSym}.id`),
+                functionName: ref.constructId,
+                httpTriggerUrl: expr(`'https://\${${tSym}.properties.configuration.ingress.fqdn}/api/alert'`),
+                useCommonAlertSchema: true,
+              });
+            }
+            // Messaging.Topic/other: empty action group is valid — Azure will route via email if configured later
+          }
+        }
+        resources.push({ sym: agSym, type: 'Microsoft.Insights/actionGroups', apiVersion: '2023-01-01', name: agName, location: "'global'", tags: tag(construct.id), properties: { groupShortName: 'alert-ag', enabled: true, emailReceivers: [], smsReceivers: [], webhookReceivers: [], azureFunctionReceivers } });
+        alarmActionList = [{ actionGroupId: expr(`${agSym}.id`) }];
+      }
+      // metricAlerts require location 'global' (string literal, not a Bicep identifier).
+      // Scope: find a Container App in the same stack to use as the single-resource scope.
+      // If none found, fall back to subscription scope with MultipleResource criteria.
+      // Convert seconds to nearest allowed ISO 8601 interval (PT1M,PT5M,PT15M,PT30M,PT1H,PT6H,PT12H,P1D).
+      const allowedMins = [1, 5, 15, 30, 60, 360, 720, 1440];
+      const toInterval = (secs: number): string => {
+        const mins = Math.round(secs / 60) || 1;
+        const clamped = allowedMins.reduce((a, b) => Math.abs(b - mins) < Math.abs(a - mins) ? b : a);
+        if (clamped >= 1440) return 'P1D';
+        if (clamped >= 60) return `PT${clamped / 60}H`;
+        return `PT${clamped}M`;
+      };
+      const periodSecs = (props.periodSeconds as number) ?? 60;
+      const evalPeriods = (props.evaluationPeriods as number) ?? 1;
+      const evalFreq = toInterval(periodSecs);
+      const windowSizeVal = toInterval(periodSecs * evalPeriods);
+      // Find a Function.Lambda or Compute.Container in the same stack to scope the alarm.
+      const lambdaConstruct = [...idx.values()].find(c => c.type === 'Function.Lambda' || c.type === 'Compute.Container');
+      let alarmScopes: unknown[];
+      let alarmCriteriaType: string;
+      let alarmMetricNamespace: string;
+      if (lambdaConstruct) {
+        const lSym = toSym(lambdaConstruct.id);
+        alarmScopes = [expr(`${lSym}.id`)];
+        alarmCriteriaType = 'Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria';
+        alarmMetricNamespace = 'Microsoft.App/containerApps';
+      } else {
+        alarmScopes = [expr('subscription().id')];
+        alarmCriteriaType = 'Microsoft.Azure.Monitor.MultipleResourceMultipleMetricCriteria';
+        alarmMetricNamespace = 'Microsoft.App/containerApps';
+      }
+      // Map AWS/abstract metric names to valid Azure Container Apps metrics.
+      // Valid Container Apps metrics: Requests, TotalCpuUsage, TotalMemoryUsage, Replicas, RestartCount.
+      const metricNameMap: Record<string, string> = {
+        Errors: 'Requests', p99: 'Requests', Latency: 'Requests',
+        ThrottledRequests: 'Requests', Duration: 'TotalCpuUsage', Invocations: 'Requests',
+        ConcurrentExecutions: 'Replicas', Count: 'Requests', RequestDuration: 'Requests',
+      };
+      const rawMetricName = props.metricName as string;
+      const azureMetricName = metricNameMap[rawMetricName] ?? (alarmMetricNamespace === 'Microsoft.App/containerApps' ? 'Requests' : rawMetricName);
+      resources.push({ sym, type: 'Microsoft.Insights/metricAlerts', apiVersion: '2018-03-01', name: construct.id, location: "'global'", tags: tag(construct.id), properties: { description: `Alarm for ${props.metricName}`, severity: 2, enabled: true, scopes: alarmScopes, evaluationFrequency: evalFreq, windowSize: windowSizeVal, criteria: { 'odata.type': alarmCriteriaType, allOf: [{ name: 'criterion1', criterionType: 'StaticThresholdCriterion', metricName: azureMetricName, metricNamespace: alarmMetricNamespace, operator: operatorMap[(props.comparisonOperator as string) ?? 'GreaterThanThreshold'] ?? 'GreaterThan', threshold: props.threshold as number, timeAggregation: (props.statistic as string) ?? 'Average', dimensions: [] }] }, actions: alarmActionList } });
       break;
     }
 
