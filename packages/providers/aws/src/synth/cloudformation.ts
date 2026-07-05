@@ -384,6 +384,21 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
         Export: { Name: `${prefixStack(stack.name)}-${construct.id}-Url` },
       };
     }
+    if (construct.type === 'Function.ApiGateway') {
+      // Exporta a invoke URL do API Gateway — usada em testes funcionais e integrações.
+      // HTTP/WEBSOCKET v2: GetAtt InvokeUrl do Stage. REST v1: Fn::Sub com o id da API.
+      const p = construct.props as Record<string, unknown>;
+      const apigwType = (p.type as string) ?? 'HTTP';
+      const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
+      const stageName = (p.stageName as string) ?? (apigwType === 'REST' ? 'prod' : '$default');
+      const urlValue = apigwType === 'REST'
+        ? { 'Fn::Sub': `https://\${${logicalId}}.execute-api.\${AWS::Region}.amazonaws.com/${stageName}` }
+        : { 'Fn::GetAtt': [`${logicalId}Stage`, 'InvokeUrl'] };
+      outputs['ApiUrl'] = {
+        Value: urlValue,
+        Export: { Name: `${prefixStack(stack.name)}-${construct.id}-ApiUrl` },
+      };
+    }
   }
 
   const nodes: ResourceNode[] = Object.entries(resources).map(([logicalId, res]) => ({
