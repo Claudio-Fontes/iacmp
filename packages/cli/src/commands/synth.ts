@@ -236,6 +236,19 @@ export default class Synth extends Command {
       );
     }
 
+    // ── DB_USER hardcoded em vez de ref('<Db>','Username') ──────────────────
+    // A IA crava DB_USER: 'postgres' (default óbvio) na env do Fn.Lambda, mas o
+    // admin real do Database.SQL varia por cloud (AWS/Azure = 'dbadmin'). Deploya,
+    // mas a auth do banco falha em runtime ("password authentication failed for
+    // user postgres"). Só ref('<Db>','Username') resolve pro admin certo de cada cloud.
+    const dbUserErrors = this.validateDbUserRef(loadedStacks);
+    if (dbUserErrors.length > 0) {
+      this.error(
+        `DB_USER hardcoded no Fn.Lambda (a auth do banco falha em runtime):\n\n` +
+        dbUserErrors.map(e => `  • ${e}`).join('\n'),
+      );
+    }
+
     // ── Passada 2: sintetiza e grava só as stacks que o --stack pediu ───────
     const targetStacks = loadedStacks.filter(s => !flags.stack || s.stackName === flags.stack);
     if (targetStacks.length === 0) {
@@ -677,6 +690,38 @@ export default class Synth extends Command {
           `\`<TableArn>/index/*\` na Policy.IAM, ou — para limpeza por TTL — troque QueryCommand(IndexName) ` +
           `por ScanCommand + FilterExpression 'attr < :now' (sem índice).`,
         );
+      }
+    }
+    return errors;
+  }
+
+  /**
+   * Bloqueia Fn.Lambda que define DB_USER (ou PGUSER/DB_USERNAME) como STRING
+   * literal quando há um Database.SQL no projeto. O admin real varia por cloud
+   * (AWS RDS e Azure flexible = 'dbadmin'), então um valor cravado como 'postgres'
+   * deploya mas quebra a autenticação em runtime. Só `ref('<Db>','Username')` (que
+   * o synth carrega como objeto Ref, não string) resolve pro admin certo de cada
+   * cloud. Detecta o valor literal e manda trocar pelo ref.
+   */
+  private validateDbUserRef(loaded: LoadedStack[]): string[] {
+    const errors: string[] = [];
+    const hasSql = loaded.some(({ stack }) => stack.constructs.some(c => c.type === 'Database.SQL'));
+    if (!hasSql) return errors;
+    for (const { stack } of loaded) {
+      for (const c of stack.constructs) {
+        if (c.type !== 'Function.Lambda') continue;
+        const env = (c.props as Record<string, unknown>).environment as Record<string, unknown> | undefined;
+        if (!env) continue;
+        // ref() é carregado como objeto (isRef); só string literal é hardcode.
+        for (const key of ['DB_USER', 'PGUSER', 'DB_USERNAME']) {
+          const v = env[key];
+          if (typeof v === 'string') {
+            errors.push(
+              `Fn.Lambda "${c.id}": ${key} está hardcoded como '${v}'. Use ref('<DbId>','Username') — ` +
+              `o admin do Database.SQL varia por cloud (AWS/Azure = 'dbadmin'); um valor cravado quebra a auth em runtime.`,
+            );
+          }
+        }
       }
     }
     return errors;

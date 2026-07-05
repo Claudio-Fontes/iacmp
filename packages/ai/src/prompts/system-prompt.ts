@@ -899,7 +899,10 @@ const vpcConfig = {
   securityGroupIds: ['LambdaSG'],
 };
 // AppDB está em OUTRA stack → referência cross-stack via ref()
-const dbEnv = { DB_HOST: ref('AppDB', 'Endpoint'), DB_PORT: ref('AppDB', 'Port'), DB_PASSWORD: ref('AppDB', 'Password'), DB_USER: 'dbadmin', DB_NAME: 'postgres' };
+// DB_USER é SEMPRE ref('AppDB','Username') — NUNCA hardcode 'postgres'/'root'/'admin':
+// o admin real varia por cloud (o synth resolve pro valor certo). Hardcodar quebra
+// a autenticação em runtime (ex: no Azure o admin é 'dbadmin', não 'postgres').
+const dbEnv = { DB_HOST: ref('AppDB', 'Endpoint'), DB_PORT: ref('AppDB', 'Port'), DB_PASSWORD: ref('AppDB', 'Password'), DB_USER: ref('AppDB', 'Username'), DB_NAME: 'postgres' };
 new Fn.Lambda(stack, 'ListItemsFn',   { runtime: 'nodejs20', handler: 'dist/listItems.handler',   code: '.', environment: dbEnv, ...vpcConfig });
 new Fn.Lambda(stack, 'GetItemFn',     { runtime: 'nodejs20', handler: 'dist/getItem.handler',     code: '.', environment: dbEnv, ...vpcConfig });
 new Fn.Lambda(stack, 'CreateItemFn',  { runtime: 'nodejs20', handler: 'dist/createItem.handler',  code: '.', environment: dbEnv, ...vpcConfig });
