@@ -273,7 +273,7 @@ export default class Synth extends Command {
         switch (provider) {
           case 'aws': {
             const p = new AWSProvider();
-            const template = p.synthesize(typedStack, allStacks, profile);
+            const template = p.synthesize(typedStack, allStacks, profile, config.name || undefined);
             const outPath = path.join(provOutDir, `${stackName}.json`);
             fs.writeFileSync(outPath, JSON.stringify(template, null, 2) + '\n');
             this.log(`Sintetizado: ${outPath}`);

@@ -120,6 +120,14 @@ export default class Deploy extends Command {
     // Acumula outputs de stacks Azure deployadas para injetar como params na próxima
     const azureOutputAccumulator: Record<string, string> = {};
 
+    // Nome físico da stack no CloudFormation = prefixado com o nome do projeto
+    // para evitar colisões entre projetos distintos na mesma conta AWS.
+    // Sem nome de projeto (config.name vazio ou ausente), comportamento idêntico
+    // ao anterior (sem prefixo). O nome LÓGICO (t.stackName, do arquivo) continua
+    // sendo usado para display e para filtro --stack.
+    const physicalStackName = (logicalName: string): string =>
+      config.name ? `${config.name}-${logicalName}` : logicalName;
+
     const baseCtx: Omit<DeployContext, 'stackName' | 'templatePath'> = {
       cwd,
       region,
@@ -165,7 +173,7 @@ export default class Deploy extends Command {
       // conflito depois de tentar criar o changeset, com um erro confuso
       // (ResourceExistenceCheck).
       if (provider === 'aws' && !dryRun) {
-        const conflicts = findExistingRetainedResources(t.filePath, region, t.stackName);
+        const conflicts = findExistingRetainedResources(t.filePath, region, physicalStackName(t.stackName));
         if (conflicts.length > 0) {
           const list = conflicts.map((c) => `${c.typeName} "${c.identifier}"`).join(', ');
           this.log(chalk.red(
@@ -186,7 +194,7 @@ export default class Deploy extends Command {
 
       const ctx: DeployContext = {
         ...baseCtx,
-        stackName: t.stackName,
+        stackName: physicalStackName(t.stackName),
         templatePath: t.filePath,
         ...(provider === 'azure' && Object.keys(azureOutputAccumulator).length > 0
           ? { outputParams: { ...azureOutputAccumulator } }

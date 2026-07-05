@@ -35,7 +35,7 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): Array
   );
 }
 
-export function buildGraph(stack: Stack, allStacks?: Stack[], profile: EnvironmentProfile = DEFAULT_PROFILE): StackGraph {
+export function buildGraph(stack: Stack, allStacks?: Stack[], profile: EnvironmentProfile = DEFAULT_PROFILE, projectName?: string): StackGraph {
   const resources: Record<string, CloudFormationResource> = {};
   const outputs: Record<string, { Value: unknown; Export: { Name: string } }> = {};
 
@@ -45,6 +45,14 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
   // `allStacks` (testes isolados), usa só a stack atual como universo —
   // mesmo efeito de antes (toda referência resolve local).
   const universe = allStacks ?? [stack];
+
+  // Quando projectName está presente (synth real com iacmp.json), todos os
+  // StackNames físicos e Export Names são prefixados com ele. Isso garante
+  // que dois projetos distintos na mesma conta AWS nunca colidam em stacks
+  // (`vpc-stack` do p08 vs `vpc-stack` do p09 viram `p08-vpc-stack` e
+  // `p09-vpc-stack`). Sem projectName (testes isolados), comportamento idêntico
+  // ao anterior — nenhum teste existente é afetado.
+  const prefixStack = (name: string): string => projectName ? `${projectName}-${name}` : name;
 
   // Normalização: preenche defaults derivados do perfil (AZ de subnet, porta do
   // SG do banco) in-place ANTES de validar e emitir — assim os bugs recorrentes
@@ -73,12 +81,12 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
   const publicSubnetsByVpc = new Map<string, Array<{ id: string; stackName: string }>>();
   for (const s of universe) {
     for (const c of s.constructs) {
-      registry.set(c.id, { stackName: s.name, type: c.type });
+      registry.set(c.id, { stackName: prefixStack(s.name), type: c.type });
       if (c.type === 'Network.Subnet') {
         const p = c.props as Record<string, unknown>;
         if (p.public && typeof p.vpcId === 'string') {
           const arr = publicSubnetsByVpc.get(p.vpcId) ?? [];
-          arr.push({ id: c.id, stackName: s.name });
+          arr.push({ id: c.id, stackName: prefixStack(s.name) });
           publicSubnetsByVpc.set(p.vpcId, arr);
         }
       }
@@ -96,7 +104,7 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
             idx++;
             if (!l.redirectToHttps && !listenerLogicalId) listenerLogicalId = `${lbLogicalId}Listener${idx}`;
           }
-          albDefaultTg.set(c.id, { stackName: s.name, tgLogicalId: `${lbLogicalId}TG${tgs[0].name.replace(/[^a-zA-Z0-9]/g, '')}`, listenerLogicalId });
+          albDefaultTg.set(c.id, { stackName: prefixStack(s.name), tgLogicalId: `${lbLogicalId}TG${tgs[0].name.replace(/[^a-zA-Z0-9]/g, '')}`, listenerLogicalId });
         }
       }
       if (c.type === 'Function.Lambda' && Array.isArray((c.props as Record<string, unknown>).eventSources)) {
@@ -108,7 +116,7 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
         const p = c.props as Record<string, unknown>;
         if (p.attachType === 'lambda' && typeof p.attachTo === 'string') {
           lambdaRoles.set(p.attachTo, {
-            stackName: s.name,
+            stackName: prefixStack(s.name),
             roleLogicalId: `${c.id.replace(/[^a-zA-Z0-9]/g, '')}Role`,
           });
         }
@@ -130,7 +138,7 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
       }
     }
   }
-  const ctx: SynthContext = { currentStackName: stack.name, registry, lambdaRoles, vpcLambdas, dbSecretSuffix, dbMasterUsername, sqsEventSourceLambdas, kinesisEventSourceLambdas, albDefaultTg, publicSubnetsByVpc, profile };
+  const ctx: SynthContext = { currentStackName: prefixStack(stack.name), registry, lambdaRoles, vpcLambdas, dbSecretSuffix, dbMasterUsername, sqsEventSourceLambdas, kinesisEventSourceLambdas, albDefaultTg, publicSubnetsByVpc, profile };
 
   for (const construct of stack.constructs) {
     const entries = synthesizeConstruct(construct, ctx);
@@ -140,27 +148,27 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
     if (construct.type === 'Network.VPC') {
       const p = construct.props as Record<string, unknown>;
       const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
-      synthesizeVPCChildren(logicalId, (p.cidr as string) ?? '10.0.0.0/16', (p.maxAzs as number) ?? 0, resources, outputs, stack.name, construct.id);
+      synthesizeVPCChildren(logicalId, (p.cidr as string) ?? '10.0.0.0/16', (p.maxAzs as number) ?? 0, resources, outputs, prefixStack(stack.name), construct.id);
       // Exporta sempre — custo zero, e é o que permite outra stack (ou um
       // harness de teste lendo via describe-stacks) referenciar essa VPC pelo
       // ID real em vez de depender da VPC default da conta.
       outputs[`${logicalId}VpcId`] = {
         Value: resourceRef(logicalId, 'Id'),
-        Export: { Name: `${stack.name}-${construct.id}-VpcId` },
+        Export: { Name: `${prefixStack(stack.name)}-${construct.id}-VpcId` },
       };
     }
     if (construct.type === 'Network.Subnet') {
       const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
       outputs[`${logicalId}SubnetId`] = {
         Value: resourceRef(logicalId, 'Id'),
-        Export: { Name: `${stack.name}-${construct.id}-SubnetId` },
+        Export: { Name: `${prefixStack(stack.name)}-${construct.id}-SubnetId` },
       };
     }
     if (construct.type === 'Network.SecurityGroup') {
       const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
       outputs[`${logicalId}GroupId`] = {
         Value: resourceRef(logicalId, 'GroupId'),
-        Export: { Name: `${stack.name}-${construct.id}-GroupId` },
+        Export: { Name: `${prefixStack(stack.name)}-${construct.id}-GroupId` },
       };
     }
     if (construct.type === 'Secret.Vault') {
@@ -168,7 +176,7 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
       const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
       outputs[`${logicalId}SecretArn`] = {
         Value: resourceRef(logicalId, 'Id'),
-        Export: { Name: `${stack.name}-${construct.id}-SecretArn` },
+        Export: { Name: `${prefixStack(stack.name)}-${construct.id}-SecretArn` },
       };
     }
     if (construct.type === 'Storage.Bucket') {
@@ -176,11 +184,11 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
       const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
       outputs[`${logicalId}Name`] = {
         Value: resourceRef(logicalId, 'Id'),
-        Export: { Name: `${stack.name}-${construct.id}-Name` },
+        Export: { Name: `${prefixStack(stack.name)}-${construct.id}-Name` },
       };
       outputs[`${logicalId}Arn`] = {
         Value: resourceRef(logicalId, 'Arn'),
-        Export: { Name: `${stack.name}-${construct.id}-Arn` },
+        Export: { Name: `${prefixStack(stack.name)}-${construct.id}-Arn` },
       };
     }
     if (construct.type === 'Messaging.Queue' || construct.type === 'Messaging.Topic') {
@@ -188,12 +196,12 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
       const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
       outputs[`${logicalId}Arn`] = {
         Value: resourceRef(logicalId, construct.type === 'Messaging.Topic' ? 'TopicArn' : 'Arn'),
-        Export: { Name: `${stack.name}-${construct.id}-Arn` },
+        Export: { Name: `${prefixStack(stack.name)}-${construct.id}-Arn` },
       };
       if (construct.type === 'Messaging.Queue') {
         outputs[`${logicalId}QueueUrl`] = {
           Value: resourceRef(logicalId, 'Id'),
-          Export: { Name: `${stack.name}-${construct.id}-QueueUrl` },
+          Export: { Name: `${prefixStack(stack.name)}-${construct.id}-QueueUrl` },
         };
       }
     }
@@ -202,7 +210,7 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
       const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
       outputs[`${logicalId}Arn`] = {
         Value: resourceRef(logicalId, 'Arn'),
-        Export: { Name: `${stack.name}-${construct.id}-Arn` },
+        Export: { Name: `${prefixStack(stack.name)}-${construct.id}-Arn` },
       };
     }
     if (construct.type === 'Database.DynamoDB') {
@@ -210,11 +218,11 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
       const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
       outputs[`${logicalId}Name`] = {
         Value: resourceRef(logicalId, 'Id'),
-        Export: { Name: `${stack.name}-${construct.id}-Name` },
+        Export: { Name: `${prefixStack(stack.name)}-${construct.id}-Name` },
       };
       outputs[`${logicalId}Arn`] = {
         Value: resourceRef(logicalId, 'Arn'),
-        Export: { Name: `${stack.name}-${construct.id}-Arn` },
+        Export: { Name: `${prefixStack(stack.name)}-${construct.id}-Arn` },
       };
     }
     if (construct.type === 'Function.Lambda') {
@@ -223,7 +231,7 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
       const lambdaLogicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
       outputs[`${lambdaLogicalId}Arn`] = {
         Value: resourceRef(lambdaLogicalId, 'Arn'),
-        Export: { Name: `${stack.name}-${construct.id}-Arn` },
+        Export: { Name: `${prefixStack(stack.name)}-${construct.id}-Arn` },
       };
     }
     if (construct.type === 'Policy.IAM') {
@@ -234,7 +242,7 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
         const roleLogicalId = `${construct.id.replace(/[^a-zA-Z0-9]/g, '')}Role`;
         outputs[`${roleLogicalId}RoleArn`] = {
           Value: resourceRef(roleLogicalId, 'Arn'),
-          Export: { Name: `${stack.name}-${roleLogicalId}-RoleArn` },
+          Export: { Name: `${prefixStack(stack.name)}-${roleLogicalId}-RoleArn` },
         };
       }
     }
@@ -246,30 +254,30 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
       const endpointResource = isAurora ? `${logicalId}Cluster` : logicalId;
       outputs[`${logicalId}Endpoint`] = {
         Value: resourceRef(endpointResource, 'Endpoint.Address'),
-        Export: { Name: `${stack.name}-${construct.id}-Endpoint` },
+        Export: { Name: `${prefixStack(stack.name)}-${construct.id}-Endpoint` },
       };
       outputs[`${logicalId}Port`] = {
         Value: resourceRef(endpointResource, 'Endpoint.Port'),
-        Export: { Name: `${stack.name}-${construct.id}-Port` },
+        Export: { Name: `${prefixStack(stack.name)}-${construct.id}-Port` },
       };
       outputs[`${logicalId}SecretArn`] = {
         Value: resourceRef(`${logicalId}Secret`, 'Id'),
-        Export: { Name: `${stack.name}-${construct.id}-SecretArn` },
+        Export: { Name: `${prefixStack(stack.name)}-${construct.id}-SecretArn` },
       };
     }
     if (construct.type === 'Database.DocumentDB') {
       const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
       outputs[`${logicalId}Endpoint`] = {
         Value: resourceRef(`${logicalId}Cluster`, 'Endpoint'),
-        Export: { Name: `${stack.name}-${construct.id}-Endpoint` },
+        Export: { Name: `${prefixStack(stack.name)}-${construct.id}-Endpoint` },
       };
       outputs[`${logicalId}Port`] = {
         Value: resourceRef(`${logicalId}Cluster`, 'Port'),
-        Export: { Name: `${stack.name}-${construct.id}-Port` },
+        Export: { Name: `${prefixStack(stack.name)}-${construct.id}-Port` },
       };
       outputs[`${logicalId}SecretArn`] = {
         Value: resourceRef(`${logicalId}Secret`, 'Id'),
-        Export: { Name: `${stack.name}-${construct.id}-SecretArn` },
+        Export: { Name: `${prefixStack(stack.name)}-${construct.id}-SecretArn` },
       };
     }
     if (construct.type === 'Cache.Redis') {
@@ -279,11 +287,11 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
       const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
       outputs[`${logicalId}Endpoint`] = {
         Value: resourceRef(logicalId, 'PrimaryEndPoint.Address'),
-        Export: { Name: `${stack.name}-${construct.id}-Endpoint` },
+        Export: { Name: `${prefixStack(stack.name)}-${construct.id}-Endpoint` },
       };
       outputs[`${logicalId}Port`] = {
         Value: resourceRef(logicalId, 'PrimaryEndPoint.Port'),
-        Export: { Name: `${stack.name}-${construct.id}-Port` },
+        Export: { Name: `${prefixStack(stack.name)}-${construct.id}-Port` },
       };
     }
     if (construct.type === 'Network.WAF') {
@@ -291,7 +299,7 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
       const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
       outputs[`${logicalId}Arn`] = {
         Value: resourceRef(logicalId, 'Arn'),
-        Export: { Name: `${stack.name}-${construct.id}-Arn` },
+        Export: { Name: `${prefixStack(stack.name)}-${construct.id}-Arn` },
       };
     }
     if (construct.type === 'Network.LoadBalancer') {
@@ -303,7 +311,7 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
         const tgLogicalId = `${logicalId}TG${tgs[0].name.replace(/[^a-zA-Z0-9]/g, '')}`;
         outputs[`${logicalId}TargetGroupArn`] = {
           Value: resourceRef(tgLogicalId, 'Id'),
-          Export: { Name: `${stack.name}-${construct.id}-TargetGroupArn` },
+          Export: { Name: `${prefixStack(stack.name)}-${construct.id}-TargetGroupArn` },
         };
       }
     }
@@ -313,7 +321,7 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
       const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
       outputs[`${logicalId}Url`] = {
         Value: { 'Fn::GetAtt': [logicalId, 'DomainName'] },
-        Export: { Name: `${stack.name}-${construct.id}-Url` },
+        Export: { Name: `${prefixStack(stack.name)}-${construct.id}-Url` },
       };
     }
   }
@@ -332,11 +340,11 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
     value: out.Value,
   }));
 
-  return { stackName: stack.name, nodes, exports: graphExports };
+  return { stackName: prefixStack(stack.name), nodes, exports: graphExports };
 }
 
-export function synthesize(stack: Stack, allStacks?: Stack[], profile: EnvironmentProfile = DEFAULT_PROFILE): CloudFormationTemplate {
-  const graph = buildGraph(stack, allStacks, profile);
+export function synthesize(stack: Stack, allStacks?: Stack[], profile: EnvironmentProfile = DEFAULT_PROFILE, projectName?: string): CloudFormationTemplate {
+  const graph = buildGraph(stack, allStacks, profile, projectName);
   const template = emitCloudFormation(graph);
   validateResourceReferences(template.Resources);
   validateNoNullValues(template.Resources);

@@ -50,7 +50,7 @@ describe('deploy --dry-run — caso feliz por provider (synth antes)', () => {
     expect(r.stdout).toContain('aws cloudformation package');
     expect(r.stdout).toContain('--s3-bucket');
     expect(r.stdout).toContain('aws cloudformation deploy');
-    expect(r.stdout).toContain('--stack-name main-stack');
+    expect(r.stdout).toContain('--stack-name test-main-stack');
     expect(r.stdout).toContain('Deploy concluído.');
   });
 
@@ -147,8 +147,8 @@ describe('deploy --dry-run — múltiplas stacks e filtro --stack', () => {
     expect(r.status).toBe(0);
     expect(r.stdout).toContain('Stack: net-stack — 11 recurso(s)');
     expect(r.stdout).toContain('Stack: data-stack — 1 recurso(s)');
-    expect(r.stdout).toContain('--stack-name net-stack');
-    expect(r.stdout).toContain('--stack-name data-stack');
+    expect(r.stdout).toContain('--stack-name test-net-stack');
+    expect(r.stdout).toContain('--stack-name test-data-stack');
   });
 
   test('--stack net-stack deploya só ela (ignora data-stack)', () => {

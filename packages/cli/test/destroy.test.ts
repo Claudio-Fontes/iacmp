@@ -30,7 +30,7 @@ describe('destroy --dry-run', () => {
     expect(r.status).toBe(0);
     expect(r.stdout).toContain('main-stack');
     expect(r.stdout).toContain('aws cloudformation delete-stack');
-    expect(r.stdout).toContain('--stack-name main-stack');
+    expect(r.stdout).toContain('--stack-name test-main-stack');
     expect(r.stdout).toContain('aws cloudformation wait stack-delete-complete');
     expect(r.stdout).toContain('Destroy concluído.');
     // --dry-run nunca pede confirmação

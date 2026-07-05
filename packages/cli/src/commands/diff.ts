@@ -69,11 +69,11 @@ function renderDiff(oldText: string, newText: string): boolean {
 
 // Deve reproduzir EXATAMENTE o que `synth` grava em disco, senão o diff acusa
 // uma mudança fantasma (ex.: synth grava JSON com '\n' final). Ver synth.ts.
-function synthStack(stack: Stack, provider: string): string {
+function synthStack(stack: Stack, provider: string, projectName?: string): string {
   switch (provider) {
     case 'aws': {
       const p = new AWSProvider();
-      return JSON.stringify(p.synthesize(stack), null, 2) + '\n';
+      return JSON.stringify(p.synthesize(stack, undefined, undefined, projectName || undefined), null, 2) + '\n';
     }
     case 'azure': {
       const p = new AzureProvider();
@@ -115,9 +115,9 @@ export default class Diff extends Command {
       this.error('Projeto não inicializado. Rode: iacmp init');
     }
 
-    let config: { provider?: string };
+    let config: { provider?: string; name?: string };
     try {
-      config = readJsonFile<{ provider?: string }>(configPath);
+      config = readJsonFile<{ provider?: string; name?: string }>(configPath);
     } catch (err) {
       this.error(errMessage(err));
     }
@@ -179,7 +179,7 @@ export default class Diff extends Command {
       const oldText = fs.readFileSync(savedPath, 'utf-8');
       let newText: string;
       try {
-        newText = synthStack(stack as Stack, provider);
+        newText = synthStack(stack as Stack, provider, config.name);
       } catch (err) {
         this.warn(`Erro ao sintetizar ${stackName}: ${errMessage(err)}`);
         continue;

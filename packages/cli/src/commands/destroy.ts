@@ -88,6 +88,11 @@ export default class Destroy extends Command {
       this.error('Configure "resourceGroup" no iacmp.json para usar --provider azure.');
     }
 
+    // Nome físico da stack no CloudFormation = prefixado com o nome do projeto
+    // (mesmo critério do deploy). Sem config.name, comportamento sem prefixo.
+    const physicalStackName = (logicalName: string): string =>
+      config.name ? `${config.name}-${logicalName}` : logicalName;
+
     const baseCtx: Omit<DestroyContext, 'stackName'> = {
       cwd,
       region,
@@ -158,7 +163,7 @@ export default class Destroy extends Command {
     for (const t of templates) {
       // Em modo real (não dry-run), pular stacks que não estão deployadas para evitar erro "not found"
       if (!dryRun && executor.describeStatus) {
-        const status = executor.describeStatus(t.stackName, baseCtx);
+        const status = executor.describeStatus(physicalStackName(t.stackName), baseCtx);
         if (!status.deployed) {
           this.log(`Stack: ${t.stackName} ${chalk.yellow('(não deployada — ignorada)')}`);
           this.log('');
@@ -167,7 +172,7 @@ export default class Destroy extends Command {
       }
 
       this.log(`Stack: ${t.stackName}`);
-      const ctx: DestroyContext = { ...baseCtx, stackName: t.stackName };
+      const ctx: DestroyContext = { ...baseCtx, stackName: physicalStackName(t.stackName) };
 
       let commands;
       try {
