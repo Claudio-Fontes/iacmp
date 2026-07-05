@@ -109,6 +109,100 @@ describe('AzureProvider (Bicep)', () => {
     expect(out2.match(/'Microsoft\.App\/containerApps@2023-05-01'/g)?.length).toBe(2);
   });
 
+  // ── Compute.Container → Container Apps (BCP055 fix) ──────────────────────────
+
+  test('Compute.Container → Microsoft.App/containerApps (não ContainerInstance)', () => {
+    const stack = new Stack('test');
+    new Compute.Container(stack, 'AppContainer', { image: 'myapp:latest', port: 8080 });
+    const out = synth(stack);
+    expect(out).toContain("'Microsoft.App/containerApps@2023-05-01'");
+    expect(out).not.toContain('ContainerInstance');
+    expect(out).not.toContain('containerGroups');
+    expect(out).not.toContain('memoryInGB');
+  });
+
+  test('Compute.Container → shared ManagedEnvironment criado', () => {
+    const stack = new Stack('test');
+    new Compute.Container(stack, 'AppContainer', { image: 'myapp:latest' });
+    const out = synth(stack);
+    expect(out.match(/'Microsoft\.App\/managedEnvironments@2023-05-01'/g)?.length).toBe(1);
+  });
+
+  test('Compute.Container → sem float literal (cpu usa json(), memory string Gi)', () => {
+    const stack = new Stack('test');
+    // 256 cpu units = 0.25 vCore, 512 MB = 0.5Gi
+    new Compute.Container(stack, 'AppContainer', { image: 'myapp:latest', cpu: 256, memory: 512 });
+    const out = synth(stack);
+    // CPU: json() obrigatório (float literal BCP055)
+    expect(out).toContain("json('0.25')");
+    // Memory: string Gi (não número)
+    expect(out).toContain("'0.5Gi'");
+    // Garantir que não há 0.3 ou 0.5 como número literal (seria BCP055)
+    expect(out).not.toMatch(/cpu:\s+0\.\d/);
+    expect(out).not.toMatch(/memoryInGB:\s+0\.\d/);
+  });
+
+  test('Compute.Container com cpu:512 memory:1024 → json(0.5) e 1Gi', () => {
+    const stack = new Stack('test');
+    new Compute.Container(stack, 'Worker', { image: 'worker:v1', cpu: 512, memory: 1024 });
+    const out = synth(stack);
+    expect(out).toContain("json('0.5')");
+    expect(out).toContain("'1Gi'");
+  });
+
+  test('Compute.Container → image via parâmetro Bicep + ACR params', () => {
+    const stack = new Stack('test');
+    new Compute.Container(stack, 'AppContainer', { image: 'myapp:latest', port: 3000 });
+    const out = synth(stack);
+    // Imagem via param (não hardcoded)
+    expect(out).toContain('param appContainerImage string');
+    expect(out).toContain('param acrServer string');
+    expect(out).toContain('param acrPassword string');
+  });
+
+  test('Compute.Container → ingress externo com targetPort configurado', () => {
+    const stack = new Stack('test');
+    new Compute.Container(stack, 'Web', { image: 'nginx:latest', port: 8080 });
+    const out = synth(stack);
+    expect(out).toContain('external: true');
+    expect(out).toContain('targetPort: 8080');
+  });
+
+  test('Compute.Container → minReplicas/maxReplicas mapeados do autoscaling', () => {
+    const stack = new Stack('test');
+    new Compute.Container(stack, 'Worker', { image: 'worker:v1', minCapacity: 2, maxCapacity: 20 });
+    const out = synth(stack);
+    expect(out).toContain('minReplicas: 2');
+    expect(out).toContain('maxReplicas: 20');
+  });
+
+  test('Compute.Container → outputs Id, PrincipalId, Fqdn', () => {
+    const stack = new Stack('test');
+    new Compute.Container(stack, 'AppContainer', { image: 'myapp:latest' });
+    const out = synth(stack);
+    expect(out).toContain('output AppContainerId');
+    expect(out).toContain('output AppContainerPrincipalId');
+    expect(out).toContain('output AppContainerFqdn');
+    expect(out).toContain('.properties.configuration.ingress.fqdn');
+  });
+
+  test('Compute.Container e Function.Lambda na mesma stack → 1 único ManagedEnvironment', () => {
+    const stack = new Stack('mixed');
+    new Compute.Container(stack, 'AppContainer', { image: 'myapp:latest' });
+    new Fn.Lambda(stack, 'Handler', { runtime: 'nodejs20', handler: 'index.handler', code: '.' });
+    const out = synth(stack);
+    expect(out.match(/'Microsoft\.App\/managedEnvironments@2023-05-01'/g)?.length).toBe(1);
+    expect(out.match(/'Microsoft\.App\/containerApps@2023-05-01'/g)?.length).toBe(2);
+  });
+
+  test('Compute.Container env var undefined → erro claro no synth', () => {
+    const stack = new Stack('test');
+    new Compute.Container(stack, 'App', { image: 'myapp:latest', environment: { X: undefined as any } });
+    expect(() => synth(stack)).toThrow(/undefined|process\.env/i);
+  });
+
+  // ── Fim dos testes Compute.Container ─────────────────────────────────────────
+
   test('Messaging.Queue → namespaces + queues', () => {
     const stack = new Stack('test');
     new Messaging.Queue(stack, 'MyQueue', {});

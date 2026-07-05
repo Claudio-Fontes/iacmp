@@ -55,6 +55,7 @@ const AZURE_ATTR_MAP: Record<string, Record<string, string>> = {
   'Cache.Redis':           { Endpoint: 'properties.hostName', Port: 'properties.sslPort' },
   'Secret.Vault':          { SecretArn: 'id', Arn: 'id' },
   'Network.LoadBalancer':  { TargetGroupArn: 'id', DnsName: 'properties.dnsName' },
+  'Compute.Container':     { Arn: 'id', Fqdn: 'properties.configuration.ingress.fqdn', DnsName: 'properties.configuration.ingress.fqdn' },
 };
 
 function crossParamName(constructId: string, attribute: string): string {
@@ -342,38 +343,73 @@ function synthesizeConstruct(
     }
 
     case 'Compute.Container': {
-      const environment = (props.environment as Record<string, string>) ?? {};
-      const envVars = Object.entries(environment).map(([k, v]) => ({ name: k, value: v }));
+      // Compute.Container → Azure Container Apps (Microsoft.App/containerApps).
+      // ContainerInstance/containerGroups foi descartado: o Azure Bicep NÃO suporta
+      // número decimal (float literal), e cpu/memoryInGB em ContainerInstance são float
+      // (0.25, 0.5 …) — isso gera BCP055/BCP018/BCP020 no parser Bicep.
+      // Container Apps aceita cpu via json('0.25') e memory como string ('0.5Gi'),
+      // e entrega ingress HTTP nativo (external:true) = o "load balancer" do prompt.
+      const envSym = sharedContainerEnvSym!;
+      const imageParamName = `${sym}Image`;
+      functionImageParams.add(imageParamName);
+
+      const environment = (props.environment as Record<string, string | unknown>) ?? {};
+      const envVars = Object.entries(environment).map(([k, v]) => {
+        const value = resolveValue(v, idx, crossParams);
+        if (value === undefined || value === null) {
+          throw new Error(
+            `Compute.Container "${construct.id}": env var "${k}" resolveu para undefined. ` +
+            `O valor deve ser string literal ou ref() — nunca process.env.${k} (runtime).`,
+          );
+        }
+        return { name: k, value };
+      });
+
+      // CPU: ECS units (1024 units = 1 vCPU) → vCores do Container Apps
+      // Container Apps permite: 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0
+      // Float literal não é Bicep válido — DEVE usar json('0.25')
+      const cpuUnits = (props.cpu as number) ?? 256;
+      const cpuVCores = Math.max(0.25, Math.min(2.0, Math.round(cpuUnits / 1024 * 4) / 4));
+      const cpuExpr = expr(`json('${cpuVCores}')`);
+
+      // Memory: ECS MB → string Gi (ex: 512 → '0.5Gi', 1024 → '1Gi')
+      const memMB = (props.memory as number) ?? 512;
+      const memGiRaw = Math.max(0.5, Math.round(memMB / 512) / 2);
+      const memStr = `${memGiRaw}Gi`;
+
+      const minReplicas = (props.minCapacity as number) ?? (props.desiredCount as number) ?? 0;
+      const maxReplicas = (props.maxCapacity as number) ?? 10;
+      const targetPort = (props.port as number) ?? 80;
+
       resources.push({
         sym,
-        type: 'Microsoft.ContainerInstance/containerGroups',
+        type: 'Microsoft.App/containerApps',
         apiVersion: '2023-05-01',
-        name: construct.id,
+        name: construct.id.toLowerCase().replace(/[^a-z0-9-]/g, '-'),
         location: 'location',
         tags: tag(construct.id),
+        identity: { type: 'SystemAssigned' },
         properties: {
-          containers: [{
-            name: construct.id,
-            properties: {
-              image: props.image as string,
-              resources: {
-                requests: {
-                  cpu: Math.round((props.cpu as number ?? 256) / 1024 * 10) / 10,
-                  memoryInGB: Math.round((props.memory as number ?? 512) / 1024 * 10) / 10,
-                },
-              },
-              ports: props.port ? [{ port: props.port, protocol: 'TCP' }] : [],
-              environmentVariables: envVars,
-            },
-          }],
-          osType: 'Linux',
-          ipAddress: {
-            type: 'Public',
-            ports: props.port ? [{ port: props.port, protocol: 'TCP' }] : [],
+          managedEnvironmentId: expr(`${envSym}.id`),
+          configuration: {
+            ingress: { external: true, targetPort },
+            registries: expr(`empty(acrServer) ? [] : [{\n    server: acrServer\n    username: acrUser\n    passwordSecretRef: 'acr-pwd'\n  }]`),
+            secrets: expr(`empty(acrPassword) ? [] : [{\n    name: 'acr-pwd'\n    value: acrPassword\n  }]`),
           },
-          restartPolicy: 'OnFailure',
+          template: {
+            containers: [{
+              name: construct.id.toLowerCase().replace(/[^a-z0-9-]/g, '-'),
+              image: expr(imageParamName),
+              resources: { cpu: cpuExpr, memory: memStr },
+              env: envVars,
+            }],
+            scale: { minReplicas, maxReplicas },
+          },
         },
       });
+      outputs.push({ name: `${construct.id}Id`, type: 'string', value: `${sym}.id` });
+      outputs.push({ name: `${construct.id}PrincipalId`, type: 'string', value: `${sym}.identity.principalId` });
+      outputs.push({ name: `${construct.id}Fqdn`, type: 'string', value: `${sym}.properties.configuration.ingress.fqdn` });
       break;
     }
 
@@ -1321,8 +1357,9 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
   const cdnBucketRefs = new Set<string>();
 
   // ManagedEnvironment compartilhado — free tier Azure limita a 1 env por região.
-  // Criado uma única vez se o stack tiver alguma Function.Lambda.
-  const hasLambda = stack.constructs.some(c => c.type === 'Function.Lambda');
+  // Criado uma única vez se o stack tiver alguma Function.Lambda ou Compute.Container
+  // (ambos mapeiam para Microsoft.App/containerApps, que exige managedEnvironments).
+  const hasLambda = stack.constructs.some(c => c.type === 'Function.Lambda' || c.type === 'Compute.Container');
   let sharedContainerEnvSym: string | null = null;
   if (hasLambda) {
     sharedContainerEnvSym = 'sharedContainerEnv';
