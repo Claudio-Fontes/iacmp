@@ -58,7 +58,7 @@ export namespace Storage {
   export class Bucket implements BaseConstruct, BucketRefs {
     readonly type = 'Storage.Bucket';
     readonly props: Record<string, unknown>;
-    constructor(stack: Stack, readonly id: string, props: StorageBucketProps) {
+    constructor(stack: Stack, readonly id: string, props: StorageBucketProps = {}) {
       this.props = props as unknown as Record<string, unknown>;
       stack.addConstruct(this);
     }

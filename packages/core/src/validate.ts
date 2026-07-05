@@ -34,7 +34,7 @@ export function validateSemantics(stacks: Stack[], profile?: EnvironmentProfile)
 
   for (const s of stacks) {
     for (const c of s.constructs) {
-      const props = c.props as Record<string, unknown>;
+      const props = (c.props ?? {}) as Record<string, unknown>;
 
       // ── A) Referências quebradas ──────────────────────────────────────────
       // (value, rótulo do campo) para mensagens precisas.

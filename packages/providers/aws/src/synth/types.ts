@@ -47,6 +47,14 @@ export interface SynthContext {
   publicSubnetsByVpc: Map<string, Array<{ id: string; stackName: string }>>;
   /** Perfil de ambiente (tier da conta, região) — fonte dos defaults derivados. */
   profile: EnvironmentProfile;
+  /**
+   * lambdaId → Set de bucketIds (Storage.Bucket) que estão na mesma stack e têm
+   * eventNotifications apontando para essa Lambda. Usado para quebrar o ciclo
+   * CloudFormation Bucket→Permission→Lambda→PolicyRole→Bucket: quando a política
+   * IAM de uma Lambda referencia o ARN de um bucket que a dispara (mesma stack),
+   * o synth substitui o ARN pelo wildcard '*' (sem dependência CloudFormation).
+   */
+  s3TriggerBucketsForLambda: Map<string, Set<string>>;
 }
 
 export const INSTANCE_TYPE_MAP: Record<string, string> = {

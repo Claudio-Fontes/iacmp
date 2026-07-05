@@ -7,7 +7,7 @@ export function synthStorage(
   construct: BaseConstruct,
   ctx: SynthContext,
 ): Array<[string, CloudFormationResource]> | null {
-  const props = construct.props as Record<string, unknown>;
+  const props = (construct.props ?? {}) as Record<string, unknown>;
   const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
   switch (construct.type) {
     case 'Storage.Bucket': {

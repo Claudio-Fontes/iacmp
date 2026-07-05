@@ -384,6 +384,26 @@ function assertPolicyResourceIsArn(r: Ref): void {
   }
 }
 
+/**
+ * Retorna o constructId do Storage.Bucket se `value` é uma referência ao ARN (ou
+ * path/*) desse bucket na MESMA stack — caso contrário retorna undefined.
+ * Usado para detectar o ciclo Bucket→Lambda→PolicyRole→Bucket e substituir por '*'.
+ */
+export function isSamestackS3BucketRef(value: unknown, ctx: SynthContext): string | undefined {
+  let id: string | undefined;
+  if (isRef(value)) {
+    id = (value as Ref).constructId;
+  } else if (typeof value === 'string') {
+    const m = /^([^./]+)(?:\.arn)?(\/.*)?$/i.exec(value);
+    if (m) id = m[1];
+  }
+  if (!id) return undefined;
+  const entry = ctx.registry.get(id);
+  if (!entry || entry.type !== 'Storage.Bucket') return undefined;
+  if (entry.stackName !== ctx.currentStackName) return undefined;
+  return id;
+}
+
 export function resolvePolicyResource(value: unknown, ctx: SynthContext): unknown {
   if (isRef(value)) {
     assertPolicyResourceIsArn(value as Ref);

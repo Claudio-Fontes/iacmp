@@ -9,6 +9,7 @@ import {
   resolveSecurityGroupId,
   resolveQueueArn,
   resolvePolicyResource,
+  isSamestackS3BucketRef,
   resolveEnvVarValue,
   resolveRef,
 } from '../resolvers';
@@ -47,7 +48,15 @@ export function synthFunction(
           ...(environment && Object.keys(environment).length > 0 ? {
             Environment: {
               Variables: Object.fromEntries(
-                Object.entries(environment).map(([k, v]) => [k, isRef(v) ? resolveRef(v, ctx) : resolveEnvVarValue(v as string, ctx)])
+                Object.entries(environment).flatMap(([k, v]) => {
+                  // Env vars que referenciam um bucket que aciona ESTA Lambda (mesma stack)
+                  // criam ciclo CloudFormation: Bucket.NotifConfig→Lambda→env→Bucket.
+                  // Omitimos a var — o handler deve obter o nome do bucket diretamente de
+                  // `event.Records[0].s3.bucket.name` (S3 já entrega no payload do evento).
+                  const bucketId = isSamestackS3BucketRef(v, ctx);
+                  if (bucketId && ctx.s3TriggerBucketsForLambda.get(construct.id)?.has(bucketId)) return [];
+                  return [[k, isRef(v) ? resolveRef(v, ctx) : resolveEnvVarValue(v as string, ctx)]];
+                })
               ),
             },
           } : {}),
@@ -460,7 +469,18 @@ export function synthFunction(
               Statement: statements.map(s => ({
                 Effect: s.effect as string,
                 Action: s.actions as string[],
-                Resource: ((s.resources as Array<string | Ref>) ?? ['*']).map(r => resolvePolicyResource(r, ctx)),
+                Resource: ((s.resources as Array<string | Ref>) ?? ['*']).map(r => {
+                  // Quando a Lambda é acionada por um bucket (via eventNotifications) na
+                  // mesma stack, referenciar o ARN desse bucket na IAM policy cria um
+                  // ciclo CloudFormation: Bucket→Permission→Lambda→PolicyRole→Bucket.
+                  // Substituímos por '*' para quebrar o ciclo sem perda de segurança
+                  // real (a Lambda::Permission já restringe qual bucket pode invocar).
+                  const bucketId = isSamestackS3BucketRef(r, ctx);
+                  if (bucketId && ctx.s3TriggerBucketsForLambda.get(props.attachTo as string)?.has(bucketId)) {
+                    return '*';
+                  }
+                  return resolvePolicyResource(r, ctx);
+                }),
                 ...(s.conditions ? { Condition: s.conditions } : {}),
               })),
             },

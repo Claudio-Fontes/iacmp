@@ -79,6 +79,7 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
   const kinesisEventSourceLambdas = new Set<string>();
   const albDefaultTg = new Map<string, { stackName: string; tgLogicalId: string; listenerLogicalId?: string }>();
   const publicSubnetsByVpc = new Map<string, Array<{ id: string; stackName: string }>>();
+  const s3TriggerBucketsForLambda = new Map<string, Set<string>>();
   for (const s of universe) {
     for (const c of s.constructs) {
       registry.set(c.id, { stackName: prefixStack(s.name), type: c.type });
@@ -138,7 +139,24 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
       }
     }
   }
-  const ctx: SynthContext = { currentStackName: prefixStack(stack.name), registry, lambdaRoles, vpcLambdas, dbSecretSuffix, dbMasterUsername, sqsEventSourceLambdas, kinesisEventSourceLambdas, albDefaultTg, publicSubnetsByVpc, profile };
+  // Buckets S3 (mesma stack) que acionam uma Lambda via eventNotifications.
+  // Usado para quebrar o ciclo: Bucket→Permission→Lambda→PolicyRole→Bucket(Arn).
+  for (const c of stack.constructs) {
+    if (c.type !== 'Storage.Bucket') continue;
+    const p = (c.props ?? {}) as Record<string, unknown>;
+    const notifications = (p.eventNotifications as Array<Record<string, unknown>> | undefined) ?? [];
+    for (const n of notifications) {
+      const rawId = n.lambdaId;
+      const lambdaId = typeof rawId === 'string' ? rawId : (rawId as Record<string, unknown>)?.constructId as string | undefined;
+      if (!lambdaId) continue;
+      const lambdaEntry = registry.get(lambdaId);
+      if (!lambdaEntry || lambdaEntry.stackName !== prefixStack(stack.name)) continue;
+      const set = s3TriggerBucketsForLambda.get(lambdaId) ?? new Set<string>();
+      set.add(c.id);
+      s3TriggerBucketsForLambda.set(lambdaId, set);
+    }
+  }
+  const ctx: SynthContext = { currentStackName: prefixStack(stack.name), registry, lambdaRoles, vpcLambdas, dbSecretSuffix, dbMasterUsername, sqsEventSourceLambdas, kinesisEventSourceLambdas, albDefaultTg, publicSubnetsByVpc, profile, s3TriggerBucketsForLambda };
 
   for (const construct of stack.constructs) {
     const entries = synthesizeConstruct(construct, ctx);

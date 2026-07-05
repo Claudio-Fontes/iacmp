@@ -86,6 +86,31 @@ function tryInstallMissingModules(errors: string[], cwd: string, iacProvider: st
   }
 }
 
+// Coleta todos os artefatos geráveis (stacks/**/*.ts e src/**/*.ts/.js) já
+// presentes no projeto — usados como semente de `previouslyWritten` para que o
+// reconcile remova stacks de SESSÕES ANTERIORES que não fazem parte da nova geração.
+// Reimplementa inline a lógica de isGeneratedArtifact (file-deleter.ts) para
+// evitar dependência extra.
+function collectExistingGeneratedFiles(cwd: string): string[] {
+  const result: string[] = [];
+  for (const dir of ['stacks', 'src']) {
+    const absDir = path.join(cwd, dir);
+    if (!fs.existsSync(absDir)) continue;
+    const scan = (d: string) => {
+      for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
+        const full = path.join(d, entry.name);
+        if (entry.isDirectory()) {
+          scan(full);
+        } else if (entry.isFile() && (entry.name.endsWith('.ts') || entry.name.endsWith('.js'))) {
+          result.push(path.relative(cwd, full));
+        }
+      }
+    };
+    scan(absDir);
+  }
+  return result;
+}
+
 /**
  * Detector programático de SDK errado nos handlers Azure. Retorna a mensagem de
  * correção (com o SDK certo pro datastore do projeto) ou null se tudo ok.
@@ -255,6 +280,11 @@ async function runGeneration(
   ask: AskFn,
   lastUserPrompt: string
 ): Promise<AIGeneratedResponse | null> {
+  // Captura os artefatos gerados em sessões ANTERIORES antes de chamar a IA.
+  // Ao final da primeira escrita, qualquer stack pré-existente ausente na nova
+  // geração é removida pelo reconcile — evita que o synth carregue stacks órfãs.
+  const preExistingGeneratedFiles = collectExistingGeneratedFiles(cwd);
+
   const cached = getCached(cwd, lastUserPrompt);
   let raw: string = '';
   let fromCache = false;
@@ -451,6 +481,17 @@ async function runGeneration(
   let previouslyWritten: string[] = [];
   if (parsed.files.length > 0) {
     previouslyWritten = await writeGeneratedFiles(parsed.files, cwd, dryRun, ask);
+    // Remove stacks/handlers de SESSÕES ANTERIORES que não fazem parte desta geração.
+    // O scan feito no início (preExistingGeneratedFiles) serve como conjunto de
+    // referência: qualquer artefato pré-existente ausente em parsed.files é órfão.
+    // Sem isso, `iacmp synth` carrega TODAS as .ts de stacks/ — incluindo as da
+    // sessão anterior — e falha com constructs duplicados/obsoletos.
+    if (!dryRun && preExistingGeneratedFiles.length > 0) {
+      const staleOrphans = removeOrphanedGeneratedFiles(preExistingGeneratedFiles, parsed.files, cwd);
+      if (staleOrphans.length > 0) {
+        console.log(chalk.dim(`  ✗ removidos ${staleOrphans.length} arquivo(s) de sessões anteriores: ${staleOrphans.join(', ')}`));
+      }
+    }
   }
 
   printNextSteps(parsed.nextSteps);
@@ -467,11 +508,29 @@ async function runGeneration(
         // "NÃO repita": o modelo às vezes devolve a MESMA geração nas tentativas
         // seguintes (observado 3x no ciclo p01az) — exigir mudança explícita no
         // trecho apontado pelo erro reduz o loop estéril.
-        correctionMsg =
-          `O comando "iacmp synth" falhou com o seguinte erro:\n\n${output}\n\n` +
-          `A geração anterior está ERRADA no ponto apontado acima — NÃO retorne o mesmo código: ` +
-          `MUDE especificamente o trecho que causa o erro (tentativa ${attempt} de ${MAX_SYNTH_RETRIES}). ` +
-          `Corrija os arquivos e retorne o JSON completo com TODOS os ${parsed.files.length} arquivo(s) da resposta anterior.`;
+        if (/[Dd]epend[êe]ncia circular entre stacks/.test(output)) {
+          // Ciclo cross-stack: a correção NÃO é mudar "um trecho" — é REESTRUTURAR
+          // os arquivos (mover os constructs interdependentes pra mesma stack).
+          // A mensagem genérica "retorne TODOS os N arquivos" faz o modelo PRESERVAR
+          // o split errado; aqui mandamos MOVER só o par acoplado e, crucialmente,
+          // NÃO colapsar tudo num monolito (a validação semântica barra 4 camadas).
+          correctionMsg =
+            `O comando "iacmp synth" falhou com DEPENDÊNCIA CIRCULAR entre stacks:\n\n${output}\n\n` +
+            `Isso NÃO se conserta mudando uma linha: é preciso REESTRUTURAR os arquivos. ` +
+            `MOVA para a MESMA stack APENAS o par de constructs com referência mútua apontado acima ` +
+            `(tipicamente o Storage.Bucket com \`eventNotifications\` + a Fn.Lambda-alvo + a Policy.IAM dela). ` +
+            `NÃO junte tudo num arquivo só: os DEMAIS recursos (VPC/subnets, DynamoDB/RDS, buckets SEM trigger) ` +
+            `CONTINUAM cada um em sua própria stack separada — a Lambda os referencia cross-stack via \`ref(...)\` em env vars (dependência unidirecional, sem ciclo). ` +
+            `Um único arquivo com VPC+buckets+banco+Lambda é MONOLITO e será rejeitado. ` +
+            `Se a reestruturação eliminar algum arquivo de stack antigo, liste-o em \`deletions\` (não deixe stack órfã). ` +
+            `Retorne o JSON completo com o novo conjunto de arquivos (tentativa ${attempt} de ${MAX_SYNTH_RETRIES}).`;
+        } else {
+          correctionMsg =
+            `O comando "iacmp synth" falhou com o seguinte erro:\n\n${output}\n\n` +
+            `A geração anterior está ERRADA no ponto apontado acima — NÃO retorne o mesmo código: ` +
+            `MUDE especificamente o trecho que causa o erro (tentativa ${attempt} de ${MAX_SYNTH_RETRIES}). ` +
+            `Corrija os arquivos e retorne o JSON completo com TODOS os ${parsed.files.length} arquivo(s) da resposta anterior.`;
+        }
       } else {
         // Synth passou, mas o loop pode ter reescrito handlers (src/*.ts) sem
         // revalidar TypeScript — um import quebrado (ex: DynamoDBClient vindo de
