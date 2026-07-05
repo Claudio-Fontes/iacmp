@@ -23,7 +23,69 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
 const doc = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 \`\`\`
-    NUNCA importe \`DynamoDBClient\`/\`GetItemCommand\` de \`@aws-sdk/lib-dynamodb\` (não existem lá → erro TS2305 e o build do deploy quebra), e NUNCA use o client low-level (\`PutItemCommand\` de \`@aws-sdk/client-dynamodb\`) com \`Item\` no formato tipado \`{ id: { S: '1' } }\` — misturar os dois formatos causa \`SerializationException: Unexpected value type\` em runtime.
+    NUNCA importe \`DynamoDBClient\`/\`GetItemCommand\` de \`@aws-sdk/lib-dynamodb\` (não existem lá → erro TS2305 e o build do deploy quebra), e NUNCA use o client low-level (\`PutItemCommand\` de \`@aws-sdk/client-dynamodb\`) com \`Item\` no formato tipado \`{ id: { S: '1' } }\` — misturar os dois formatos causa \`SerializationException: Unexpected value type\` em runtime. **MESMO QUE o usuário peça explicitamente \`@aws-sdk/client-dynamodb\` no prompt**, use sempre o DocumentClient — o resultado funcional é o mesmo e evita erros de serialização em runtime.
+  - **DynamoDB CRUD — padrão obrigatório para handlers com \`Database.DynamoDB\`**: quando gerar handlers CRUD para uma \`Database.DynamoDB\`, siga EXATAMENTE este padrão (5 handlers: list, get, create, update, delete):
+\`\`\`typescript
+// src/createItem.ts
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
+const doc = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+export const handler = async (event: any): Promise<any> => {
+  const body = JSON.parse(event.body ?? '{}');
+  const id = body.id ?? crypto.randomUUID();
+  const item = { id, ...body, createdAt: new Date().toISOString() };
+  await doc.send(new PutCommand({ TableName: process.env.TABLE_NAME, Item: item }));
+  return { statusCode: 201, body: JSON.stringify(item), headers: { 'Access-Control-Allow-Origin': '*' } };
+};
+
+// src/listItems.ts
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, ScanCommand } from '@aws-sdk/lib-dynamodb';
+const doc = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+export const handler = async (): Promise<any> => {
+  const res = await doc.send(new ScanCommand({ TableName: process.env.TABLE_NAME }));
+  return { statusCode: 200, body: JSON.stringify(res.Items ?? []), headers: { 'Access-Control-Allow-Origin': '*' } };
+};
+
+// src/getItem.ts
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, GetCommand } from '@aws-sdk/lib-dynamodb';
+const doc = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+export const handler = async (event: any): Promise<any> => {
+  const id = event.pathParameters?.id ?? '';
+  const res = await doc.send(new GetCommand({ TableName: process.env.TABLE_NAME, Key: { id } }));
+  if (!res.Item) return { statusCode: 404, body: JSON.stringify({ error: 'Not found' }), headers: { 'Access-Control-Allow-Origin': '*' } };
+  return { statusCode: 200, body: JSON.stringify(res.Item), headers: { 'Access-Control-Allow-Origin': '*' } };
+};
+
+// src/updateItem.ts
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+const doc = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+export const handler = async (event: any): Promise<any> => {
+  const id = event.pathParameters?.id ?? '';
+  const body = JSON.parse(event.body ?? '{}');
+  const fields = Object.entries(body).filter(([k]) => k !== 'id');
+  if (fields.length === 0) return { statusCode: 400, body: JSON.stringify({ error: 'No fields to update' }), headers: { 'Access-Control-Allow-Origin': '*' } };
+  const expr = 'SET ' + fields.map(([k], i) => \`#f\${i} = :v\${i}\`).join(', ');
+  const names: Record<string, string> = {};
+  const vals: Record<string, unknown> = {};
+  fields.forEach(([k, v], i) => { names[\`#f\${i}\`] = k; vals[\`:v\${i}\`] = v; });
+  await doc.send(new UpdateCommand({ TableName: process.env.TABLE_NAME, Key: { id }, UpdateExpression: expr, ExpressionAttributeNames: names, ExpressionAttributeValues: vals }));
+  return { statusCode: 200, body: JSON.stringify({ id, ...body }), headers: { 'Access-Control-Allow-Origin': '*' } };
+};
+
+// src/deleteItem.ts
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, DeleteCommand } from '@aws-sdk/lib-dynamodb';
+const doc = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+export const handler = async (event: any): Promise<any> => {
+  const id = event.pathParameters?.id ?? '';
+  await doc.send(new DeleteCommand({ TableName: process.env.TABLE_NAME, Key: { id } }));
+  return { statusCode: 200, body: JSON.stringify({ deleted: id }), headers: { 'Access-Control-Allow-Origin': '*' } };
+};
+\`\`\`
+    Pontos obrigatórios neste padrão: (1) \`crypto.randomUUID()\` no create quando \`id\` ausente — sem isso o PutItem falha com \`Supplied AttributeValue is empty\`; (2) update dinâmico via \`Object.entries(body)\` — nunca hardcoded; (3) DocumentClient sempre — nunca \`PutItemCommand\`/\`GetItemCommand\` do client raw; (4) \`headers: { 'Access-Control-Allow-Origin': '*' }\` em todas as respostas.
   - **DynamoDB NÃO é um banco SQL.** NUNCA importe \`pg\`, \`mysql\`, \`mysql2\`, \`knex\` nem faça \`SELECT/INSERT/UPDATE/DELETE ... FROM <tabela>\` para acessar uma \`Database.DynamoDB\` — não existe conexão \`pg.Client\` nem SQL em DynamoDB; isso trava/falha em runtime. Acesse EXCLUSIVAMENTE via DocumentClient (\`GetCommand\` por chave, \`QueryCommand\` por partition key, \`ScanCommand\` para varredura). Só use um driver SQL (\`pg\`/\`mysql2\`) quando o projeto realmente tem um \`Database.SQL\`.
   - **ioredis — import nomeado.** Use SEMPRE \`import { Redis } from 'ioredis';\` e \`new Redis({ host, port })\`. NUNCA \`import Redis from 'ioredis'\` (default) nem \`import * as Redis from 'ioredis'\` — com os tipos do ioredis v5 isso dá \`TS2351: This expression is not constructable\` e o build do deploy quebra.
   - Avise em \`nextSteps\` quando alguma dependência precisar ser instalada via \`npm install\` e, se aplicável, quais variáveis de ambiente (ex: \`ANTHROPIC_API_KEY\`) precisam ser configuradas na Lambda após o deploy.
