@@ -218,7 +218,7 @@ export default class Deploy extends Command {
         }
         // Azure: coleta outputs desta stack para injetar como params na próxima
         if (provider === 'azure' && config.resourceGroup) {
-          const stackOutputs = getAzureStackOutputs(t.stackName, config.resourceGroup);
+          const stackOutputs = getAzureStackOutputs(physicalStackName(t.stackName), config.resourceGroup);
           Object.assign(azureOutputAccumulator, stackOutputs);
         }
       }

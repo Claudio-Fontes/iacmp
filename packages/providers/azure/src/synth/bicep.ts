@@ -411,6 +411,8 @@ function synthesizeConstruct(
               image: expr(imageParamName),
               resources: { cpu: cpuExpr, memory: memStr },
               env: envVars,
+              // startup probe: garante ready antes de criar Event Grid subscription (cold-start race)
+              probes: [{ type: 'Startup', tcpSocket: { port: targetPort }, periodSeconds: 5, failureThreshold: 30 }],
             }],
             scale: { minReplicas, maxReplicas },
           },
@@ -1100,6 +1102,8 @@ function synthesizeConstruct(
               image: expr(imageParamName),
               resources: { cpu: expr("json('0.25')"), memory: '0.5Gi' },
               env: envVars,
+              // startup probe: garante ready antes de criar Event Grid subscription (cold-start race)
+              probes: [{ type: 'Startup', tcpSocket: { port: 3000 }, periodSeconds: 5, failureThreshold: 30 }],
             }],
             scale: { minReplicas: 0, maxReplicas: 10 },
           },

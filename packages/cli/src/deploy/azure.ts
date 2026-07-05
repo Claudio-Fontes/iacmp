@@ -213,8 +213,13 @@ http.createServer(async (req, res) => {
       if (!Array.isArray(egEvents)) egEvents = [egEvents];
       if (egEvents.length > 0 && egEvents[0].eventType === 'Microsoft.EventGrid.SubscriptionValidation') {
         const validationCode = egEvents[0].data && egEvents[0].data.validationCode;
+        const validationUrl = egEvents[0].data && egEvents[0].data.validationUrl;
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ validationResponse: validationCode }));
+        // validationUrl: cobre validação assíncrona do Event Grid (cold-start race no Container App)
+        if (validationUrl) {
+          try { require('https').get(validationUrl, function(r) { r.resume(); }); } catch (_) {}
+        }
         return;
       }
       const blobRecords = egEvents
