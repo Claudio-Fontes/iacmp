@@ -743,7 +743,8 @@ function synthesizeConstruct(
         ruleType: 'MatchRule',
         // action deve ser capitalizado: Block, Allow, Log (Azure não aceita lowercase)
         action: ({ allow: 'Allow', block: 'Block', log: 'Log' }[(r.action as string)?.toLowerCase() ?? 'block']) ?? 'Block',
-        matchConditions: [{ matchVariables: [{ variableName: 'RemoteAddr' }], operator: 'IPMatch', matchValues: (r.matchValues as string[]) ?? ['192.0.2.0/24'], negationCondition: false }],
+        // negationConditon: ARM API tem este typo histórico (falta um 'i') — Bicep BCP089 confirma
+        matchConditions: [{ matchVariables: [{ variableName: 'RemoteAddr' }], operator: 'IPMatch', matchValues: (r.matchValues as string[]) ?? ['192.0.2.0/24'], negationConditon: false }],
       }));
       // Mapear e deduplicar: vários grupos AWS podem gerar o mesmo Azure ruleSetType
       const seenRuleSets = new Set<string>();
