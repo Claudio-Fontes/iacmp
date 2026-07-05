@@ -206,7 +206,7 @@ export function synthFunction(
             Type: 'AWS::ApiGateway::Authorizer',
             Properties: {
               RestApiId: resourceRef(logicalId, 'Id'),
-              Type: 'REQUEST',
+              Type: 'TOKEN',
               Name: `${props.name as string}-${la}`,
               AuthorizerUri: buildInvocationUri(la, ctx),
               IdentitySource: 'method.request.header.Authorization',
