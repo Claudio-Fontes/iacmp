@@ -50,6 +50,7 @@ const AZURE_ATTR_MAP: Record<string, Record<string, string>> = {
   'Database.SQL':          { Endpoint: 'properties.fullyQualifiedDomainName', SecretArn: 'id', Password: 'id', Username: 'id' },
   'Database.DocumentDB':   { Endpoint: 'properties.documentEndpoint', SecretArn: 'id', ConnectionString: '__mongo_connection_string__' },
   'Database.DynamoDB':     { Arn: 'id', Name: 'name', ConnectionString: '__connection_string__' },
+  'Messaging.Stream':      { Arn: 'id', Name: 'name' },
   'Messaging.Topic':       { Arn: 'id', TopicArn: 'id' },
   'Messaging.Queue':       { Arn: 'id', QueueUrl: 'id', QueueArn: 'id' },
   'Cache.Redis':           { Endpoint: 'properties.hostName', Port: 'properties.sslPort' },
@@ -1512,6 +1513,27 @@ function synthesizeConstruct(
       // Output para referência cross-stack via ref(..., 'Url') — gera param ApprovalQueueUrl
       // na stack consumidora. Valor = endpoint do Service Bus namespace (sb://<name>.servicebus.windows.net/).
       outputs.push({ name: crossParamName(construct.id, 'Url'), type: 'string', value: `'sb://\${${nsSym}.name}.servicebus.windows.net/'` });
+      break;
+    }
+
+    case 'Messaging.Stream': {
+      const nsName = `${construct.id.toLowerCase()}-ns`;
+      const nsSym = `${sym}Ns`;
+      resources.push({
+        sym: nsSym, type: 'Microsoft.EventHub/namespaces', apiVersion: '2022-10-01-preview',
+        name: nsName, location: 'location', tags: tag(construct.id),
+        sku: { name: 'Standard', tier: 'Standard', capacity: 1 }, properties: {}
+      });
+      resources.push({
+        sym, type: 'Microsoft.EventHub/namespaces/eventhubs', apiVersion: '2022-10-01-preview',
+        parent: nsSym, name: construct.id,
+        properties: {
+          messageRetentionInDays: Math.ceil(((props.retentionHours as number) ?? 24) / 24),
+          partitionCount: (props.shardCount as number) ?? 2
+        }
+      });
+      outputs.push({ name: `${construct.id}Id`, type: 'string', value: `${sym}.id` });
+      outputs.push({ name: `${construct.id}Name`, type: 'string', value: `'${construct.id}'` });
       break;
     }
 
