@@ -1289,7 +1289,7 @@ function synthesizeConstruct(
         const lambdaId = route.lambdaId as string | undefined;
         const routeAuthId = route.authorizerLambdaId as string | undefined;
         const opSym = `${sym}Op${ri}`;
-        const sanitizedPath = path.replace(/\{(\w+)\+\}/g, '{$1}');
+        const sanitizedPath = path.replace(/\{(\w+)\+\}/g, '{$1}').replace(/^\$/, '');
         const templateParams = [...sanitizedPath.matchAll(/\{(\w+)\}/g)].map(m => ({ name: m[1], required: true, type: 'string' }));
         resources.push({
           sym: opSym,
