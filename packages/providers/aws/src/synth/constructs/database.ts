@@ -256,7 +256,7 @@ export function synthDatabase(
 
       return [[logicalId, {
         Type: 'AWS::DynamoDB::Table',
-        DeletionPolicy: 'Retain',
+        DeletionPolicy: (props.deletionProtection as boolean) ? 'Retain' : 'Delete',
         Properties: {
           TableName: construct.id,
           BillingMode: billingMode,
