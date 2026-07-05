@@ -44,6 +44,42 @@ describe('AzureProvider (Bicep)', () => {
     expect(out).toContain('10.0.0.0/16');
   });
 
+  test('Network.VPC com múltiplas Subnets → subnets INLINE (sem recursos separados — fix AnotherOperationInProgress)', () => {
+    const stack = new Stack('test');
+    new Network.VPC(stack, 'AppVpc', { cidr: '10.0.0.0/16' });
+    new Network.Subnet(stack, 'PrivateSubnet1', { vpcId: 'AppVpc', cidr: '10.0.1.0/24', public: false });
+    new Network.Subnet(stack, 'PrivateSubnet2', { vpcId: 'AppVpc', cidr: '10.0.2.0/24', public: false });
+    new Network.Subnet(stack, 'PublicSubnet1',  { vpcId: 'AppVpc', cidr: '10.0.3.0/24', public: true });
+    new Network.Subnet(stack, 'PublicSubnet2',  { vpcId: 'AppVpc', cidr: '10.0.4.0/24', public: true });
+    const out = synth(stack);
+    // VNet existe
+    expect(out).toContain("'Microsoft.Network/virtualNetworks@2023-04-01'");
+    // Subnets inline (dentro do bloco subnets:)
+    expect(out).toContain('10.0.1.0/24');
+    expect(out).toContain('10.0.2.0/24');
+    expect(out).toContain('10.0.3.0/24');
+    expect(out).toContain('10.0.4.0/24');
+    expect(out).toContain("name: 'PrivateSubnet1'");
+    expect(out).toContain("name: 'PublicSubnet1'");
+    // NÃO deve emitir recursos filho separados
+    expect(out).not.toContain("'Microsoft.Network/virtualNetworks/subnets@");
+  });
+
+  test('ref(Subnet, SubnetId) → resourceId() em vez de sym.id (subnet inline)', () => {
+    const stack = new Stack('test');
+    new Network.VPC(stack, 'AppVpc', { cidr: '10.0.0.0/16' });
+    new Network.Subnet(stack, 'PrivSub', { vpcId: 'AppVpc', cidr: '10.0.1.0/24', public: false });
+    // Compute.Container com env var que referencia SubnetId — exercita resolveRef
+    new Compute.Container(stack, 'App', {
+      image: 'nginx:latest',
+      environment: { SUBNET_ID: ref('PrivSub', 'SubnetId') },
+    } as any);
+    const out = emitBicep(stack);
+    // Deve gerar resourceId() — não referenciar o símbolo inexistente privSub
+    expect(out).toContain("resourceId('Microsoft.Network/virtualNetworks/subnets'");
+    expect(out).not.toContain('privSub.id');
+  });
+
   test('Network.SecurityGroup → Microsoft.Network/networkSecurityGroups', () => {
     const stack = new Stack('test');
     new Network.SecurityGroup(stack, 'SG', {

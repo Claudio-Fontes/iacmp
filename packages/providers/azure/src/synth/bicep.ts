@@ -102,6 +102,14 @@ function resolveRef(r: Ref, idx: Map<string, BaseConstruct>, crossParams: Map<st
       return ({ postgres: '5432', mysql: '3306', sqlserver: '1433', mariadb: '3306' } as Record<string, string>)[engine] ?? '5432';
     }
   }
+  // Subnet inline — não tem recurso próprio; referência via resourceId() com o nome do VNet pai.
+  if (c.type === 'Network.Subnet' && r.attribute === 'SubnetId') {
+    const subnetProps = c.props as Record<string, unknown>;
+    const vpcId = subnetProps.vpcId;
+    const vnetConstructId = isRef(vpcId) ? (vpcId as Ref).constructId : vpcId as string;
+    const vnetSym = toSym(vnetConstructId);
+    return expr(`resourceId('Microsoft.Network/virtualNetworks/subnets', ${vnetSym}.name, '${c.id}')`);
+  }
   const attr = AZURE_ATTR_MAP[c.type]?.[r.attribute] ?? 'id';
   return expr(`${sym}.${attr}`);
 }
@@ -245,6 +253,7 @@ function synthesizeConstruct(
   functionImageParams: Set<string>,
   sharedContainerEnvSym: string | null,
   cdnBucketRefs: Set<string>,
+  subnetsByVpc: Map<string, Array<{id: string; cidr: string; public: boolean}>>,
   accountTier: 'free' | 'standard' = 'standard',
 ): void {
   const props = construct.props as Record<string, unknown>;
@@ -550,6 +559,7 @@ function synthesizeConstruct(
     }
 
     case 'Network.VPC': {
+      const vpcSubnets = subnetsByVpc.get(construct.id) ?? [];
       resources.push({
         sym,
         type: 'Microsoft.Network/virtualNetworks',
@@ -560,27 +570,24 @@ function synthesizeConstruct(
         properties: {
           addressSpace: { addressPrefixes: [(props.cidr as string) ?? '10.0.0.0/16'] },
           dhcpOptions: { dnsServers: [] },
+          ...(vpcSubnets.length > 0 ? {
+            subnets: vpcSubnets.map(s => ({
+              name: s.id,
+              properties: {
+                addressPrefix: s.cidr,
+                privateEndpointNetworkPolicies: s.public ? 'Disabled' : 'Enabled',
+              },
+            })),
+          } : {}),
         },
       });
       break;
     }
 
     case 'Network.Subnet': {
-      const vnetId = props.vpcId;
-      const vnetSym = isRef(vnetId) ? toSym((vnetId as Ref).constructId) : toSym(vnetId as string);
-      const subnetResource: BicepResource = {
-        sym,
-        type: 'Microsoft.Network/virtualNetworks/subnets',
-        apiVersion: '2023-04-01',
-        // subnets são recursos filho — herdam location do VNet, não declaram própria
-        properties: {
-          addressPrefix: props.cidr as string,
-          privateEndpointNetworkPolicies: (props.public as boolean) ? 'Disabled' : 'Enabled',
-        },
-      };
-      subnetResource.parent = vnetSym;
-      subnetResource.name = construct.id;
-      resources.push(subnetResource);
+      // Subnets são declaradas inline na propriedade subnets[] do virtualNetworks
+      // (via Network.VPC case + subnetsByVpc). Recursos separados causam
+      // AnotherOperationInProgress — o ARM tenta criar subnets em paralelo no mesmo VNet.
       break;
     }
 
@@ -1373,6 +1380,19 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
   // precisam de allowBlobPublicAccess: true + container 'web' para servir conteúdo.
   const cdnBucketRefs = new Set<string>();
 
+  // subnetsByVpc: subnets agrupadas por VPC — serão declaradas inline em
+  // properties.subnets[] do virtualNetworks para evitar AnotherOperationInProgress
+  // (ARM não permite operações concorrentes no mesmo VNet; recursos separados falham).
+  const subnetsByVpc = new Map<string, Array<{id: string; cidr: string; public: boolean}>>();
+  for (const c of stack.constructs) {
+    if (c.type !== 'Network.Subnet') continue;
+    const p = c.props as Record<string, unknown>;
+    const vpcId = p.vpcId;
+    const vnetId = isRef(vpcId) ? (vpcId as Ref).constructId : vpcId as string;
+    if (!subnetsByVpc.has(vnetId)) subnetsByVpc.set(vnetId, []);
+    subnetsByVpc.get(vnetId)!.push({ id: c.id, cidr: p.cidr as string, public: (p.public as boolean) ?? false });
+  }
+
   // ManagedEnvironment compartilhado — free tier Azure limita a 1 env por região.
   // Criado uma única vez se o stack tiver alguma Function.Lambda ou Compute.Container
   // (ambos mapeiam para Microsoft.App/containerApps, que exige managedEnvironments).
@@ -1392,7 +1412,7 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
   }
 
   for (const construct of stack.constructs) {
-    synthesizeConstruct(construct, idx, resources, outputs, needsAdminPassword, crossParams, functionImageParams, sharedContainerEnvSym, cdnBucketRefs, accountTier);
+    synthesizeConstruct(construct, idx, resources, outputs, needsAdminPassword, crossParams, functionImageParams, sharedContainerEnvSym, cdnBucketRefs, subnetsByVpc, accountTier);
   }
 
   // Post-processing: Storage.Buckets referenciados por CDN via bucketRef ganham
