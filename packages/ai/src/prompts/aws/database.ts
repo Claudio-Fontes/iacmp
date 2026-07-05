@@ -28,4 +28,21 @@ let client: MongoClient;
 async function db() { if (!client) client = await MongoClient.connect(uri); return client.db(process.env.DB_NAME); }
 \`\`\`
 Em \`nextSteps\`: avisar que o \`global-bundle.pem\` (CA da RDS) precisa ser baixado (\`curl -o global-bundle.pem https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem\`) e empacotado junto ao handler. (DocumentDB fica DENTRO da VPC — não precisa de VpcEndpoint; a Lambda alcança pela subnet privada + SG na porta 27017.)
+
+**REGRA — handler que conecta no PostgreSQL (driver \`pg\`) DEVE inicializar o schema:** inclua um bloco de \`CREATE TABLE IF NOT EXISTS\` no cold start (fora do handler, executado uma vez por container), garantindo que a tabela existe antes da primeira query. Sem isso, a Lambda vai com erro \`relation "X" does not exist\` no primeiro acesso pós-deploy. Padrão:
+\`\`\`typescript
+import { Pool } from 'pg';
+const pool = new Pool({ host: process.env.DB_HOST, port: Number(process.env.DB_PORT), user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME, ssl: { rejectUnauthorized: false } });
+let initialized = false;
+async function ensureSchema() {
+  if (initialized) return;
+  await pool.query(\`CREATE TABLE IF NOT EXISTS items (id SERIAL PRIMARY KEY, ...)\`);
+  initialized = true;
+}
+export async function handler(event: any) {
+  await ensureSchema();
+  // ... lógica do handler
+}
+\`\`\`
+Use \`Pool\` (não \`Client\`) para reutilizar conexões entre invocações no mesmo container — evita overhead de conexão a cada invocação.
 `;
