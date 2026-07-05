@@ -75,6 +75,10 @@ const RESOLVE_MAP: Record<string, Record<string, ResolutionEntry>> = {
   'Network.WAF': {
     'Arn': { sameStack: (l) => resourceRef(l, 'Arn'), exportSuffix: 'Arn' },
   },
+  'Workflow.StepFunctions': {
+    'Arn':  { sameStack: (l) => resourceRef(l, 'Arn'), exportSuffix: 'Arn' },
+    'Name': { sameStack: (l) => resourceRef(l, 'Id'), exportSuffix: 'Name' },
+  },
   'Storage.Bucket': {
     'Arn':  { sameStack: (l) => resourceRef(l, 'Arn'), exportSuffix: 'Arn' },
     'Name': { sameStack: (l) => resourceRef(l, 'Id'), exportSuffix: 'Name' },
@@ -96,8 +100,9 @@ const DEFAULT_ATTR: Partial<Record<string, string>> = {
   'Messaging.Topic':      'Arn',
   'Messaging.Stream':     'Arn',
   'Function.Lambda':      'Arn',
-  'Network.WAF':          'Arn',
-  'Database.DynamoDB':    'Arn',
+  'Network.WAF':              'Arn',
+  'Database.DynamoDB':        'Arn',
+  'Workflow.StepFunctions':   'Arn',
   'Network.LoadBalancer': 'TargetGroupArn',
 };
 

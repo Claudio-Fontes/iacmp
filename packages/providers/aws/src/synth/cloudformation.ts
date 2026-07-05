@@ -317,6 +317,15 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
         Export: { Name: `${prefixStack(stack.name)}-${construct.id}-Port` },
       };
     }
+    if (construct.type === 'Workflow.StepFunctions') {
+      // Exporta o ARN da state machine pra outra stack referenciar via ref('X','Arn').
+      // Ref de AWS::StepFunctions::StateMachine retorna o ARN; GetAtt 'Arn' também.
+      const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
+      outputs[`${logicalId}Arn`] = {
+        Value: resourceRef(logicalId, 'Arn'),
+        Export: { Name: `${prefixStack(stack.name)}-${construct.id}-Arn` },
+      };
+    }
     if (construct.type === 'Network.WAF') {
       // Exporta o ARN do WebACL pra um Fn.ApiGateway em OUTRA stack associar (wafAclId).
       const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
