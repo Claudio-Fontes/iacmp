@@ -48,7 +48,7 @@ const AZURE_ATTR_MAP: Record<string, Record<string, string>> = {
   'Storage.Bucket':        { Arn: 'id', Name: 'name', ConnectionString: '__blob_connection_string__' },
   'Function.Lambda':       { Arn: 'id', Fqdn: 'properties.configuration.ingress.fqdn' },
   'Database.SQL':          { Endpoint: 'properties.fullyQualifiedDomainName', SecretArn: 'id', Password: 'id', Username: 'id' },
-  'Database.DocumentDB':   { Endpoint: 'properties.documentEndpoint', SecretArn: 'id' },
+  'Database.DocumentDB':   { Endpoint: 'properties.documentEndpoint', SecretArn: 'id', ConnectionString: '__mongo_connection_string__' },
   'Database.DynamoDB':     { Arn: 'id', Name: 'name', ConnectionString: '__connection_string__' },
   'Messaging.Topic':       { Arn: 'id', TopicArn: 'id' },
   'Messaging.Queue':       { Arn: 'id', QueueUrl: 'id', QueueArn: 'id' },
@@ -80,6 +80,11 @@ function resolveRef(r: Ref, idx: Map<string, BaseConstruct>, crossParams: Map<st
   // Name do Cosmos = nome da TABELA (child resource, = construct.id), não o da conta.
   if (c.type === 'Database.DynamoDB' && r.attribute === 'Name') {
     return r.constructId;
+  }
+  // ConnectionString do Cosmos DB MongoDB API — obtida via listConnectionStrings().
+  // Retorna URI mongodb://... pronta para o driver mongodb nativo.
+  if (c.type === 'Database.DocumentDB' && r.attribute === 'ConnectionString') {
+    return expr(`${sym}.listConnectionStrings().connectionStrings[0].connectionString`);
   }
   // ConnectionString do Storage.Bucket (blob) — com a account key via listKeys().
   // O handler usa BlobServiceClient.fromConnectionString; antes o modelo punha
@@ -1028,6 +1033,30 @@ function synthesizeConstruct(
       // — o construct id cru colide entre projetos e com tombstones de contas recém-
       // deletadas. Sufixo uniqueString(resourceGroup().id), mesmo padrão do APIM.
       resources.push({ sym, type: 'Microsoft.DocumentDB/databaseAccounts', apiVersion: '2023-04-15', name: expr(`'${construct.id.toLowerCase()}-\${uniqueString(resourceGroup().id)}'`), location: 'location', tags: tag(construct.id), properties: { databaseAccountOfferType: 'Standard', enableFreeTier: accountTier === 'free', kind: 'MongoDB', locations: [{ locationName: expr('location'), failoverPriority: 0, isZoneRedundant: false }], backupPolicy: { type: 'Periodic', periodicModeProperties: { backupIntervalInMinutes: 1440, backupRetentionIntervalInHours: 168 } }, enableAutomaticFailover: (props.deletionProtection as boolean) ?? false } });
+      // Database filho — obrigatório para o driver MongoDB encontrar o banco.
+      const dbSym = `${sym}Db`;
+      const dbName = `${construct.id.toLowerCase()}-db`;
+      resources.push({
+        sym: dbSym,
+        type: 'Microsoft.DocumentDB/databaseAccounts/mongodbDatabases',
+        apiVersion: '2023-04-15',
+        parent: sym,
+        name: `'${dbName}'`,
+        properties: { resource: { id: dbName }, options: {} },
+      });
+      // Collection "documents" dentro do banco — a collection que o handler usa.
+      resources.push({
+        sym: `${sym}Coll`,
+        type: 'Microsoft.DocumentDB/databaseAccounts/mongodbDatabases/collections',
+        apiVersion: '2023-04-15',
+        parent: dbSym,
+        name: `'documents'`,
+        properties: { resource: { id: 'documents' }, options: {} },
+      });
+      // Outputs para referências cross-stack e injeção como env var nos handlers.
+      outputs.push({ name: `${construct.id}Endpoint`, type: 'string', value: `${sym}.properties.documentEndpoint` });
+      outputs.push({ name: crossParamName(construct.id, 'Endpoint'), type: 'string', value: `${sym}.properties.documentEndpoint` });
+      outputs.push({ name: crossParamName(construct.id, 'ConnectionString'), type: 'string', value: `${sym}.listConnectionStrings().connectionStrings[0].connectionString` });
       break;
     }
 
