@@ -1,5 +1,6 @@
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { DeployContext, DeployExecutor, DestroyContext, NativeCommand, StackStatus } from './types';
 
@@ -29,6 +30,16 @@ function getCrossStackParams(templatePath: string): string[] {
     if (m) params.push(m[1]);
   }
   return params;
+}
+
+/**
+ * Retorna true se o nome do parâmetro (no formato "key=value") corresponde a uma
+ * credencial que NÃO deve aparecer na linha de comando (visível em `ps aux`).
+ * Regra: qualquer key cujo nome termine em "password" (case-insensitive).
+ */
+function isSecretParam(paramKv: string): boolean {
+  const key = paramKv.split('=')[0];
+  return /password$/i.test(key);
 }
 
 /** Lê outputs de uma deployment stack do Azure (pós-deploy). */
@@ -369,11 +380,67 @@ export const azureExecutor: DeployExecutor = {
         );
       }
     }
+    // Separa parâmetros em plain (podem ir na command line) e secret (jamais na
+    // command line — seriam visíveis em `ps aux` para qualquer processo local).
+    const plainParams = paramValues.filter(p => !isSecretParam(p));
+    const secretParams = paramValues.filter(p => isSecretParam(p));
+
+    // displayArgs: versão mascarada usada em --dry-run e mensagens de erro.
+    // Nunca expõe valores reais — substitui o value de cada secret por "***".
+    const displayArgs = [...args];
     if (paramValues.length > 0) {
-      args.push('--parameters', ...paramValues);
+      displayArgs.push(
+        '--parameters',
+        ...plainParams,
+        ...secretParams.map(p => `${p.split('=')[0]}=***`),
+      );
     }
 
-    commands.push({ bin: 'az', args });
+    if (secretParams.length > 0 && !ctx.dryRun) {
+      // Deploy real com secrets: escreve num arquivo temporário fora do repo,
+      // com permissão 0600 (só o processo corrente pode ler), e passa @arquivo
+      // para o az. O arquivo é apagado no finally via cleanup(), mesmo se o
+      // deploy falhar — nunca fica em disco após o comando.
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const crypto = require('crypto') as typeof import('crypto');
+      const tmpFile = path.join(
+        os.tmpdir(),
+        `iacmp-params-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.json`,
+      );
+      const armParameters: Record<string, { value: string }> = {};
+      for (const p of secretParams) {
+        const eqIdx = p.indexOf('=');
+        armParameters[p.slice(0, eqIdx)] = { value: p.slice(eqIdx + 1) };
+      }
+      fs.writeFileSync(
+        tmpFile,
+        JSON.stringify({
+          $schema: 'https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#',
+          contentVersion: '1.0.0.0',
+          parameters: armParameters,
+        }),
+        { mode: 0o600 },
+      );
+      // args reais: params plain inline + secrets via @arquivo (nunca na command line)
+      if (paramValues.length > 0) {
+        args.push('--parameters', ...plainParams, `@${tmpFile}`);
+      }
+      commands.push({
+        bin: 'az',
+        args,
+        displayArgs,
+        cleanup: () => { try { fs.unlinkSync(tmpFile); } catch { /* ignore */ } },
+      });
+    } else {
+      // dry-run (comando não será executado) ou sem secrets: params inline.
+      // Em dry-run, args contém os valores reais mas printPlan usa displayArgs
+      // (mascarado) — os secrets nunca chegam ao terminal.
+      if (paramValues.length > 0) {
+        args.push('--parameters', ...paramValues);
+      }
+      commands.push({ bin: 'az', args, displayArgs });
+    }
+
     return commands;
   },
 

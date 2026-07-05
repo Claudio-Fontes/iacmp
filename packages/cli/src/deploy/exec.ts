@@ -2,9 +2,14 @@ import { execFileSync } from 'child_process';
 import chalk from 'chalk';
 import { NativeCommand } from './types';
 
-/** Formata um comando para exibição em --dry-run (e em mensagens de erro). */
+/**
+ * Formata um comando para exibição em --dry-run (e em mensagens de erro).
+ * Quando o comando tem `displayArgs`, usa-os em vez de `args` — isso garante
+ * que secrets nunca apareçam em logs/terminal mesmo que o deploy falhe.
+ */
 export function formatCommand(cmd: NativeCommand): string {
-  const quoted = cmd.args.map(a => (/\s/.test(a) ? `"${a}"` : a));
+  const effectiveArgs = cmd.displayArgs ?? cmd.args;
+  const quoted = effectiveArgs.map(a => (/\s/.test(a) ? `"${a}"` : a));
   return `${cmd.bin} ${quoted.join(' ')}`;
 }
 
@@ -30,6 +35,9 @@ export function runCommands(commands: NativeCommand[]): void {
         `Falha ao executar "${formatCommand(cmd)}" — veja a saída acima. ` +
         `Se for um problema de autenticação, configure a credencial da CLI (${cmd.bin}) e tente novamente, ou rode: iacmp doctor`
       );
+    } finally {
+      // Apaga arquivo temporário de parâmetros (se existir) mesmo se o comando falhou.
+      cmd.cleanup?.();
     }
   }
 }

@@ -4,6 +4,17 @@ export interface NativeCommand {
   args: string[];
   /** Diretório de trabalho do subprocess; default: process.cwd(). */
   cwd?: string;
+  /**
+   * Versão dos args para exibição em --dry-run e mensagens de erro.
+   * Presente quando args contém valores de secrets — substitui a exibição por versão mascarada (ex: adminPassword=***).
+   */
+  displayArgs?: string[];
+  /**
+   * Callback executado após o comando (sucesso ou falha).
+   * Usado para remover arquivos temporários de parâmetros com secrets, garantindo
+   * que o arquivo seja apagado mesmo que o deploy falhe.
+   */
+  cleanup?: () => void;
 }
 
 export interface DeployContext {
