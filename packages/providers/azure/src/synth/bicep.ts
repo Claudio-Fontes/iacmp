@@ -669,6 +669,23 @@ function synthesizeConstruct(
     }
 
     case 'Network.LoadBalancer': {
+      // Azure: quando a stack contém Compute.Container, o Container App já emite
+      // ingress externo (type:application, external:true, targetPort) que É o load
+      // balancer HTTP/HTTPS público nativo — FQDN gerenciado, TLS automático, escala.
+      // Emitir um Application Gateway separado seria redundante e SEMPRE quebraria
+      // o deploy: o ARM exige subnet dedicada /24, publicIPAddress resource, e
+      // gatewayIPConfigurations que o construct agnóstico não fornece (erro
+      // InvalidRequestFormat: "Cannot parse the request." confirmado em deploy real).
+      // → NO-OP quando detectado Compute.Container na mesma stack.
+      const hasContainerInStack = Array.from(idx.values()).some(c => c.type === 'Compute.Container');
+      if (hasContainerInStack) {
+        console.warn(
+          `[azure] Network.LoadBalancer "${construct.id}": no-op — stack contém Compute.Container ` +
+          `cujo ingress externo (Container Apps) já provê load balancing HTTP público. ` +
+          `Referencie o endpoint via output <ContainerId>Fqdn.`,
+        );
+        break;
+      }
       const lbType = (props.type as string) ?? 'application';
       const listeners = (props.listeners as Array<Record<string, unknown>>) ?? [];
       const targetGroups = (props.targetGroups as Array<Record<string, unknown>>) ?? [];

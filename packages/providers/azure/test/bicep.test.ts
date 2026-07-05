@@ -531,3 +531,32 @@ test('Storage.Bucket ConnectionString → listKeys (não placeholder) + output c
   expect(bicep).toContain('output UploadsConnectionString');
   expect(bicep).not.toContain('your-blob-storage-key');
 });
+
+describe('Network.LoadBalancer Azure — no-op com Compute.Container (p10az)', () => {
+  test('Compute.Container + Network.LoadBalancer → sem applicationGateways no Bicep', () => {
+    const stack = new Stack('p10');
+    new Compute.Container(stack, 'AppContainer', { image: 'myapp:latest', port: 3000, minCapacity: 2, maxCapacity: 10 });
+    new Network.LoadBalancer(stack, 'AppAlb', { vpcId: 'vnet1', type: 'application', listeners: [{ port: 80, protocol: 'HTTP' }], targetGroups: [{ name: 'tg1', port: 3000, protocol: 'HTTP' }] });
+    const out = emitBicep(stack);
+    expect(out).not.toContain('applicationGateways');
+    expect(out).toContain('Microsoft.App/containerApps');
+  });
+
+  test('Compute.Container + Network.LoadBalancer → Container App tem ingress externo', () => {
+    const stack = new Stack('p10');
+    new Compute.Container(stack, 'Web', { image: 'nginx:latest', port: 8080 });
+    new Network.LoadBalancer(stack, 'WebAlb', { vpcId: 'vnet1', type: 'application', listeners: [{ port: 80, protocol: 'HTTP' }], targetGroups: [] });
+    const out = emitBicep(stack);
+    expect(out).toContain('external: true');
+    expect(out).toContain('targetPort: 8080');
+    expect(out).not.toContain('applicationGateways');
+    expect(out).not.toContain('loadBalancers');
+  });
+
+  test('Network.LoadBalancer sem Compute.Container na stack → emite recurso (comportamento existente)', () => {
+    const stack = new Stack('only-lb');
+    new Network.LoadBalancer(stack, 'Alb', { vpcId: 'vnet1', type: 'application', listeners: [{ port: 80, protocol: 'HTTP' }], targetGroups: [] });
+    const out = emitBicep(stack);
+    expect(out).toContain('applicationGateways');
+  });
+});
