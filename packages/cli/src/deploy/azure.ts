@@ -109,8 +109,21 @@ function getSubscriptionId(): string {
 }
 
 function acrBootstrapName(subscriptionId: string): string {
-  const hash = subscriptionId.replace(/-/g, '').slice(0, 12);
-  return `iacmpacr${hash}`;
+  // Usa início + fim do subscription ID para maior unicidade global
+  const clean = subscriptionId.replace(/-/g, '');
+  const part1 = clean.slice(0, 6);
+  const part2 = clean.slice(-6);
+  return `iacmpacr${part1}${part2}`;
+}
+
+function acrNameAvailable(name: string): boolean {
+  try {
+    const raw = execFileSync('az', ['acr', 'check-name', '--name', name, '-o', 'json'], { stdio: 'pipe' }).toString();
+    const result = JSON.parse(raw) as { nameAvailable: boolean };
+    return result.nameAvailable === true;
+  } catch {
+    return true; // assume disponível se a verificação falhar
+  }
 }
 
 function acrExists(name: string): boolean {
