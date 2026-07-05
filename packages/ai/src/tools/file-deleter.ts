@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as cp from 'child_process';
 import chalk from 'chalk';
 import { AskFn } from './diff-renderer';
+import { GeneratedFile } from '../parser/code-extractor';
 import {
   safeJoin,
   assertValidStackName,
@@ -39,6 +40,70 @@ function synthOutPaths(filePath: string, projectDir: string): string[] {
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Só reconcilia artefatos que a IA gera: stacks (stacks/**) e handlers (src/**),
+// em .ts/.js. Barra de segurança extra sobre `previousPaths` — nunca remove
+// config do projeto, .env, README etc. mesmo que apareçam por engano.
+function isGeneratedArtifact(rel: string): boolean {
+  const norm = rel.replace(/\\/g, '/');
+  if (!norm.endsWith('.ts') && !norm.endsWith('.js')) return false;
+  return norm.startsWith('stacks/') || norm.startsWith('src/');
+}
+
+/**
+ * Reconcilia o conjunto de arquivos gerados pela IA entre tentativas de
+ * auto-correção: remove do disco os artefatos que a IA escreveu numa tentativa
+ * ANTERIOR (`previousPaths`) e que a nova geração (`currentFiles`) NÃO inclui mais.
+ *
+ * Motivação (bug p11 AWS): o loop "tentativa N/5" do `iacmp ai` re-gera as stacks
+ * para corrigir o synth, mas `writeGeneratedFiles` só ESCREVE — nunca apaga. Sem
+ * esta reconciliação, quando a correção junta bucket+lambda num arquivo novo, os
+ * arquivos antigos (bucket-só, lambda-só) permanecem em stacks/; como o `iacmp
+ * synth` carrega TODAS as .ts de stacks/, o ciclo cross-stack persiste e cada
+ * retry PIORA o estado. Cada regeneração tem que ser uma SUBSTITUIÇÃO completa do
+ * conjunto de stacks, não um incremento.
+ *
+ * Segurança: só remove caminhos presentes em `previousPaths` — arquivos que a
+ * PRÓPRIA IA escreveu NESTA mesma execução — e restritos a artefatos gerados
+ * (stacks/** ou src/** .ts/.js). NUNCA toca em arquivo feito à mão, config do
+ * projeto, nem stack de outra origem/execução. Remove também o synth-out
+ * correspondente a cada stack órfão, evitando que um `iacmp deploy` posterior
+ * provisione a stack removida.
+ *
+ * Retorna os caminhos (relativos) efetivamente removidos.
+ */
+export function removeOrphanedGeneratedFiles(
+  previousPaths: Iterable<string>,
+  currentFiles: GeneratedFile[],
+  projectDir: string
+): string[] {
+  const keep = new Set(currentFiles.map(f => f.path));
+  const removed: string[] = [];
+  for (const rel of previousPaths) {
+    if (keep.has(rel)) continue;
+    if (!isGeneratedArtifact(rel)) continue;
+    let full: string;
+    try {
+      full = safeJoin(projectDir, rel);
+    } catch {
+      continue; // caminho suspeito (traversal) — nunca remove
+    }
+    try {
+      if (!fs.existsSync(full)) continue;
+      fs.rmSync(full, { force: true });
+      removed.push(rel);
+    } catch {
+      continue; // falha ao remover não bloqueia a geração
+    }
+    // limpa o synth-out gerado a partir do stack órfão (json/tf)
+    if (rel.replace(/\\/g, '/').startsWith('stacks/')) {
+      for (const out of synthOutPaths(rel, projectDir)) {
+        try { fs.rmSync(out, { force: true }); } catch { /* ignora */ }
+      }
+    }
+  }
+  return removed;
 }
 
 function removeReferences(stackName: string, projectDir: string): string[] {

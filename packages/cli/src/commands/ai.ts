@@ -13,6 +13,7 @@ import {
   extractResponse,
   validateTypeScript,
   writeGeneratedFiles,
+  removeOrphanedGeneratedFiles,
   runSynth,
   runSynthCapture,
   readProjectContext,
@@ -445,8 +446,11 @@ async function runGeneration(
   printExplanation(parsed.explanation);
   printWarnings(parsed.warnings);
 
+  // Rastreia o que a IA escreveu em disco para reconciliar órfãos entre as
+  // tentativas de auto-correção do loop de synth (ver removeOrphanedGeneratedFiles).
+  let previouslyWritten: string[] = [];
   if (parsed.files.length > 0) {
-    await writeGeneratedFiles(parsed.files, cwd, dryRun, ask);
+    previouslyWritten = await writeGeneratedFiles(parsed.files, cwd, dryRun, ask);
   }
 
   printNextSteps(parsed.nextSteps);
@@ -509,8 +513,20 @@ async function runGeneration(
         session.addAssistantMessage(retryRaw);
         try {
           const retryParsed = extractResponse(retryRaw);
+          stripProtectedFiles(retryParsed);
           parsed = retryParsed;
-          await writeGeneratedFiles(parsed.files, cwd, false, async () => 'y');
+          // Cada regeneração SUBSTITUI o conjunto anterior. Escreve a nova geração
+          // e, SÓ se ela foi de fato aplicada, remove as stacks/handlers órfãos da
+          // tentativa anterior — senão órfãos ficam em stacks/, o synth (que
+          // carrega TODAS as .ts) segue vendo constructs duplicados e não converge.
+          const written = await writeGeneratedFiles(parsed.files, cwd, false, async () => 'y');
+          if (written.length > 0) {
+            const orphans = removeOrphanedGeneratedFiles(previouslyWritten, parsed.files, cwd);
+            if (orphans.length > 0) {
+              console.log(chalk.dim(`  ✗ removidos ${orphans.length} arquivo(s) órfão(s) da tentativa anterior: ${orphans.join(', ')}`));
+            }
+            previouslyWritten = written;
+          }
         } catch { /* mantém parsed anterior */ }
       } catch (err) {
         retrySpinner.fail('Erro no retry: ' + (err as Error).message);

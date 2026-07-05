@@ -52,7 +52,7 @@ Module._resolveFilename = function(req, parent, isMain, opts) {
 const chalk = require('chalk');
 const {
   AnthropicProvider, OpenAIProvider, CopilotProvider, ChatSession,
-  extractResponse, validateTypeScript, writeGeneratedFiles, deleteFiles,
+  extractResponse, validateTypeScript, writeGeneratedFiles, deleteFiles, removeOrphanedGeneratedFiles,
   runSynth, runSynthCapture, readProjectContextRAG, printExplanation, printWarnings,
   printNextSteps, buildSystemPrompt,
   loadSession, saveSession, clearSession, getCached, setCache, clearCache, invalidateIndexCache,
@@ -329,12 +329,15 @@ async function runGeneration(provider, session, lastPrompt, projectContext, aiPr
     acted = true;
   }
 
+  // Rastreia o que a IA escreveu em disco para reconciliar órfãos entre as
+  // tentativas de auto-correção do loop de synth (ver removeOrphanedGeneratedFiles).
+  let previouslyWritten = [];
   if (parsed.files.length > 0) {
     // Descarta linhas residuais do paste que ficaram na fila —
     // sem isso, o confirm "Aplicar mudanças? [y/n]" consome essas
     // sobras em vez de esperar o y/n real do usuário.
     while (_lineQueue.length > 0) _lineQueue.shift();
-    await writeGeneratedFiles(parsed.files, cwd, dryRun, ask, currentLang);
+    previouslyWritten = await writeGeneratedFiles(parsed.files, cwd, dryRun, ask, currentLang);
     invalidateIndexCache(cwd);
     acted = true;
 
@@ -397,7 +400,18 @@ async function runGeneration(provider, session, lastPrompt, projectContext, aiPr
         try {
           const retryParsed = extractResponse(retryRaw);
           parsed = retryParsed;
-          await writeGeneratedFiles(parsed.files, cwd, false, ask, currentLang);
+          // Cada regeneração SUBSTITUI o conjunto anterior. Escreve a nova geração
+          // e, SÓ se ela foi de fato aplicada, remove as stacks/handlers órfãos da
+          // tentativa anterior — senão o synth (que carrega TODAS as .ts de
+          // stacks/) segue vendo constructs duplicados e não converge.
+          const written = await writeGeneratedFiles(parsed.files, cwd, false, ask, currentLang);
+          if (written.length > 0) {
+            const orphans = removeOrphanedGeneratedFiles(previouslyWritten, parsed.files, cwd);
+            if (orphans.length > 0) {
+              process.stderr.write(chalk.dim(`  ✗ removidos ${orphans.length} arquivo(s) órfão(s) da tentativa anterior: ${orphans.join(', ')}\n`));
+            }
+            previouslyWritten = written;
+          }
           invalidateIndexCache(cwd);
         } catch { /* mantém parsed anterior */ }
       } catch (err) {

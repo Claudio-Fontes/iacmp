@@ -15,7 +15,7 @@ export {
   printStreamChunk,
 } from './chat/renderer';
 export { writeGeneratedFiles } from './tools/file-writer';
-export { deleteFiles } from './tools/file-deleter';
+export { deleteFiles, removeOrphanedGeneratedFiles } from './tools/file-deleter';
 export { renderAndConfirm, FileDiff, AskFn } from './tools/diff-renderer';
 export { runSynth, runSynthCapture } from './tools/synth-runner';
 export {
