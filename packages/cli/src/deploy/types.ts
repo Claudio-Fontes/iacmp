@@ -15,6 +15,11 @@ export interface NativeCommand {
    * que o arquivo seja apagado mesmo que o deploy falhe.
    */
   cleanup?: () => void;
+  /**
+   * Callback executado ANTES do comando. Pode bloquear (ex: polling até recurso
+   * em estado não-terminal ficar pronto). Erro lançado aqui aborta o deploy.
+   */
+  preRun?: () => void;
 }
 
 export interface DeployContext {

@@ -32,6 +32,22 @@ function getCrossStackParams(templatePath: string): string[] {
   return params;
 }
 
+/** Params com default '' (soft) — injetados quando disponíveis, sem erro se ausentes. */
+function getSoftCrossStackParams(templatePath: string): string[] {
+  let content: string;
+  try {
+    content = fs.readFileSync(templatePath, 'utf-8');
+  } catch {
+    return [];
+  }
+  const params: string[] = [];
+  for (const line of content.split('\n')) {
+    const m = line.match(/^param\s+(\w+)\s+string\s*=\s*''\s*$/);
+    if (m) params.push(m[1]);
+  }
+  return params;
+}
+
 /**
  * Retorna true se o nome do parâmetro (no formato "key=value") corresponde a uma
  * credencial que NÃO deve aparecer na linha de comando (visível em `ps aux`).
@@ -211,7 +227,7 @@ http.createServer(async (req, res) => {
       let egEvents;
       try { egEvents = JSON.parse(body || '[]'); } catch (_) { egEvents = []; }
       if (!Array.isArray(egEvents)) egEvents = [egEvents];
-      if (egEvents.length > 0 && egEvents[0].eventType === 'Microsoft.EventGrid.SubscriptionValidation') {
+      if (egEvents.length > 0 && (egEvents[0].eventType === 'Microsoft.EventGrid.SubscriptionValidationEvent' || egEvents[0].eventType === 'Microsoft.EventGrid.SubscriptionValidation')) {
         const validationCode = egEvents[0].data && egEvents[0].data.validationCode;
         const validationUrl = egEvents[0].data && egEvents[0].data.validationUrl;
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -425,6 +441,18 @@ export const azureExecutor: DeployExecutor = {
           `Rode "iacmp deploy --provider azure" sem --stack para a ordem automática, ou verifique se a stack exportadora falhou.`,
         );
       }
+      // Soft params (default ''): injetados quando disponíveis, sem erro se ausentes.
+      // Usados pelo mecanismo de 2º passo para Event Grid subscriptions cross-stack —
+      // 1º passo deploya sem o FQDN (subscrição não é criada por Bicep if-condition);
+      // 2º passo re-deploya com FQDN disponível nos outputs acumulados.
+      const softParams = getSoftCrossStackParams(ctx.templatePath!);
+      const providedAfterHard = new Set(paramValues.map(p => p.split('=')[0]));
+      for (const p of softParams) {
+        if (providedAfterHard.has(p)) continue;
+        const value = outputsByLower.get(p.toLowerCase());
+        if (value) paramValues.push(`${p}=${value}`);
+        // Sem erro se ausente — o default '' é válido (subscrição condicional não é criada)
+      }
     }
     // Separa parâmetros em plain (podem ir na command line) e secret (jamais na
     // command line — seriam visíveis em `ps aux` para qualquer processo local).
@@ -475,6 +503,7 @@ export const azureExecutor: DeployExecutor = {
         bin: 'az',
         args,
         displayArgs,
+        preRun: () => waitForStackTerminal(ctx.stackName, resourceGroup),
         cleanup: () => { try { fs.unlinkSync(tmpFile); } catch { /* ignore */ } },
       });
     } else {
@@ -484,7 +513,7 @@ export const azureExecutor: DeployExecutor = {
       if (paramValues.length > 0) {
         args.push('--parameters', ...paramValues);
       }
-      commands.push({ bin: 'az', args, displayArgs });
+      commands.push({ bin: 'az', args, displayArgs, preRun: () => waitForStackTerminal(ctx.stackName, resourceGroup) });
     }
 
     return commands;
@@ -521,4 +550,24 @@ export function describeStackStatus(stackName: string, resourceGroup: string): S
   } catch {
     return { deployed: false };
   }
+}
+
+const NON_TERMINAL_STATES = new Set(['Deploying', 'DeletingResources', 'Canceling', 'Validating']);
+
+/**
+ * Bloqueia até que a deployment stack saia de um estado não-terminal.
+ * Polling a cada 30s — timeout 30min (60 tentativas).
+ * Usado como preRun no az stack group create para evitar DeploymentStackInNonTerminalState.
+ */
+function waitForStackTerminal(stackName: string, resourceGroup: string): void {
+  const maxAttempts = 60;
+  for (let i = 0; i < maxAttempts; i++) {
+    const { deployed, status } = describeStackStatus(stackName, resourceGroup);
+    if (!deployed) return;
+    if (!status || !NON_TERMINAL_STATES.has(status)) return;
+    process.stdout.write(`[iacmp] Stack "${stackName}" em estado "${status}" — aguardando... (${i + 1}/${maxAttempts})\n`);
+    // Espera síncrona: deployment stacks de Container App Environment levam 15-20min
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 30_000);
+  }
+  throw new Error(`Stack "${stackName}" continua em estado não-terminal após 30 minutos. Cancele o deploy no portal e tente novamente.`);
 }

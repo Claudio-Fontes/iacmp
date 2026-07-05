@@ -132,6 +132,10 @@ export function orderByDependency(templates: TemplateRef[]): TemplateRef[] {
       try {
         const content = fs.readFileSync(t.filePath, 'utf-8');
         for (const line of content.split('\n')) {
+          // Apenas params SEM default são dependências hard — obrigam a stack
+          // exportadora a ser deployada primeiro. Params com default (ex: = '')
+          // são "soft": o deploy injeta no 2º passo sem criar ciclo de dependência.
+          // Regex: param NAME TYPE  (sem nada depois do tipo = sem default)
           const param = line.match(/^param\s+(\w+)\s+\w+\s*$/);
           if (param) importNames.add(param[1]);
           const output = line.match(/^output\s+(\w+)\s/);

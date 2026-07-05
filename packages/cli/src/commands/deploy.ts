@@ -225,6 +225,54 @@ export default class Deploy extends Command {
       this.log('');
     }
 
+    // Segundo passo Azure: re-deploya stacks que têm params opcionais (default '')
+    // agora satisfeitos pelos outputs acumulados das stacks já deployadas.
+    // Isso quebra o ciclo bucket↔lambda para Event Grid subscriptions cross-stack:
+    // 1º passo cria o bucket (sem a subscription), 2º passo cria a subscription
+    // depois que o FQDN da lambda está disponível.
+    if (provider === 'azure' && !dryRun && Object.keys(azureOutputAccumulator).length > 0) {
+      const outputsByLower = new Map(
+        Object.entries(azureOutputAccumulator).map(([k, v]) => [k.toLowerCase(), v]),
+      );
+      for (const t of templates) {
+        let content: string;
+        try { content = fs.readFileSync(t.filePath, 'utf-8'); } catch { continue; }
+        // Encontra params com default '' que agora têm valor nos outputs acumulados
+        const satisfiedOptionals: string[] = [];
+        for (const line of content.split('\n')) {
+          const m = line.match(/^param\s+(\w+)\s+string\s*=\s*''\s*$/);
+          if (!m) continue;
+          const paramName = m[1];
+          const value = outputsByLower.get(paramName.toLowerCase());
+          if (value) satisfiedOptionals.push(paramName);
+        }
+        if (satisfiedOptionals.length === 0) continue;
+        this.log(`Stack: ${t.stackName} — 2º passo (params agora disponíveis: ${satisfiedOptionals.join(', ')})`);
+        const ctx2: DeployContext = {
+          ...baseCtx,
+          stackName: physicalStackName(t.stackName),
+          templatePath: t.filePath,
+          outputParams: { ...azureOutputAccumulator },
+        };
+        let commands2;
+        try {
+          commands2 = await executor.planDeploy(ctx2);
+        } catch (err) {
+          this.error(errMessage(err));
+        }
+        try {
+          runCommands(commands2);
+        } catch (err) {
+          this.error(errMessage(err));
+        }
+        if (config.resourceGroup) {
+          const stackOutputs = getAzureStackOutputs(physicalStackName(t.stackName), config.resourceGroup);
+          Object.assign(azureOutputAccumulator, stackOutputs);
+        }
+        this.log('');
+      }
+    }
+
     this.log(chalk.green('Deploy concluído.'));
   }
 }

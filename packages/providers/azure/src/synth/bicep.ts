@@ -139,6 +139,8 @@ interface BicepResource {
   identity?: Record<string, unknown>;
   properties: Record<string, unknown>;
   dependsOn?: string[];
+  /** Bicep conditional: `= if (condition) { ... }` — recurso só criado quando true. */
+  condition?: string;
 }
 
 interface BicepOutput {
@@ -176,7 +178,7 @@ function renderBicep(
     }
     fields.push(['properties', r.properties]);
 
-    lines.push(`resource ${r.sym} '${r.type}@${r.apiVersion}' = {`);
+    lines.push(`resource ${r.sym} '${r.type}@${r.apiVersion}' = ${r.condition ? `if (${r.condition}) ` : ''}{`);
     for (const [k, v] of fields) {
       lines.push(`  ${k}: ${bv(v, 1)}`);
     }
@@ -530,14 +532,18 @@ function synthesizeConstruct(
           const lambdaConstruct = idx.get(lambdaId);
           const lambdaSym = toSym(lambdaId);
           let webhookUrl: string;
+          let subCondition: string | undefined;
           if (lambdaConstruct) {
             // Mesma stack: referência direta ao FQDN do Container App.
             webhookUrl = expr(`'https://\${${lambdaSym}.properties.configuration.ingress.fqdn}/events'`);
           } else {
-            // Stack diferente: param cross-stack — deploy injeta o output Fqdn da outra stack.
+            // Stack diferente: param opcional (default '') para evitar ciclo de dependência.
+            // O Event Grid subscription só é criado no segundo passo (após lambda estar deployada).
+            // O param com default '' não conta como import no cycle-detection (regex exige param sem default).
             const fqdnParam = crossParamName(lambdaId, 'Fqdn');
-            crossParams.set(fqdnParam, 'string');
+            crossParams.set(fqdnParam, 'string:optional');
             webhookUrl = expr(`'https://\${${fqdnParam}}/events'`);
+            subCondition = `!empty(${fqdnParam})`;
           }
           resources.push({
             sym: `${topicSym}Sub${ni}`,
@@ -548,6 +554,8 @@ function synthesizeConstruct(
             // dependsOn explícito garante que o Container App esteja criado antes do Event Grid
             // tentar validar o webhook — sem isso, a validação pode falhar por cold start.
             ...(lambdaConstruct ? { dependsOn: [lambdaSym] } : {}),
+            // Cross-stack: só cria a subscrição quando FQDN disponível (segundo passo de deploy)
+            ...(subCondition ? { condition: subCondition } : {}),
             properties: {
               eventDeliverySchema: 'EventGridSchema',
               destination: {
@@ -1235,7 +1243,8 @@ function synthesizeConstruct(
 
     case 'Policy.IAM': {
       const statements = (props.statements as Array<Record<string, unknown>>) ?? [];
-      const attachTo = props.attachTo as string;
+      const rawAttachTo = props.attachTo;
+      const attachTo = isRef(rawAttachTo) ? rawAttachTo.constructId : (rawAttachTo as string);
       const attachSym = toSym(attachTo);
       // Azure RBAC usa actions no formato Microsoft.*/* — mapear ações AWS para
       // um placeholder válido (o deploy precisa do formato correto, não da semântica AWS)
@@ -1271,6 +1280,15 @@ function synthesizeConstruct(
           assignableScopes: [expr('resourceGroup().id')],
         },
       });
+      // Cross-stack: se o construct não está nesta stack, o principalId vem via param
+      let principalIdExpr: string;
+      if (idx.get(attachTo)) {
+        principalIdExpr = `${attachSym}.identity.principalId`;
+      } else {
+        const principalIdParam = crossParamName(attachTo, 'PrincipalId');
+        crossParams.set(principalIdParam, 'string');
+        principalIdExpr = principalIdParam;
+      }
       resources.push({
         sym: roleAssignSym,
         type: 'Microsoft.Authorization/roleAssignments',
@@ -1280,7 +1298,7 @@ function synthesizeConstruct(
         properties: {
           roleDefinitionId: expr(`${roleDefSym}.id`),
           // principalId = managed identity da Function App (requer identity: SystemAssigned)
-          principalId: expr(`${attachSym}.identity.principalId`),
+          principalId: expr(principalIdExpr),
           principalType: 'ServicePrincipal',
           description: `Role assignment for ${attachTo}`,
         },
@@ -1443,6 +1461,22 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
   // cdnBucketRefs: Storage.Buckets referenciados por Network.CDN via bucketRef —
   // precisam de allowBlobPublicAccess: true + container 'web' para servir conteúdo.
   const cdnBucketRefs = new Set<string>();
+  // lambdaWithEventGridTrigger: Function.Lambda/Compute.Container que têm Event Grid
+  // subscriptions same-stack apontando para eles. Esses containers precisam de
+  // minReplicas:1 — com minReplicas:0 o container escala a zero e o primeiro request
+  // de validação do Event Grid retorna vazio (cold-start race), fazendo o ARM cancelar
+  // a criação da subscription e consequentemente o deployment inteiro.
+  const lambdaWithEventGridTrigger = new Set<string>();
+  for (const c of stack.constructs) {
+    if (c.type !== 'Storage.Bucket') continue;
+    const p = c.props as Record<string, unknown>;
+    const notifications = (p.eventNotifications as Array<Record<string, unknown>>) ?? [];
+    for (const n of notifications) {
+      const raw = n.lambdaId;
+      const lid = isRef(raw) ? (raw as Ref).constructId : raw as string;
+      if (lid && idx.has(lid)) lambdaWithEventGridTrigger.add(lid);
+    }
+  }
 
   // subnetsByVpc: subnets agrupadas por VPC — serão declaradas inline em
   // properties.subnets[] do virtualNetworks para evitar AnotherOperationInProgress
@@ -1477,6 +1511,17 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
 
   for (const construct of stack.constructs) {
     synthesizeConstruct(construct, idx, resources, outputs, needsAdminPassword, crossParams, functionImageParams, sharedContainerEnvSym, cdnBucketRefs, subnetsByVpc, accountTier);
+  }
+
+  // Post-processing: Container Apps com Event Grid trigger same-stack → minReplicas:1.
+  // Sem isso, o container parte de zero réplicas e o primeiro request de validação
+  // do Event Grid falha (body vazio / 503) por cold-start, cancelando o deployment ARM.
+  for (const lambdaId of lambdaWithEventGridTrigger) {
+    const app = resources.find(r => r.sym === toSym(lambdaId) && r.type === 'Microsoft.App/containerApps');
+    if (app?.properties?.template) {
+      const tmpl = app.properties.template as Record<string, unknown>;
+      tmpl.scale = { ...(tmpl.scale as object ?? {}), minReplicas: 1 };
+    }
   }
 
   // Post-processing: Storage.Buckets referenciados por CDN via bucketRef ganham
@@ -1538,9 +1583,12 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
     params.push({ name: 'acrUser', type: 'string', default: '' });
     params.push({ name: 'acrPassword', type: 'string', default: '', secure: true });
   }
-  // Parâmetros cross-stack (sem default — devem ser passados no deploy)
+  // Parâmetros cross-stack
   for (const [name, type] of crossParams) {
     if (type === 'secureString') { params.push({ name, type: 'string', secure: true }); continue; }
+    // 'string:optional': param com default '' — permite deploy sem valor (1º passo);
+    // o 2º passo re-deploya com o valor real quando disponível nos outputs acumulados.
+    if (type === 'string:optional') { params.push({ name, type: 'string', default: '' }); continue; }
     params.push({ name, type });
   }
 

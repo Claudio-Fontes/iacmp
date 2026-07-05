@@ -28,6 +28,7 @@ export function printPlan(commands: NativeCommand[]): void {
  */
 export function runCommands(commands: NativeCommand[]): void {
   for (const cmd of commands) {
+    cmd.preRun?.();
     try {
       execFileSync(cmd.bin, cmd.args, { cwd: cmd.cwd, stdio: 'inherit' });
     } catch {
@@ -36,7 +37,6 @@ export function runCommands(commands: NativeCommand[]): void {
         `Se for um problema de autenticação, configure a credencial da CLI (${cmd.bin}) e tente novamente, ou rode: iacmp doctor`
       );
     } finally {
-      // Apaga arquivo temporário de parâmetros (se existir) mesmo se o comando falhou.
       cmd.cleanup?.();
     }
   }

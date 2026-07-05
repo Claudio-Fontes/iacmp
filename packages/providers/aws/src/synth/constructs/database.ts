@@ -368,6 +368,10 @@ export function synthDatabase(
         Properties: {
           Name: construct.id,
           Description: (props.description as string) ?? `Secret ${construct.id}`,
+          GenerateSecretString: {
+            PasswordLength: 32,
+            ExcludePunctuation: true,
+          },
           ...(props.kmsKeyId ? { KmsKeyId: props.kmsKeyId } : {}),
           ...(props.replicaRegions ? { ReplicaRegions: (props.replicaRegions as string[]).map(r => ({ Region: r })) } : {}),
         },

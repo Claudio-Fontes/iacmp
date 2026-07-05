@@ -8,7 +8,7 @@ import { GCPProvider } from '@iacmp/provider-gcp';
 import { TerraformProvider } from '@iacmp/provider-terraform';
 import { Stack, EnvironmentProfile, AccountTier, tsCompilerOptions } from '@iacmp/core';
 import { loadPlugins } from '@iacmp/plugin-sdk';
-import { synthRoot, providerOutDir, listTemplates, orderByDependency } from '../synth-out';
+import { synthRoot, providerOutDir, templateExt, listTemplates, orderByDependency } from '../synth-out';
 
 interface LoadedStack {
   stackName: string;
@@ -260,6 +260,27 @@ export default class Synth extends Command {
       fs.mkdirSync(outDir, { recursive: true });
     }
 
+    // Remove stale templates do synth-out (de stacks que não existem mais).
+    // Só quando synth é completo (sem --stack) — synth parcial pode deixar
+    // arquivos de outras stacks intencionalmente.
+    if (!flags.stack) {
+      const provOutDir = providerOutDir(cwd, provider);
+      const ext = templateExt(provider);
+      if (fs.existsSync(provOutDir)) {
+        const currentNames = new Set(loadedStacks.map(s => s.stackName));
+        for (const file of fs.readdirSync(provOutDir)) {
+          if (!file.endsWith(ext)) continue;
+          const stale = file.slice(0, -ext.length);
+          if (!currentNames.has(stale)) {
+            fs.rmSync(path.join(provOutDir, file));
+            // Remove também o .iacmp-meta.json correspondente, se existir
+            const meta = path.join(provOutDir, `${stale}.iacmp-meta.json`);
+            if (fs.existsSync(meta)) fs.rmSync(meta);
+          }
+        }
+      }
+    }
+
     const allStacks = loadedStacks.map(s => s.stack);
 
     for (const { stackName, stack: typedStack } of targetStacks) {
@@ -330,16 +351,15 @@ export default class Synth extends Command {
       }
     }
 
-    // ── Detecção de dependência circular cross-stack (AWS CFN) ───────────────
+    // ── Detecção de dependência circular cross-stack (AWS + Azure) ──────────
     // Roda pós-synth (templates já em disco) mas pré-deploy. Se duas ou mais
     // stacks importam exports uma da outra — ex: buckets-stack exporta
     // BucketArn e importa Lambda-Arn, enquanto lambda-stack exporta Lambda-Arn
-    // e importa BucketArn — o deploy falharia com "No export named ... found"
-    // no segundo stack a subir. Detectar aqui dá ao loop da IA o contexto
-    // correto para colocar os constructs interdependentes na mesma stack.
-    if (provider === 'aws') {
+    // e importa BucketArn — o deploy falharia. Detectar aqui dá ao loop da IA
+    // o contexto correto para colocar os constructs interdependentes na mesma stack.
+    if (provider === 'aws' || provider === 'azure') {
       try {
-        orderByDependency(listTemplates(cwd, 'aws'));
+        orderByDependency(listTemplates(cwd, provider));
       } catch (err) {
         this.error((err as Error).message);
       }

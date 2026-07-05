@@ -429,9 +429,26 @@ export function resolvePolicyResource(value: unknown, ctx: SynthContext): unknow
   return resolveRef(parsed, ctx);
 }
 
+// Env vars tipicamente recebem nomes (não ARNs) para Storage.Bucket e Database.DynamoDB.
+// S3 PutObject/GetObject esperam bucket name; DynamoDB PutItem espera table name.
+// O DEFAULT_ATTR global usa Arn (correto para IAM policy resources), mas em env vars
+// o default para esses dois tipos deve ser Name.
+const ENV_VAR_DEFAULT_ATTR: Partial<Record<string, string>> = {
+  ...DEFAULT_ATTR,
+  'Storage.Bucket': 'Name',
+  'Database.DynamoDB': 'Name',
+};
+
 export function resolveEnvVarValue(value: unknown, ctx: SynthContext): unknown {
   if (isRef(value)) return resolveRef(value, ctx);
   if (typeof value !== 'string') return value;
+  // Para bare IDs (sem ponto), usa o mapa específico de env var que prefere Name
+  // para Storage.Bucket e Database.DynamoDB em vez de Arn.
+  if (!value.startsWith('arn:') && !value.includes('.') && ctx.registry.has(value)) {
+    const type = ctx.registry.get(value)!.type;
+    const attr = ENV_VAR_DEFAULT_ATTR[type];
+    if (attr) return resolveRef(ref(value, attr), ctx);
+  }
   const parsed = parseStringRef(value, ctx);
   if ('literal' in parsed) return value;
   return resolveRef(parsed, ctx);
