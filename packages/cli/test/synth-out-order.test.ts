@@ -96,4 +96,75 @@ describe('orderByDependency', () => {
     const b = writeBicep('b.bicep', 'param location string = resourceGroup().location');
     expect(orderByDependency([a, b]).map(t => t.fileName)).toEqual(['a.bicep', 'b.bicep']);
   });
+
+  // ── Guard de ciclo ────────────────────────────────────────────────────────
+
+  test('dependência circular bidirecional (buckets↔lambda) → lança com mensagem clara', () => {
+    // Reproduz o cenário p11 AWS: buckets-stack exporta BucketArn e importa
+    // Lambda-Arn (para NotificationConfiguration); lambda-stack exporta
+    // Lambda-Arn e importa BucketArn (para env + IAM) → ciclo impossível.
+    const buckets = writeTemplate(dir, 'buckets-stack.json', {
+      Resources: {
+        RawBucket: { Type: 'AWS::S3::Bucket', Properties: {
+          NotificationConfiguration: { LambdaConfigurations: [
+            { Function: { 'Fn::ImportValue': 'p11aws-lambda-DataProcessorFn-Arn' } },
+          ]},
+        }},
+      },
+      Outputs: {
+        RawDataBucketArn: { Value: {}, Export: { Name: 'p11aws-buckets-RawDataBucket-Arn' } },
+      },
+    });
+    const lambda = writeTemplate(dir, 'lambda-stack.json', {
+      Resources: {
+        DataProcessorFn: { Type: 'AWS::Lambda::Function', Properties: {
+          Environment: { Variables: { BUCKET: { 'Fn::ImportValue': 'p11aws-buckets-RawDataBucket-Arn' } } },
+        }},
+      },
+      Outputs: {
+        DataProcessorFnArn: { Value: {}, Export: { Name: 'p11aws-lambda-DataProcessorFn-Arn' } },
+      },
+    });
+
+    expect(() => orderByDependency([buckets, lambda])).toThrow(/circular/i);
+    expect(() => orderByDependency([buckets, lambda])).toThrow(/buckets-stack/);
+    expect(() => orderByDependency([buckets, lambda])).toThrow(/lambda-stack/);
+    // Mensagem deve citar os exports envolvidos para orientar o fix
+    expect(() => orderByDependency([buckets, lambda])).toThrow(/p11aws-/);
+  });
+
+  test('ciclo com 3 stacks (A→B→C→A) → lança erro', () => {
+    const sa = writeTemplate(dir, 'sa.json', {
+      Resources: { R: { Type: 'X', Properties: { V: { 'Fn::ImportValue': 'export-sc' } } } },
+      Outputs: { X: { Value: {}, Export: { Name: 'export-sa' } } },
+    });
+    const sb = writeTemplate(dir, 'sb.json', {
+      Resources: { R: { Type: 'X', Properties: { V: { 'Fn::ImportValue': 'export-sa' } } } },
+      Outputs: { Y: { Value: {}, Export: { Name: 'export-sb' } } },
+    });
+    const sc = writeTemplate(dir, 'sc.json', {
+      Resources: { R: { Type: 'X', Properties: { V: { 'Fn::ImportValue': 'export-sb' } } } },
+      Outputs: { Z: { Value: {}, Export: { Name: 'export-sc' } } },
+    });
+
+    expect(() => orderByDependency([sa, sb, sc])).toThrow(/circular/i);
+  });
+
+  test('cadeia acíclica A→B→C continua ordenando corretamente após o guard', () => {
+    // Regressão: o guard não deve afetar casos válidos.
+    const ax = writeTemplate(dir, 'ax.json', {
+      Resources: {},
+      Outputs: { P: { Value: {}, Export: { Name: 'guard-export-ax' } } },
+    });
+    const bx = writeTemplate(dir, 'bx.json', {
+      Resources: { R: { Type: 'X', Properties: { V: { 'Fn::ImportValue': 'guard-export-ax' } } } },
+      Outputs: { Q: { Value: {}, Export: { Name: 'guard-export-bx' } } },
+    });
+    const cx = writeTemplate(dir, 'cx.json', {
+      Resources: { R: { Type: 'X', Properties: { V: { 'Fn::ImportValue': 'guard-export-bx' } } } },
+    });
+
+    const ordered = orderByDependency([cx, ax, bx]);
+    expect(ordered.map(t => t.fileName)).toEqual(['ax.json', 'bx.json', 'cx.json']);
+  });
 });

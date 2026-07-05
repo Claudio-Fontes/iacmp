@@ -8,7 +8,7 @@ import { GCPProvider } from '@iacmp/provider-gcp';
 import { TerraformProvider } from '@iacmp/provider-terraform';
 import { Stack, EnvironmentProfile, AccountTier, tsCompilerOptions } from '@iacmp/core';
 import { loadPlugins } from '@iacmp/plugin-sdk';
-import { synthRoot, providerOutDir } from '../synth-out';
+import { synthRoot, providerOutDir, listTemplates, orderByDependency } from '../synth-out';
 
 interface LoadedStack {
   stackName: string;
@@ -327,6 +327,21 @@ export default class Synth extends Command {
         }
       } catch (err) {
         this.error(`Falha ao sintetizar '${stackName}': ${(err as Error).message}`);
+      }
+    }
+
+    // ── Detecção de dependência circular cross-stack (AWS CFN) ───────────────
+    // Roda pós-synth (templates já em disco) mas pré-deploy. Se duas ou mais
+    // stacks importam exports uma da outra — ex: buckets-stack exporta
+    // BucketArn e importa Lambda-Arn, enquanto lambda-stack exporta Lambda-Arn
+    // e importa BucketArn — o deploy falharia com "No export named ... found"
+    // no segundo stack a subir. Detectar aqui dá ao loop da IA o contexto
+    // correto para colocar os constructs interdependentes na mesma stack.
+    if (provider === 'aws') {
+      try {
+        orderByDependency(listTemplates(cwd, 'aws'));
+      } catch (err) {
+        this.error((err as Error).message);
       }
     }
 

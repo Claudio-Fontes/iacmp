@@ -184,12 +184,40 @@ export function orderByDependency(templates: TemplateRef[]): TemplateRef[] {
       if (indegree.get(nextPath) === 0) queue.push(byPath.get(nextPath)!);
     }
   }
-  // Ciclo (não deveria acontecer na prática) — inclui o resto na ordem original
-  // em vez de descartar templates silenciosamente.
+
+  // Kahn's terminou com nós sobrando → há ciclo de dependência cross-stack.
+  // Nós presos têm indegree > 0 porque cada um importa algo exportado por outro
+  // nó igualmente preso, formando um ciclo impossível de ordenar.
+  // Falha ANTES de tentar qualquer deploy — a mensagem orienta o fix.
   if (ordered.length < templates.length) {
     const seen = new Set(ordered.map(t => t.filePath));
-    for (const t of templates) if (!seen.has(t.filePath)) ordered.push(t);
+    const inCycle = templates.filter(t => !seen.has(t.filePath));
+
+    // Identifica quais imports de cada stack presa apontam para outra stack presa.
+    const cycleEdges: string[] = [];
+    for (const importer of inCycle) {
+      const needed = importsByPath.get(importer.filePath)!;
+      for (const exporter of inCycle) {
+        if (exporter.filePath === importer.filePath) continue;
+        const provided = exportsByPath.get(exporter.filePath)!;
+        const mutual = [...needed].filter(name => provided.has(name));
+        if (mutual.length > 0) {
+          cycleEdges.push(
+            `  "${importer.stackName}" importa ${mutual.map(n => `"${n}"`).join(', ')} exportado por "${exporter.stackName}"`
+          );
+        }
+      }
+    }
+
+    const stackNames = inCycle.map(t => `"${t.stackName}"`).join(' ↔ ');
+    throw new Error(
+      `Dependência circular entre stacks detectada: ${stackNames}\n` +
+      (cycleEdges.length > 0 ? `\n${cycleEdges.join('\n')}\n` : '') +
+      `\nFix: coloque os constructs com referência mútua na MESMA stack` +
+      ` (ex: o bucket com eventNotifications + a Lambda-alvo juntos).`
+    );
   }
+
   return ordered;
 }
 
