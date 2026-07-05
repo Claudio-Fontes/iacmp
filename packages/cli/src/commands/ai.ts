@@ -522,8 +522,23 @@ async function runGeneration(
             `NÃO junte tudo num arquivo só: os DEMAIS recursos (VPC/subnets, DynamoDB/RDS, buckets SEM trigger) ` +
             `CONTINUAM cada um em sua própria stack separada — a Lambda os referencia cross-stack via \`ref(...)\` em env vars (dependência unidirecional, sem ciclo). ` +
             `Um único arquivo com VPC+buckets+banco+Lambda é MONOLITO e será rejeitado. ` +
+            `CRÍTICO para o handler: quando bucket-trigger e Lambda estão na MESMA stack, o nome do bucket vem do EVENTO (não de env var): ` +
+            `\`const bucket = record.s3.bucket.name\` — NÃO use process.env.RAW_BUCKET_NAME (essa env var é omitida pelo synth). ` +
             `Se a reestruturação eliminar algum arquivo de stack antigo, liste-o em \`deletions\` (não deixe stack órfã). ` +
             `Retorne o JSON completo com o novo conjunto de arquivos (tentativa ${attempt} de ${MAX_SYNTH_RETRIES}).`;
+        } else if (/usa process\.env\.\w+ mas essa env var é omitida pelo synth/.test(output)) {
+          // Handler usa process.env do bucket-trigger (omitida pelo synth para evitar ciclo CFN).
+          // A estrutura de stacks ESTÁ CORRETA — NÃO reorganize os arquivos de stack.
+          // Só o handler precisa mudar.
+          correctionMsg =
+            `O synth detectou que um handler usa process.env que foi omitido pelo synth:\n\n${output}\n\n` +
+            `ATENÇÃO: a estrutura dos arquivos de stack ESTÁ CORRETA — NÃO mova constructs, NÃO reorganize os arquivos em stacks/. ` +
+            `Corrija APENAS o handler em src/: ` +
+            `ANTES: \`const bucket = process.env.RAW_BUCKET_NAME!\` ` +
+            `DEPOIS: \`const bucket = record.s3.bucket.name\` (o nome do bucket-trigger vem SEMPRE do evento S3). ` +
+            `A key continua: \`const key = decodeURIComponent(record.s3.object.key.replace(/\\+/g, ' '))\`. ` +
+            `Buckets de SAÍDA (outra stack, sem trigger) PODEM continuar como env var: \`process.env.PROCESSED_BUCKET_NAME\`. ` +
+            `Retorne o JSON completo com TODOS os ${parsed.files.length} arquivo(s) mas altere APENAS os handlers src/ (tentativa ${attempt} de ${MAX_SYNTH_RETRIES}).`;
         } else {
           correctionMsg =
             `O comando "iacmp synth" falhou com o seguinte erro:\n\n${output}\n\n` +
