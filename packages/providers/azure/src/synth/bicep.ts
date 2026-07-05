@@ -1405,7 +1405,44 @@ function synthesizeConstruct(
 
     case 'Workflow.StepFunctions': {
       const steps = (props.steps as Array<Record<string, unknown>>) ?? [];
-      resources.push({ sym, type: 'Microsoft.Logic/workflows', apiVersion: '2019-05-01', name: construct.id, location: 'location', tags: tag(construct.id), properties: { definition: { '$schema': 'https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#', contentVersion: '1.0.0.0', triggers: {}, actions: Object.fromEntries(steps.map((s, i) => [s.name as string, { type: 'Http', inputs: { method: 'POST', uri: (s.resource as string) ?? '' }, runAfter: i > 0 ? { [steps[i - 1].name as string]: ['Succeeded'] } : {} }])) } } });
+      const actions: Record<string, unknown> = {};
+      for (let si = 0; si < steps.length; si++) {
+        const s = steps[si];
+        const stepName = s.name as string;
+        const runAfter = si > 0 ? { [steps[si - 1].name as string]: ['Succeeded'] } : {};
+        const stepType = (s.type as string) ?? 'Task';
+        if (stepType === 'Wait') {
+          // Logic Apps Wait action: usa interval em minutos (mínimo 1).
+          const secs = (s.seconds as number) ?? 60;
+          const mins = Math.max(1, Math.ceil(secs / 60));
+          actions[stepName] = { type: 'Wait', inputs: { interval: { count: mins, unit: 'Minute' } }, runAfter };
+        } else {
+          // Resolve resource → URL HTTP do Container App.
+          // s.resource é um Ref (ainda não processado por resolveValue), então resolvemos
+          // manualmente para obter o FQDN com prefixo https://.
+          let uri: unknown = '';
+          const rawResource = s.resource;
+          if (isRef(rawResource)) {
+            const refObj = rawResource as Ref;
+            const refConstruct = idx.get(refObj.constructId);
+            if (refConstruct && (refConstruct.type === 'Function.Lambda' || refConstruct.type === 'Compute.Container')) {
+              const lambdaSym = toSym(refObj.constructId);
+              uri = expr(`'https://\${${lambdaSym}.properties.configuration.ingress.fqdn}'`);
+            } else if (!refConstruct) {
+              // cross-stack: injeta param Bicep com o FQDN da stack produtora.
+              const fqdnParam = crossParamName(refObj.constructId, 'Fqdn');
+              crossParams.set(fqdnParam, 'string');
+              uri = expr(`'https://\${${fqdnParam}}'`);
+            } else {
+              uri = resolveRef(refObj, idx, crossParams);
+            }
+          } else if (typeof rawResource === 'string') {
+            uri = rawResource;
+          }
+          actions[stepName] = { type: 'Http', inputs: { method: 'POST', uri }, runAfter };
+        }
+      }
+      resources.push({ sym, type: 'Microsoft.Logic/workflows', apiVersion: '2019-05-01', name: construct.id, location: 'location', tags: tag(construct.id), properties: { definition: { '$schema': 'https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#', contentVersion: '1.0.0.0', triggers: {}, actions } } });
       break;
     }
 
