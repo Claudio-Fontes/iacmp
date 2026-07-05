@@ -723,14 +723,37 @@ function synthesizeConstruct(
 
     case 'Network.WAF': {
       const rules = (props.rules as Array<Record<string, unknown>>) ?? [];
+      // Mapa de nomes AWS → Azure OWASP/Microsoft equivalentes
+      const AWS_RULE_MAP: Record<string, { ruleSetType: string; ruleSetVersion: string }> = {
+        AWSManagedRulesCommonRuleSet: { ruleSetType: 'OWASP', ruleSetVersion: '3.2' },
+        AWSManagedRulesKnownBadInputsRuleSet: { ruleSetType: 'OWASP', ruleSetVersion: '3.2' },
+        AWSManagedRulesAmazonIpReputationList: { ruleSetType: 'Microsoft_BotManagerRuleSet', ruleSetVersion: '1.0' },
+        AWSManagedRulesBotControlRuleSet: { ruleSetType: 'Microsoft_BotManagerRuleSet', ruleSetVersion: '1.0' },
+        AWSManagedRulesAdminProtectionRuleSet: { ruleSetType: 'OWASP', ruleSetVersion: '3.2' },
+        AWSManagedRulesSQLiRuleSet: { ruleSetType: 'OWASP', ruleSetVersion: '3.2' },
+        AWSManagedRulesLinuxRuleSet: { ruleSetType: 'OWASP', ruleSetVersion: '3.2' },
+        AWSManagedRulesWindowsRuleSet: { ruleSetType: 'OWASP', ruleSetVersion: '3.2' },
+        AWSManagedRulesPHPRuleSet: { ruleSetType: 'OWASP', ruleSetVersion: '3.2' },
+        AWSManagedRulesWordPressRuleSet: { ruleSetType: 'OWASP', ruleSetVersion: '3.2' },
+      };
       const customRules = rules.filter(r => !r.managedGroup).map((r, i) => ({
         name: (r.name as string) ?? `custom-rule-${i}`,
         priority: (r.priority as number) ?? (i + 1),
+        // App Gateway WAF suporta apenas MatchRule — RateLimitRule é exclusivo do Front Door
         ruleType: 'MatchRule',
-        action: (r.action as string) ?? 'Block',
-        matchConditions: [{ matchVariables: [{ variableName: 'RequestHeaders', selector: 'User-Agent' }], operator: 'Contains', matchValues: (r.matchValues as string[]) ?? ['BadBot'] }],
+        // action deve ser capitalizado: Block, Allow, Log (Azure não aceita lowercase)
+        action: ({ allow: 'Allow', block: 'Block', log: 'Log' }[(r.action as string)?.toLowerCase() ?? 'block']) ?? 'Block',
+        matchConditions: [{ matchVariables: [{ variableName: 'RemoteAddr' }], operator: 'IPMatch', matchValues: (r.matchValues as string[]) ?? ['192.0.2.0/24'], negationCondition: false }],
       }));
-      const managedRules = rules.filter(r => r.managedGroup).map(r => ({ ruleSetType: (r.managedGroup as string) ?? 'OWASP', ruleSetVersion: '3.2' }));
+      // Mapear e deduplicar: vários grupos AWS podem gerar o mesmo Azure ruleSetType
+      const seenRuleSets = new Set<string>();
+      const managedRules = rules.filter(r => r.managedGroup).reduce<Array<{ ruleSetType: string; ruleSetVersion: string }>>((acc, r) => {
+        const group = r.managedGroup as string;
+        const mapped = AWS_RULE_MAP[group] ?? { ruleSetType: 'OWASP', ruleSetVersion: '3.2' };
+        const key = `${mapped.ruleSetType}@${mapped.ruleSetVersion}`;
+        if (!seenRuleSets.has(key)) { seenRuleSets.add(key); acc.push(mapped); }
+        return acc;
+      }, []);
       resources.push({
         sym,
         type: 'Microsoft.Network/ApplicationGatewayWebApplicationFirewallPolicies',
