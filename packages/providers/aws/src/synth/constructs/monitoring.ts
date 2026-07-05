@@ -44,6 +44,7 @@ export function synthMonitoring(
             ? { markdown: w.markdown ?? w.title }
             : {
                 title: w.title as string,
+                region: '${AWS::Region}',
                 metrics: [[
                   (w.namespace as string) ?? 'AWS/Lambda',
                   w.metricName as string,
@@ -59,7 +60,7 @@ export function synthMonitoring(
         Type: 'AWS::CloudWatch::Dashboard',
         Properties: {
           DashboardName: construct.id,
-          DashboardBody: JSON.stringify(dashBody),
+          DashboardBody: { 'Fn::Sub': JSON.stringify(dashBody) },
         },
       }]];
     }
