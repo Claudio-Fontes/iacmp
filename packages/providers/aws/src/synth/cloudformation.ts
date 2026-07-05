@@ -8,7 +8,7 @@ import {
 } from '@iacmp/core';
 import { type CloudFormationResource, type CloudFormationTemplate, type SynthContext } from './types';
 export type { CloudFormationResource, CloudFormationTemplate, SynthContext } from './types';
-import { validateResourceReferences, validateNoNullValues } from './validation';
+import { validateResourceReferences, validateNoNullValues, validateHandlerEnvVarAccess } from './validation';
 import type { ResourceNode, StackExport, StackGraph } from './graph';
 import { resourceRef } from './graph';
 import { emitCloudFormation } from './emit/cloudformation';
@@ -157,6 +157,11 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
     }
   }
   const ctx: SynthContext = { currentStackName: prefixStack(stack.name), registry, lambdaRoles, vpcLambdas, dbSecretSuffix, dbMasterUsername, sqsEventSourceLambdas, kinesisEventSourceLambdas, albDefaultTg, publicSubnetsByVpc, profile, s3TriggerBucketsForLambda };
+
+  // Guard: detecta handlers .ts que leem process.env de env vars omitidas pelo
+  // synth (omitidas porque referenciam o bucket-trigger — evitar ciclo CFN).
+  // O modelo de IA frequentemente gera essa leitura; sem o guard só falha em runtime.
+  validateHandlerEnvVarAccess(stack.constructs, ctx);
 
   for (const construct of stack.constructs) {
     const entries = synthesizeConstruct(construct, ctx);

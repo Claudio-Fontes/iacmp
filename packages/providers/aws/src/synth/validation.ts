@@ -1,4 +1,8 @@
-import { type CloudFormationResource } from './types';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import type { BaseConstruct } from '@iacmp/core';
+import { type CloudFormationResource, type SynthContext } from './types';
+import { isSamestackS3BucketRef } from './resolvers';
 
 export const CFN_PSEUDO_PARAMETERS = new Set([
   'AWS::Region', 'AWS::AccountId', 'AWS::StackName', 'AWS::StackId',
@@ -109,5 +113,77 @@ export function validateNoNullValues(resources: Record<string, CloudFormationRes
       `Causa comum: referência a uma propriedade que não existe no construct ` +
       `(ex: Secret.Vault não tem .secretArn; use a env var resolvida pelo synth ou o id do recurso).`
     );
+  }
+}
+
+/**
+ * Detecta handlers TypeScript que usam process.env.<VAR> onde <VAR> foi omitida
+ * pelo synth porque referenciava um bucket-trigger (evitar ciclo CFN). O modelo
+ * de IA frequentemente gera `const bucket = process.env.RAW_BUCKET_NAME!` no
+ * handler, mas essa env var não existe em runtime — a Lambda falha com undefined.
+ *
+ * Varre src/*.ts no diretório do projeto (process.cwd() = cwd do synth = projectDir)
+ * e lança erro claro com instrução de fix antes do deploy.
+ */
+export function validateHandlerEnvVarAccess(constructs: BaseConstruct[], ctx: SynthContext, projectDir: string = process.cwd()): void {
+  const errors: string[] = [];
+
+  for (const construct of constructs) {
+    if (construct.type !== 'Function.Lambda') continue;
+
+    const triggerBuckets = ctx.s3TriggerBucketsForLambda.get(construct.id);
+    if (!triggerBuckets || triggerBuckets.size === 0) continue;
+
+    const environment = (construct.props as Record<string, unknown>).environment as Record<string, unknown> | undefined;
+    if (!environment) continue;
+
+    // Replica a lógica de omissão de synthFunction: env vars que referenciam um
+    // trigger bucket da mesma stack são omitidas do template CFN.
+    const omittedVars: string[] = [];
+    for (const [k, v] of Object.entries(environment)) {
+      const bucketId = isSamestackS3BucketRef(v, ctx);
+      if (bucketId && triggerBuckets.has(bucketId)) {
+        omittedVars.push(k);
+      }
+    }
+
+    if (omittedVars.length === 0) continue;
+
+    // Verifica src/*.ts do projeto (cwd = projectDir quando synth roda).
+    const srcDir = path.join(projectDir, 'src');
+    if (!fs.existsSync(srcDir)) continue;
+
+    let tsFiles: string[];
+    try {
+      tsFiles = fs.readdirSync(srcDir)
+        .filter(f => f.endsWith('.ts'))
+        .map(f => path.join(srcDir, f));
+    } catch {
+      continue;
+    }
+
+    for (const file of tsFiles) {
+      let content: string;
+      try {
+        content = fs.readFileSync(file, 'utf-8');
+      } catch {
+        continue;
+      }
+
+      for (const varName of omittedVars) {
+        if (content.includes(`process.env.${varName}`)) {
+          const rel = path.relative(projectDir, file);
+          errors.push(
+            `Erro: Handler ${rel} usa process.env.${varName} mas essa env var é omitida pelo synth ` +
+            `(referencia o bucket-trigger, criaria ciclo CFN).\n` +
+            `Fix: use record.s3.bucket.name do evento S3 em vez de process.env.${varName}.`,
+          );
+        }
+      }
+    }
+  }
+
+  if (errors.length > 0) {
+    throw new Error(errors.join('\n'));
   }
 }
