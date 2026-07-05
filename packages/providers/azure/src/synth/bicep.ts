@@ -1443,6 +1443,9 @@ function synthesizeConstruct(
         }
       }
       resources.push({ sym, type: 'Microsoft.Logic/workflows', apiVersion: '2019-05-01', name: construct.id, location: 'location', tags: tag(construct.id), properties: { definition: { '$schema': 'https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#', contentVersion: '1.0.0.0', triggers: {}, actions } } });
+      // Output do ARN (= resource ID no Azure) para referência cross-stack (ex: WORKFLOW_ID env var).
+      // O 2º passo do deploy injeta este valor via param Bicep soft (default '') na stack consumidora.
+      outputs.push({ name: crossParamName(construct.id, 'Arn'), type: 'string', value: `${sym}.id` });
       break;
     }
 
@@ -1453,6 +1456,9 @@ function synthesizeConstruct(
       resources.push({ sym: nsSym, type: 'Microsoft.ServiceBus/namespaces', apiVersion: '2022-10-01-preview', name: nsName, location: 'location', tags: tag(construct.id), sku: { name: 'Standard', tier: 'Standard' }, properties: {} });
       resources.push({ sym: qSym, type: 'Microsoft.ServiceBus/namespaces/queues', apiVersion: '2022-10-01-preview', parent: nsSym, name: construct.id, properties: { lockDuration: `PT${(props.visibilityTimeoutSeconds as number) ?? 30}S`, maxSizeInMegabytes: 1024, requiresDuplicateDetection: false, requiresSession: false, defaultMessageTimeToLive: `P${Math.floor(((props.messageRetentionSeconds as number) ?? 345600) / 86400)}D`, deadLetteringOnMessageExpiration: false } });
       outputs.push({ name: `${construct.id}Id`, type: 'string', value: `${nsSym}.id` });
+      // Output para referência cross-stack via ref(..., 'Url') — gera param ApprovalQueueUrl
+      // na stack consumidora. Valor = endpoint do Service Bus namespace (sb://<name>.servicebus.windows.net/).
+      outputs.push({ name: crossParamName(construct.id, 'Url'), type: 'string', value: `'sb://\${${nsSym}.name}.servicebus.windows.net/'` });
       break;
     }
 

@@ -31,11 +31,16 @@ export function runCommands(commands: NativeCommand[]): void {
     cmd.preRun?.();
     try {
       execFileSync(cmd.bin, cmd.args, { cwd: cmd.cwd, stdio: 'inherit' });
-    } catch {
-      throw new Error(
-        `Falha ao executar "${formatCommand(cmd)}" — veja a saída acima. ` +
-        `Se for um problema de autenticação, configure a credencial da CLI (${cmd.bin}) e tente novamente, ou rode: iacmp doctor`
-      );
+    } catch (e) {
+      if (cmd.onError) {
+        // onError pode suprimir o erro (não lança) ou re-lançar com mensagem melhor.
+        cmd.onError(e as Error);
+      } else {
+        throw new Error(
+          `Falha ao executar "${formatCommand(cmd)}" — veja a saída acima. ` +
+          `Se for um problema de autenticação, configure a credencial da CLI (${cmd.bin}) e tente novamente, ou rode: iacmp doctor`
+        );
+      }
     } finally {
       cmd.cleanup?.();
     }

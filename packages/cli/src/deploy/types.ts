@@ -20,6 +20,13 @@ export interface NativeCommand {
    * em estado não-terminal ficar pronto). Erro lançado aqui aborta o deploy.
    */
   preRun?: () => void;
+  /**
+   * Callback executado quando o comando falha. Se não lançar exceção, o erro
+   * é suprimido e a execução continua — útil para recuperar de falhas locais
+   * do CLI quando a operação real já foi iniciada no provider (ex: az CLI 2.87.0
+   * crash com "content already consumed" enquanto deploy stack já está rodando no ARM).
+   */
+  onError?: (err: Error) => void;
 }
 
 export interface DeployContext {

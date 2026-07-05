@@ -505,6 +505,7 @@ export const azureExecutor: DeployExecutor = {
         displayArgs,
         preRun: () => waitForStackTerminal(ctx.stackName, resourceGroup),
         cleanup: () => { try { fs.unlinkSync(tmpFile); } catch { /* ignore */ } },
+        onError: () => recoverFromAzCliCrash(ctx.stackName, resourceGroup),
       });
     } else {
       // dry-run (comando não será executado) ou sem secrets: params inline.
@@ -513,7 +514,7 @@ export const azureExecutor: DeployExecutor = {
       if (paramValues.length > 0) {
         args.push('--parameters', ...paramValues);
       }
-      commands.push({ bin: 'az', args, displayArgs, preRun: () => waitForStackTerminal(ctx.stackName, resourceGroup) });
+      commands.push({ bin: 'az', args, displayArgs, preRun: () => waitForStackTerminal(ctx.stackName, resourceGroup), onError: () => recoverFromAzCliCrash(ctx.stackName, resourceGroup) });
     }
 
     return commands;
@@ -552,7 +553,14 @@ export function describeStackStatus(stackName: string, resourceGroup: string): S
   }
 }
 
-const NON_TERMINAL_STATES = new Set(['Deploying', 'DeletingResources', 'Canceling', 'Validating']);
+// Azure ARM retorna provisioningState em camelCase mas pode ser lowercase dependendo da versão
+// da API ou do CLI. Incluímos ambas as formas para garantir.
+const NON_TERMINAL_STATES = new Set([
+  'Deploying', 'deploying',
+  'DeletingResources', 'deletingResources', 'deleting', 'Deleting',
+  'Canceling', 'canceling',
+  'Validating', 'validating',
+]);
 
 /**
  * Bloqueia até que a deployment stack saia de um estado não-terminal.
@@ -570,4 +578,30 @@ function waitForStackTerminal(stackName: string, resourceGroup: string): void {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 30_000);
   }
   throw new Error(`Stack "${stackName}" continua em estado não-terminal após 30 minutos. Cancele o deploy no portal e tente novamente.`);
+}
+
+/**
+ * Recuperação de crash do az CLI 2.87.0 com "RuntimeError: content already consumed".
+ * O CLI crasha localmente mas o deploy pode ter iniciado no ARM. Espera o stack
+ * chegar a um estado terminal e valida se teve sucesso. Se sim, suprime o erro
+ * original; se não, lança erro indicando falha real.
+ */
+function recoverFromAzCliCrash(stackName: string, resourceGroup: string): void {
+  const { deployed } = describeStackStatus(stackName, resourceGroup);
+  if (!deployed) {
+    // Stack não existe no ARM — falha real, não recuperável.
+    throw new Error(
+      `Stack "${stackName}" não pôde ser criada. Verifique o portal Azure para detalhes.`
+    );
+  }
+  // Stack existe e pode estar deploying — aguarda até estado terminal.
+  process.stdout.write(`[iacmp] az CLI crashou localmente mas deploy iniciou no ARM. Aguardando stack "${stackName}"...\n`);
+  waitForStackTerminal(stackName, resourceGroup);
+  const { status } = describeStackStatus(stackName, resourceGroup);
+  if (status && /fail/i.test(status)) {
+    throw new Error(
+      `Stack "${stackName}" falhou (status: ${status}). Verifique o portal Azure para detalhes do erro.`
+    );
+  }
+  process.stdout.write(`[iacmp] Stack "${stackName}" concluída com sucesso (recuperado de crash do az CLI).\n`);
 }
