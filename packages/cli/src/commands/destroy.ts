@@ -21,7 +21,7 @@ export default class Destroy extends Command {
   static description = 'Destroi a infraestrutura do provider configurado';
 
   static flags = {
-    provider: Flags.string({ char: 'p', description: 'Provider alvo', default: 'aws' }),
+    provider: Flags.string({ char: 'p', description: 'Provider alvo (aws, azure, gcp, terraform) — default: o provider do iacmp.json' }),
     stack: Flags.string({ char: 's', description: 'Nome da stack específica' }),
     force: Flags.boolean({ char: 'f', description: 'Pula confirmação' }),
     'dry-run': Flags.boolean({ description: 'Mostra os comandos que seriam executados, sem rodar nada', default: false }),

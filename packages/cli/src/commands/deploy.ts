@@ -32,7 +32,7 @@ export default class Deploy extends Command {
   static description = 'Faz deploy das stacks no provider configurado';
 
   static flags = {
-    provider: Flags.string({ char: 'p', description: 'Provider alvo (aws, azure, gcp, terraform)', default: 'aws' }),
+    provider: Flags.string({ char: 'p', description: 'Provider alvo (aws, azure, gcp, terraform) — default: o provider do iacmp.json' }),
     stack: Flags.string({ char: 's', description: 'Nome da stack específica' }),
     'dry-run': Flags.boolean({ description: 'Mostra os comandos que seriam executados, sem rodar nada', default: false }),
   };
