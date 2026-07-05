@@ -55,6 +55,25 @@ export interface SynthContext {
    * o synth substitui o ARN pelo wildcard '*' (sem dependência CloudFormation).
    */
   s3TriggerBucketsForLambda: Map<string, Set<string>>;
+  /**
+   * IDs de Function.Lambda que têm uma ref a Workflow.StepFunctions no
+   * environment (ex: STATE_MACHINE_ARN: ref('X','Arn')). Quando não há
+   * Policy.IAM explícito, a default role recebe inline policy
+   * states:StartExecution — sem isso o runtime falha com AccessDeniedException.
+   */
+  sfnInitiatorLambdas: Set<string>;
+  /**
+   * lambdaId → Set de constructIds de Database.DynamoDB referenciados no
+   * environment. Quando não há Policy.IAM explícito, a default role recebe
+   * inline policy com as ações CRUD básicas do DynamoDB.
+   */
+  dynamoRefLambdas: Map<string, Set<string>>;
+  /**
+   * lambdaId → Set de constructIds de Messaging.Queue (SQS) referenciados no
+   * environment (ex: QUEUE_URL). Quando não há Policy.IAM explícito, a default
+   * role recebe inline policy sqs:SendMessage — sem isso AccessDeniedException.
+   */
+  sqsSenderRefLambdas: Map<string, Set<string>>;
 }
 
 export const INSTANCE_TYPE_MAP: Record<string, string> = {

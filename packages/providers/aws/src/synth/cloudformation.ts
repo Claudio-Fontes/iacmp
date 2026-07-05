@@ -5,6 +5,7 @@ import {
   applyEnvironmentDefaults,
   EnvironmentProfile,
   DEFAULT_PROFILE,
+  isRef,
 } from '@iacmp/core';
 import { type CloudFormationResource, type CloudFormationTemplate, type SynthContext } from './types';
 export type { CloudFormationResource, CloudFormationTemplate, SynthContext } from './types';
@@ -80,6 +81,7 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
   const albDefaultTg = new Map<string, { stackName: string; tgLogicalId: string; listenerLogicalId?: string }>();
   const publicSubnetsByVpc = new Map<string, Array<{ id: string; stackName: string }>>();
   const s3TriggerBucketsForLambda = new Map<string, Set<string>>();
+  const sfnInitiatorLambdas = new Set<string>();
   for (const s of universe) {
     for (const c of s.constructs) {
       registry.set(c.id, { stackName: prefixStack(s.name), type: c.type });
@@ -139,6 +141,32 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
       }
     }
   }
+  // Lambdas que têm refs a AWS services no environment — sem Policy.IAM explícito,
+  // a default role não inclui essas permissões e o runtime falha com AccessDeniedException.
+  const dynamoRefLambdas = new Map<string, Set<string>>();
+  const sqsSenderRefLambdas = new Map<string, Set<string>>();
+  for (const s of universe) {
+    for (const c of s.constructs) {
+      if (c.type !== 'Function.Lambda') continue;
+      const env = ((c.props as Record<string, unknown>).environment as Record<string, unknown> | undefined) ?? {};
+      for (const v of Object.values(env)) {
+        if (!isRef(v)) continue;
+        const refType = registry.get(v.constructId)?.type;
+        if (refType === 'Workflow.StepFunctions') {
+          sfnInitiatorLambdas.add(c.id);
+        } else if (refType === 'Database.DynamoDB') {
+          const set = dynamoRefLambdas.get(c.id) ?? new Set<string>();
+          set.add(v.constructId);
+          dynamoRefLambdas.set(c.id, set);
+        } else if (refType === 'Messaging.Queue') {
+          const set = sqsSenderRefLambdas.get(c.id) ?? new Set<string>();
+          set.add(v.constructId);
+          sqsSenderRefLambdas.set(c.id, set);
+        }
+      }
+    }
+  }
+
   // Buckets S3 (mesma stack) que acionam uma Lambda via eventNotifications.
   // Usado para quebrar o ciclo: Bucket→Permission→Lambda→PolicyRole→Bucket(Arn).
   for (const c of stack.constructs) {
@@ -156,7 +184,7 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
       s3TriggerBucketsForLambda.set(lambdaId, set);
     }
   }
-  const ctx: SynthContext = { currentStackName: prefixStack(stack.name), registry, lambdaRoles, vpcLambdas, dbSecretSuffix, dbMasterUsername, sqsEventSourceLambdas, kinesisEventSourceLambdas, albDefaultTg, publicSubnetsByVpc, profile, s3TriggerBucketsForLambda };
+  const ctx: SynthContext = { currentStackName: prefixStack(stack.name), registry, lambdaRoles, vpcLambdas, dbSecretSuffix, dbMasterUsername, sqsEventSourceLambdas, kinesisEventSourceLambdas, albDefaultTg, publicSubnetsByVpc, profile, s3TriggerBucketsForLambda, sfnInitiatorLambdas, dynamoRefLambdas, sqsSenderRefLambdas };
 
   // Guard: detecta handlers .ts que leem process.env de env vars omitidas pelo
   // synth (omitidas porque referenciam o bucket-trigger — evitar ciclo CFN).

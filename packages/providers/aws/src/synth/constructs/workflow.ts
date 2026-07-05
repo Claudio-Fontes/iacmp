@@ -37,19 +37,33 @@ export function synthWorkflow(
             subVars[varName] = (isRef(rawResourceRaw) ? resolveRef(rawResourceRaw, ctx) : resolveLambdaArnRef(rawResource, ctx)) as ResourceRef | ImportRef;
             arnRef = `\${${varName}}`;
           }
-          // waitForToken: Task de callback — invoca a Lambda passando o task token
-          // e PAUSA até SendTaskSuccess/Failure. Usa a integração otimizada
-          // lambda:invoke.waitForTaskToken.
+          // Todos os Tasks usam a integração otimizada lambda:invoke e serializam
+          // o estado atual em event.body (via States.JsonToString) para que os
+          // handlers possam usar JSON.parse(event.body) — padrão gerado pelo AI.
+          // waitForToken: inclui também o task token em event.taskToken para que
+          // o handler possa passá-lo ao aprovador (ex: mensagem SQS).
+          // ResultPath: null preserva o estado de entrada no próximo passo.
           const taskProps = isTask
             ? (s.waitForToken
                 ? {
                     Resource: 'arn:aws:states:::lambda:invoke.waitForTaskToken',
                     Parameters: {
                       FunctionName: arnRef,
-                      'Payload': { 'taskToken.$': '$$.Task.Token', 'input.$': '$' },
+                      'Payload': {
+                        'body.$': 'States.JsonToString($)',
+                        'taskToken.$': '$$.Task.Token',
+                      },
                     },
+                    ResultPath: null,
                   }
-                : { Resource: arnRef })
+                : {
+                    Resource: 'arn:aws:states:::lambda:invoke',
+                    Parameters: {
+                      FunctionName: arnRef,
+                      'Payload': { 'body.$': 'States.JsonToString($)' },
+                    },
+                    ResultPath: null,
+                  })
             : {};
           return [s.name as string, {
             Type: stateType,
