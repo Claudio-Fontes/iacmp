@@ -359,10 +359,10 @@ module.exports = stack;
 
       const networkRaw = read(dir, 'synth-out/aws/network.json');
       expect(networkRaw).toContain('Fn::ImportValue');
-      expect(networkRaw).toContain('proj-lambda-HelloFn-Arn');
+      expect(networkRaw).toContain('test-proj-lambda-HelloFn-Arn');
 
       const computeTpl = JSON.parse(read(dir, 'synth-out/aws/compute.json'));
-      expect(computeTpl.Outputs.HelloFnArn.Export.Name).toBe('proj-lambda-HelloFn-Arn');
+      expect(computeTpl.Outputs.HelloFnArn.Export.Name).toBe('test-proj-lambda-HelloFn-Arn');
     });
 
     test('--stack filtrando só a stack do gateway AINDA resolve a referência (passada 1 carrega tudo)', () => {
@@ -393,7 +393,7 @@ module.exports = stack;
       // ...mas a referência cross-stack já resolveu certo, porque a passada 1
       // carregou compute.js só pra montar o registry (sem gravar saída pra ela).
       const networkTpl = JSON.parse(read(dir, 'synth-out/aws/network.json'));
-      expect(JSON.stringify(networkTpl.Resources)).toContain('proj-lambda-HelloFn-Arn');
+      expect(JSON.stringify(networkTpl.Resources)).toContain('test-proj-lambda-HelloFn-Arn');
     });
 
     test('lambdaId inexistente em nenhuma stack → erro claro de synth (não silencioso)', () => {
