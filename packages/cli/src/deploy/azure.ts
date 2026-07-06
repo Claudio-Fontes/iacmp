@@ -368,10 +368,6 @@ export const azureExecutor: DeployExecutor = {
 
         extraParams.push(`acrServer=${loginServer}`, `acrUser=${acrUser}`, `acrPassword=${acrPassword}`);
 
-        // Login no ACR antes do docker build/push (sincronamente — planDeploy
-        // já pode ter efeitos colaterais de leitura; login é prereq do build).
-        execFileSync('az', ['acr', 'login', '--name', acrName], { stdio: 'pipe' });
-
         for (const fn of functions) {
           const buildDir = buildFunctionBundle(ctx.cwd, fn, ctx.templatePath);
           if (buildDir) {
@@ -386,11 +382,12 @@ export const azureExecutor: DeployExecutor = {
             }
             const tag = hash.digest('hex').slice(0, 12);
             const fullImage = `${loginServer}/${fn.containerAppName}:${tag}`;
-            // docker build + push localmente (Docker daemon obrigatório).
-            // --platform linux/amd64: Azure Container Apps exige amd64;
-            // sem isso, build em Apple Silicon gera ARM64 e o deploy rejeita.
-            commands.push({ bin: 'docker', args: ['build', '--platform', 'linux/amd64', '-t', fullImage, buildDir] });
-            commands.push({ bin: 'docker', args: ['push', fullImage] });
+            // ACR Tasks: envia contexto para o Azure e constrói lá (sem Docker local).
+            // --platform linux/amd64: garante amd64 mesmo em Apple Silicon.
+            commands.push({
+              bin: 'az',
+              args: ['acr', 'build', '--registry', acrName, '--image', `${fn.containerAppName}:${tag}`, '--platform', 'linux/amd64', buildDir],
+            });
             extraParams.push(`${fn.imageParamName}=${fullImage}`);
           }
         }
