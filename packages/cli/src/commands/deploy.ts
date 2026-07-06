@@ -121,10 +121,14 @@ export default class Deploy extends Command {
     // Acumula outputs de stacks Azure deployadas para injetar como params na próxima.
     // Pré-popula com outputs de stacks já deployadas no RG (necessário para --stack,
     // que pula stacks anteriores e precisa do sharedCaeId etc já disponível).
+    // EXCEÇÃO: nunca pré-popula outputs da própria stack sendo re-deployada — evita
+    // injetar sharedCaeId da stack como input dela mesma, o que removeria o CAE do
+    // template (if empty(sharedCaeId)) e causaria DeploymentStackDeleteResourcesFailed.
     const azureOutputAccumulator: Record<string, string> = {};
     if (provider === 'azure' && config.resourceGroup && !dryRun) {
       const physicalName = (n: string) => config.name ? `${config.name}-${n}` : n;
       for (const t of allTemplates) {
+        if (flags.stack && t.stackName === flags.stack) continue;
         const existing = getAzureStackOutputs(physicalName(t.stackName), config.resourceGroup);
         Object.assign(azureOutputAccumulator, existing);
       }

@@ -289,6 +289,11 @@ http.createServer(async (req, res) => {
     for (const [k, v] of Object.entries(req.headers)) {
       headers[k] = Array.isArray(v) ? v.join(',') : String(v);
     }
+    // Node.js normaliza header names para lowercase; handlers que leem headers com
+    // title-case (ex: event.headers.Authorization) precisam do alias.
+    // Adicionamos a versão title-case para os headers mais comuns.
+    const titleCase = (s) => s.replace(/(?:^|-)([a-z])/g, (_, c) => c.toUpperCase());
+    for (const k of Object.keys(headers)) { const tc = titleCase(k); if (tc !== k) headers[tc] = headers[k]; }
     // pathParameters no formato Lambda-proxy.
     // Estratégia: extrai params nomeados via matchRoute (usa templates das rotas APIM)
     // e faz merge com a convenção legada { id, proxy } para não quebrar handlers CRUD
