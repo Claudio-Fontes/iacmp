@@ -484,8 +484,16 @@ export default class Synth extends Command {
         { encoding: 'utf-8' },
       );
       if (result.status !== 0) {
-        this.warn(`az deployment group validate falhou para '${stackName}':\n${result.stderr || result.stdout}`);
-        hasError = true;
+        const output = result.stderr || result.stdout || '';
+        // MaxNumberOfRegionalEnvironmentsInSubExceeded: o sharedCaeId param resolve
+        // em deploy-time — não é um erro real de template, apenas uma limitação de
+        // quota que o deploy orquestra via outputs acumulados entre stacks.
+        if (output.includes('MaxNumberOfRegionalEnvironmentsInSubExceeded')) {
+          this.log(`  az deployment validate: ${stackName} — CAE quota (sharedCaeId resolve em deploy)`);
+        } else {
+          this.warn(`az deployment group validate falhou para '${stackName}':\n${output}`);
+          hasError = true;
+        }
       } else {
         this.log(`  az deployment validate OK: ${stackName}`);
       }

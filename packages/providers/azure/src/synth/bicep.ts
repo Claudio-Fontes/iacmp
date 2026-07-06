@@ -415,7 +415,7 @@ function synthesizeConstruct(
         tags: tag(construct.id),
         identity: { type: 'SystemAssigned' },
         properties: {
-          managedEnvironmentId: expr(`${envSym}.id`),
+          managedEnvironmentId: expr(`empty(sharedCaeId) ? sharedContainerEnv.id : sharedCaeId`),
           configuration: {
             ingress: { external: true, targetPort },
             registries: expr(`empty(acrServer) ? [] : [{\n    server: acrServer\n    username: acrUser\n    passwordSecretRef: 'acr-pwd'\n  }]`),
@@ -1162,7 +1162,7 @@ function synthesizeConstruct(
         tags: tag(construct.id),
         identity: { type: 'SystemAssigned' },
         properties: {
-          managedEnvironmentId: expr(`${envSym}.id`),
+          managedEnvironmentId: expr(`empty(sharedCaeId) ? sharedContainerEnv.id : sharedCaeId`),
           configuration: {
             ingress: { external: true, targetPort: 3000 },
             registries: expr(`empty(acrServer) ? [] : [{\n    server: acrServer\n    username: acrUser\n    passwordSecretRef: 'acr-pwd'\n  }]`),
@@ -1880,8 +1880,9 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
   }
 
   // ManagedEnvironment compartilhado — free tier Azure limita a 1 env por região.
-  // Criado uma única vez se o stack tiver alguma Function.Lambda ou Compute.Container
-  // (ambos mapeiam para Microsoft.App/containerApps, que exige managedEnvironments).
+  // Criado uma única vez se o stack tiver alguma Function.Lambda ou Compute.Container.
+  // Se um CAE de outra stack já existe (param sharedCaeId != ''), reutiliza em vez de criar.
+  // O deploy/azure.ts injeta sharedCaeId como soft param a partir dos outputs acumulados.
   const hasLambda = stack.constructs.some(c => c.type === 'Function.Lambda' || c.type === 'Compute.Container');
   let sharedContainerEnvSym: string | null = null;
   if (hasLambda) {
@@ -1894,7 +1895,10 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
       location: 'location',
       tags: { Stack: stack.name },
       properties: { zoneRedundant: false },
+      condition: 'empty(sharedCaeId)',
     });
+    // Output para que a próxima stack possa reutilizar este CAE sem criar um novo.
+    outputs.push({ name: 'sharedCaeId', type: 'string', value: `empty(sharedCaeId) ? ${sharedContainerEnvSym}.id : sharedCaeId` });
   }
 
   for (const construct of stack.constructs) {
@@ -1965,11 +1969,14 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
   for (const name of functionImageParams) {
     params.push({ name, type: 'string', default: 'node:20-alpine' });
   }
-  // Params ACR — usados quando há Function.Lambda e o deploy faz build no ACR.
+  // Params ACR + CAE compartilhado — usados quando há Function.Lambda.
   if (hasLambda) {
     params.push({ name: 'acrServer', type: 'string', default: '' });
     params.push({ name: 'acrUser', type: 'string', default: '' });
     params.push({ name: 'acrPassword', type: 'string', default: '', secure: true });
+    // sharedCaeId: ID do CAE de outra stack; vazio = criar novo CAE nesta stack.
+    // Injetado automaticamente pelo deploy/azure.ts via outputs acumulados.
+    params.push({ name: 'sharedCaeId', type: 'string', default: '' });
   }
   // Parâmetros cross-stack
   for (const [name, type] of crossParams) {
