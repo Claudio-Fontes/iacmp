@@ -1075,7 +1075,6 @@ function synthesizeConstruct(
         tags: tag(construct.id),
         properties: {
           databaseAccountOfferType: 'Standard',
-          enableFreeTier: accountTier === 'free',
           capabilities: [{ name: 'EnableTable' }],
           locations: [{ locationName: expr('location'), failoverPriority: 0, isZoneRedundant: false }],
           backupPolicy: { type: 'Periodic', periodicModeProperties: { backupIntervalInMinutes: 1440, backupRetentionIntervalInHours: 168 } },
