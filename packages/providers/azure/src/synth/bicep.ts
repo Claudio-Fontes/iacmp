@@ -1122,16 +1122,18 @@ function synthesizeConstruct(
     }
 
     case 'Cache.Redis': {
-      // free tier: Basic C0 (~$16/mês, o menor); standard usa o mapa por nodeType.
-      const skuInfo = accountTier === 'free'
-        ? { name: 'Basic', family: 'C', capacity: 0 }
-        : CACHE_SKU_MAP[(props.nodeType as string) ?? 'small'];
-      resources.push({ sym, type: 'Microsoft.Cache/redis', apiVersion: '2023-08-01', name: expr(`'${construct.id.toLowerCase()}-\${uniqueString(resourceGroup().id)}'`), location: 'location', tags: tag(construct.id), sku: { name: skuInfo.name, family: skuInfo.family, capacity: skuInfo.capacity }, properties: { enableNonSslPort: false, minimumTlsVersion: '1.2', redisVersion: (props.version as string) ?? '7.0', redisConfiguration: { 'maxmemory-policy': 'volatile-lru' } } });
+      // Azure Cache for Redis (Basic/Standard/Premium) foi retirado — migrado para
+      // Azure Managed Redis (Microsoft.Cache/redisEnterprise). Tier mínimo Balanced_B0.
+      // EnterpriseCluster mode na porta 10000 é compatível com ioredis single-node.
+      const dbSym = `${sym}Db`;
+      const reName = expr(`'${construct.id.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 40) || 're'}-\${uniqueString(resourceGroup().id)}'`);
+      resources.push({ sym, type: 'Microsoft.Cache/redisEnterprise', apiVersion: '2024-10-01', name: reName, location: 'location', tags: tag(construct.id), sku: { name: 'Balanced_B0' }, properties: {} });
+      resources.push({ sym: dbSym, type: 'Microsoft.Cache/redisEnterprise/databases', apiVersion: '2024-10-01', parent: sym, name: 'default', properties: { clientProtocol: 'Encrypted', port: 10000, clusteringPolicy: 'EnterpriseCluster', evictionPolicy: 'VolatileLRU', modules: [], persistence: { aofEnabled: false } } });
       outputs.push({ name: `${construct.id}Endpoint`, type: 'string', value: `${sym}.properties.hostName` });
-      outputs.push({ name: `${construct.id}Port`, type: 'int', value: `${sym}.properties.sslPort` });
+      outputs.push({ name: `${construct.id}Port`, type: 'int', value: `${dbSym}.properties.port` });
       // ConnectionString no formato ioredis: rediss://:KEY@HOSTNAME:PORT
       // Consumido cross-stack via param (compute-stack env var REDIS_CONNECTION_STRING).
-      outputs.push({ name: crossParamName(construct.id, 'ConnectionString'), type: 'string', value: `'rediss://:$\{${sym}.listKeys().primaryKey}@$\{${sym}.properties.hostName}:6380'` });
+      outputs.push({ name: crossParamName(construct.id, 'ConnectionString'), type: 'string', value: `'rediss://:$\{${dbSym}.listKeys().primaryKey}@$\{${sym}.properties.hostName}:10000'` });
       break;
     }
 
