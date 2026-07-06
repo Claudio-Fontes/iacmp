@@ -1122,7 +1122,7 @@ function synthesizeConstruct(
       const skuInfo = accountTier === 'free'
         ? { name: 'Basic', family: 'C', capacity: 0 }
         : CACHE_SKU_MAP[(props.nodeType as string) ?? 'small'];
-      resources.push({ sym, type: 'Microsoft.Cache/redis', apiVersion: '2023-08-01', name: construct.id, location: 'location', tags: tag(construct.id), sku: { name: skuInfo.name, family: skuInfo.family, capacity: skuInfo.capacity }, properties: { enableNonSslPort: false, minimumTlsVersion: '1.2', redisVersion: (props.version as string) ?? '7.0', redisConfiguration: { 'maxmemory-policy': 'volatile-lru' } } });
+      resources.push({ sym, type: 'Microsoft.Cache/redis', apiVersion: '2023-08-01', name: expr(`'${construct.id.toLowerCase()}-\${uniqueString(resourceGroup().id)}'`), location: 'location', tags: tag(construct.id), sku: { name: skuInfo.name, family: skuInfo.family, capacity: skuInfo.capacity }, properties: { enableNonSslPort: false, minimumTlsVersion: '1.2', redisVersion: (props.version as string) ?? '7.0', redisConfiguration: { 'maxmemory-policy': 'volatile-lru' } } });
       outputs.push({ name: `${construct.id}Endpoint`, type: 'string', value: `${sym}.properties.hostName` });
       outputs.push({ name: `${construct.id}Port`, type: 'int', value: `${sym}.properties.sslPort` });
       break;
