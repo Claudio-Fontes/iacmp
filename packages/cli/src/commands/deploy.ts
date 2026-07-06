@@ -81,7 +81,8 @@ export default class Deploy extends Command {
     // orderByDependency garante que uma stack que EXPORTA (ex: Function.Lambda
     // referenciada por outra stack via Fn::ImportValue) suba antes de quem
     // importa — sem isso o deploy real falharia com "export not found".
-    const templates = orderByDependency(listTemplates(cwd, provider, flags.stack));
+    const allTemplates = orderByDependency(listTemplates(cwd, provider));
+    const templates = flags.stack ? allTemplates.filter(t => t.stackName === flags.stack) : allTemplates;
     if (templates.length === 0) {
       this.error(`Nenhum template encontrado para '${provider}'. Rode: iacmp synth --provider ${provider}`);
     }
@@ -117,8 +118,17 @@ export default class Deploy extends Command {
 
     this.log(`Provider: ${provider}${dryRun ? ' (dry-run)' : ''}\n`);
 
-    // Acumula outputs de stacks Azure deployadas para injetar como params na próxima
+    // Acumula outputs de stacks Azure deployadas para injetar como params na próxima.
+    // Pré-popula com outputs de stacks já deployadas no RG (necessário para --stack,
+    // que pula stacks anteriores e precisa do sharedCaeId etc já disponível).
     const azureOutputAccumulator: Record<string, string> = {};
+    if (provider === 'azure' && config.resourceGroup && !dryRun) {
+      const physicalName = (n: string) => config.name ? `${config.name}-${n}` : n;
+      for (const t of allTemplates) {
+        const existing = getAzureStackOutputs(physicalName(t.stackName), config.resourceGroup);
+        Object.assign(azureOutputAccumulator, existing);
+      }
+    }
 
     // Nome físico da stack no CloudFormation = prefixado com o nome do projeto
     // para evitar colisões entre projetos distintos na mesma conta AWS.
