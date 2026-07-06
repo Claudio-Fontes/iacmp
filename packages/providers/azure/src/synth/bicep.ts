@@ -1125,6 +1125,9 @@ function synthesizeConstruct(
       resources.push({ sym, type: 'Microsoft.Cache/redis', apiVersion: '2023-08-01', name: expr(`'${construct.id.toLowerCase()}-\${uniqueString(resourceGroup().id)}'`), location: 'location', tags: tag(construct.id), sku: { name: skuInfo.name, family: skuInfo.family, capacity: skuInfo.capacity }, properties: { enableNonSslPort: false, minimumTlsVersion: '1.2', redisVersion: (props.version as string) ?? '7.0', redisConfiguration: { 'maxmemory-policy': 'volatile-lru' } } });
       outputs.push({ name: `${construct.id}Endpoint`, type: 'string', value: `${sym}.properties.hostName` });
       outputs.push({ name: `${construct.id}Port`, type: 'int', value: `${sym}.properties.sslPort` });
+      // ConnectionString no formato ioredis: rediss://:KEY@HOSTNAME:PORT
+      // Consumido cross-stack via param (compute-stack env var REDIS_CONNECTION_STRING).
+      outputs.push({ name: crossParamName(construct.id, 'ConnectionString'), type: 'string', value: `'rediss://:$\{${sym}.listKeys().primaryKey}@$\{${sym}.properties.hostName}:6380'` });
       break;
     }
 
