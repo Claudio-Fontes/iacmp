@@ -1476,11 +1476,69 @@ function synthesizeConstruct(
     }
 
     case 'Events.EventBridge': {
+      // Azure equivalente de EventBridge scheduled rules: Logic Apps com Recurrence trigger.
+      // Cada rule com cron/rate vira um Logic App que faz HTTP POST no Container App alvo.
       const rules = (props.rules as Array<Record<string, unknown>>) ?? [];
-      resources.push({ sym, type: 'Microsoft.EventGrid/namespaces', apiVersion: '2023-06-01-preview', name: (props.busName as string) ?? construct.id, location: 'location', tags: tag(construct.id), sku: { name: 'Standard', capacity: 1 }, properties: { topicsConfiguration: {}, topicSpacesConfiguration: { state: 'Enabled' } } });
       for (let ri = 0; ri < rules.length; ri++) {
         const r = rules[ri];
-        resources.push({ sym: `${sym}Sub${ri}`, type: 'Microsoft.EventGrid/eventSubscriptions', apiVersion: '2022-06-15', name: (r.name as string) ?? `${construct.id}-sub-${ri}`, properties: { destination: { endpointType: 'WebHook', properties: { endpointUrl: (r.targetArn as string) ?? '' } }, filter: { includedEventTypes: (r.detailTypes as string[]) ?? ['*'] } } });
+        const ruleSym = `${sym}Rule${ri}`;
+        const ruleName = ((r.name as string) ?? `${construct.id}-rule-${ri}`).toLowerCase();
+
+        // Montar recurrence a partir de cron (AWS format) ou rate
+        let recurrence: Record<string, unknown> = { frequency: 'Day', interval: 1 };
+        if (r.cron) {
+          // AWS cron: "minute hour day month day-of-week year"  ex: "0 8 * * ? *"
+          const parts = (r.cron as string).trim().split(/\s+/);
+          const minute = parseInt(parts[0] ?? '0', 10) || 0;
+          const hour   = parseInt(parts[1] ?? '0', 10) || 0;
+          recurrence = { frequency: 'Day', interval: 1, timeZone: 'UTC', schedule: { hours: [String(hour)], minutes: [minute] } };
+        } else if (r.rate) {
+          const m = (r.rate as string).toLowerCase().match(/^(\d+)\s+(minute|minutes|hour|hours|day|days)$/);
+          if (m) {
+            const freqMap: Record<string, string> = { minute: 'Minute', minutes: 'Minute', hour: 'Hour', hours: 'Hour', day: 'Day', days: 'Day' };
+            recurrence = { frequency: freqMap[m[2]] ?? 'Hour', interval: parseInt(m[1], 10) };
+          }
+        }
+
+        // Resolver URL do Container App alvo (mesma stack ou cross-stack)
+        let targetUrl: unknown = '';
+        const targetLambdaId = r.targetLambdaId as string | undefined;
+        if (targetLambdaId) {
+          if (idx.get(targetLambdaId)) {
+            const lSym = toSym(targetLambdaId);
+            targetUrl = expr(`'https://\${${lSym}.properties.configuration.ingress.fqdn}/invoke'`);
+          } else {
+            const fqdnParam = crossParamName(targetLambdaId, 'Fqdn');
+            crossParams.set(fqdnParam, 'string');
+            targetUrl = expr(`'https://\${${fqdnParam}}/invoke'`);
+          }
+        }
+
+        resources.push({
+          sym: ruleSym,
+          type: 'Microsoft.Logic/workflows',
+          apiVersion: '2019-05-01',
+          name: ruleName,
+          location: 'location',
+          tags: tag(construct.id),
+          properties: {
+            definition: {
+              '$schema': 'https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#',
+              contentVersion: '1.0.0.0',
+              triggers: {
+                Recurrence: { type: 'Recurrence', recurrence },
+              },
+              actions: {
+                InvokeTarget: {
+                  type: 'Http',
+                  inputs: { method: 'POST', uri: targetUrl, body: { rule: ruleName, time: '@{utcNow()}' } },
+                  runAfter: {},
+                },
+              },
+            },
+            parameters: {},
+          },
+        });
       }
       break;
     }
