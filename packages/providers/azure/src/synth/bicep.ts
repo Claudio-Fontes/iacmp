@@ -93,9 +93,11 @@ function resolveRef(r: Ref, idx: Map<string, BaseConstruct>, crossParams: Map<st
     const nsSym = `${sym}Ns`;
     return expr(`listKeys(resourceId('Microsoft.ServiceBus/namespaces/authorizationRules', ${nsSym}.name, 'RootManageSharedAccessKey'), '2022-10-01-preview').primaryConnectionString`);
   }
-  // ConnectionString do Cache.Redis — formato ioredis rediss://:KEY@HOST:PORT via listKeys().
+  // ConnectionString do Cache.Redis — redisEnterprise (Balanced_B0) porta 10000.
+  // dbSym = child resource databases/default que tem listKeys() e port.
   if (c.type === 'Cache.Redis' && r.attribute === 'ConnectionString') {
-    return expr(`'rediss://:$\{${sym}.listKeys().primaryKey}@$\{${sym}.properties.hostName}:6380'`);
+    const dbSym = `${sym}Db`;
+    return expr(`'rediss://:$\{${dbSym}.listKeys().primaryKey}@$\{${sym}.properties.hostName}:10000'`);
   }
   // ConnectionString do Storage.Bucket (blob) — com a account key via listKeys().
   // O handler usa BlobServiceClient.fromConnectionString; antes o modelo punha
