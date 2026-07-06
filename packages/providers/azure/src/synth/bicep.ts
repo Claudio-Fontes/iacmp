@@ -1593,7 +1593,9 @@ function synthesizeConstruct(
     }
 
     case 'Messaging.Queue': {
-      const nsName = `${construct.id}-ns`;
+      // Namespace names: lowercase, 6-50 chars, globalmente únicos no Azure.
+      const sbQPfx = construct.id.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 36) || 'sb';
+      const nsName = expr(`'${sbQPfx}-\${uniqueString(resourceGroup().id)}'`);
       const nsSym = `${sym}Ns`;
       const qSym = `${sym}Queue`;
       resources.push({ sym: nsSym, type: 'Microsoft.ServiceBus/namespaces', apiVersion: '2022-10-01-preview', name: nsName, location: 'location', tags: tag(construct.id), sku: { name: 'Standard', tier: 'Standard' }, properties: {} });
@@ -1630,7 +1632,9 @@ function synthesizeConstruct(
     }
 
     case 'Messaging.Topic': {
-      const nsName = `${construct.id}-ns`;
+      // Namespace names: lowercase, 6-50 chars, globalmente únicos no Azure.
+      const sbTPfx = construct.id.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 36) || 'sb';
+      const nsName = expr(`'${sbTPfx}-\${uniqueString(resourceGroup().id)}'`);
       const nsSym = `${sym}Ns`;
       const topicSym = `${sym}Topic`;
       const subscriptions = (props.subscriptions as Array<Record<string, string>>) ?? [];
