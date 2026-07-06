@@ -1560,7 +1560,8 @@ function synthesizeConstruct(
       // uniqueString(resourceGroup().id, construct.id) → nome globalmente único, sem soft-delete collision
       // enableRbacAuthorization: true → funciona com Policy.IAM (roleAssignments); sem accessPolicies.
       // enablePurgeProtection: false → permite recriar após destroy sem az keyvault purge.
-      const kvName = expr(`'kv-${construct.id.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 10)}-\${uniqueString(resourceGroup().id, '${construct.id}')}'`);
+      // Limite Key Vault: 3-24 chars. kv-(3) + id(7) + -(1) + uniqueString(13) = 24 exatos.
+      const kvName = expr(`'kv-${construct.id.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 7)}-\${uniqueString(resourceGroup().id, '${construct.id}')}'`);
       resources.push({ sym, type: 'Microsoft.KeyVault/vaults', apiVersion: '2023-02-01', name: kvName, location: 'location', tags: tag(construct.id), properties: { sku: { family: 'A', name: 'standard' }, tenantId: expr('subscription().tenantId'), enableSoftDelete: false, enableRbacAuthorization: true, enabledForDeployment: false, accessPolicies: [] } });
       // Gera um secret com valor aleatório-mas-determinístico. Usado como signing key JWT
       // pelo validate-jwt do APIM (via named value ligado ao Key Vault).
@@ -1576,7 +1577,8 @@ function synthesizeConstruct(
     }
 
     case 'Certificate.TLS': {
-      const kvName = `${construct.id.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 20)}-kv`;
+      // Limite Key Vault: 3-24 chars. id(21) + -kv(3) = 24 exatos.
+      const kvName = `${construct.id.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 21)}-kv`;
       const kvSym = `${sym}Kv`;
       const certSym = `${sym}Cert`;
       resources.push({ sym: kvSym, type: 'Microsoft.KeyVault/vaults', apiVersion: '2023-02-01', name: kvName, location: 'location', properties: { sku: { family: 'A', name: 'standard' }, tenantId: expr('subscription().tenantId'), enableSoftDelete: true, accessPolicies: [] } });
