@@ -368,6 +368,21 @@ export const azureExecutor: DeployExecutor = {
 
         extraParams.push(`acrServer=${loginServer}`, `acrUser=${acrUser}`, `acrPassword=${acrPassword}`);
 
+        // Detecta se Docker local está disponível — prefere build local (mais rápido,
+        // sem dependência de ACR Tasks que não está disponível em contas free tier).
+        // Se Docker não estiver disponível, usa ACR Tasks (az acr build).
+        let dockerAvailable = false;
+        try {
+          execFileSync('docker', ['version', '--format', '{{.Client.Version}}'], { stdio: 'pipe' });
+          dockerAvailable = true;
+        } catch {
+          // Docker não disponível — usará ACR Tasks
+        }
+
+        if (dockerAvailable) {
+          execFileSync('az', ['acr', 'login', '--name', acrName], { stdio: 'pipe' });
+        }
+
         for (const fn of functions) {
           const buildDir = buildFunctionBundle(ctx.cwd, fn, ctx.templatePath);
           if (buildDir) {
@@ -382,12 +397,18 @@ export const azureExecutor: DeployExecutor = {
             }
             const tag = hash.digest('hex').slice(0, 12);
             const fullImage = `${loginServer}/${fn.containerAppName}:${tag}`;
-            // ACR Tasks: envia contexto para o Azure e constrói lá (sem Docker local).
-            // --platform linux/amd64: garante amd64 mesmo em Apple Silicon.
-            commands.push({
-              bin: 'az',
-              args: ['acr', 'build', '--registry', acrName, '--image', `${fn.containerAppName}:${tag}`, '--platform', 'linux/amd64', buildDir],
-            });
+            if (dockerAvailable) {
+              // Docker local: build + push. --platform linux/amd64 garante amd64
+              // mesmo em Apple Silicon (ARM) — Container Apps exige amd64.
+              commands.push({ bin: 'docker', args: ['build', '--platform', 'linux/amd64', '-t', fullImage, buildDir] });
+              commands.push({ bin: 'docker', args: ['push', fullImage] });
+            } else {
+              // ACR Tasks: envia contexto para o Azure e constrói lá (sem Docker local).
+              commands.push({
+                bin: 'az',
+                args: ['acr', 'build', '--registry', acrName, '--image', `${fn.containerAppName}:${tag}`, '--platform', 'linux/amd64', buildDir],
+              });
+            }
             extraParams.push(`${fn.imageParamName}=${fullImage}`);
           }
         }

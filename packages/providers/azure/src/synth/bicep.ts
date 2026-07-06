@@ -1387,23 +1387,41 @@ function synthesizeConstruct(
       const rawAttachTo = props.attachTo;
       const attachTo = isRef(rawAttachTo) ? rawAttachTo.constructId : (rawAttachTo as string);
       const attachSym = toSym(attachTo);
-      // Azure RBAC usa actions no formato Microsoft.*/* — mapear ações AWS para
-      // um placeholder válido (o deploy precisa do formato correto, não da semântica AWS)
+      // Azure RBAC usa actions (management plane) e dataActions (data plane).
+      // Key Vault com enableRbacAuthorization:true usa data plane — ações de secret
+      // devem ir em dataActions, não actions. Sem isso o ARM aceita o template mas
+      // o SDK recebe 403 ("Caller is not authorized to perform action").
       const actions: string[] = [];
       const notActions: string[] = [];
+      const dataActions: string[] = [];
+      const notDataActions: string[] = [];
       for (const s of statements) {
         const rawActions = (s.actions as string[]) ?? [];
-        // Mapeia ações AWS-style para Azure-style equivalentes
-        const azureActions = rawActions.map(a => {
-          if (a.startsWith('dynamodb:') || a.startsWith('DocumentDB:')) return 'Microsoft.DocumentDB/databaseAccounts/*/read';
-          if (a.startsWith('s3:') || a.startsWith('storage:')) return 'Microsoft.Storage/storageAccounts/blobServices/containers/*';
-          if (a.startsWith('secretsmanager:') || a.startsWith('keyvault:')) return 'Microsoft.KeyVault/vaults/secrets/*';
-          if (a.startsWith('sqs:') || a.startsWith('servicebus:')) return 'Microsoft.ServiceBus/namespaces/queues/*';
-          if (a === '*') return '*';
-          return `Microsoft.Resources/subscriptions/resourceGroups/read`; // fallback válido
-        });
-        if (s.effect === 'Allow') actions.push(...azureActions);
-        else notActions.push(...azureActions);
+        const isAllow = s.effect === 'Allow';
+        for (const a of rawActions) {
+          // Key Vault data plane: leitura de secrets usa getSecret/action
+          if (a.startsWith('secretsmanager:') || a.startsWith('keyvault:')) {
+            const da = 'Microsoft.KeyVault/vaults/secrets/getSecret/action';
+            if (isAllow) dataActions.push(da); else notDataActions.push(da);
+          // Cosmos/DocumentDB management plane
+          } else if (a.startsWith('dynamodb:') || a.startsWith('DocumentDB:')) {
+            const mgmt = 'Microsoft.DocumentDB/databaseAccounts/*/read';
+            if (isAllow) actions.push(mgmt); else notActions.push(mgmt);
+          // Storage management plane
+          } else if (a.startsWith('s3:') || a.startsWith('storage:')) {
+            const mgmt = 'Microsoft.Storage/storageAccounts/blobServices/containers/*';
+            if (isAllow) actions.push(mgmt); else notActions.push(mgmt);
+          // Service Bus management plane
+          } else if (a.startsWith('sqs:') || a.startsWith('servicebus:')) {
+            const mgmt = 'Microsoft.ServiceBus/namespaces/queues/*';
+            if (isAllow) actions.push(mgmt); else notActions.push(mgmt);
+          } else if (a === '*') {
+            if (isAllow) actions.push('*'); else notActions.push('*');
+          } else {
+            const fallback = 'Microsoft.Resources/subscriptions/resourceGroups/read';
+            if (isAllow) actions.push(fallback); else notActions.push(fallback);
+          }
+        }
       }
       const roleDefSym = `${sym}RoleDef`;
       const roleAssignSym = `${sym}RoleAssign`;
@@ -1417,7 +1435,12 @@ function synthesizeConstruct(
           roleName: `${construct.id}-role`,
           description: (props.description as string) ?? `Custom role for ${attachTo}`,
           type: 'CustomRole',
-          permissions: [{ actions: actions.length > 0 ? [...new Set(actions)] : ['Microsoft.Resources/subscriptions/resourceGroups/read'], notActions, dataActions: [], notDataActions: [] }],
+          permissions: [{
+            actions: actions.length > 0 ? [...new Set(actions)] : (dataActions.length === 0 ? ['Microsoft.Resources/subscriptions/resourceGroups/read'] : []),
+            notActions: [...new Set(notActions)],
+            dataActions: [...new Set(dataActions)],
+            notDataActions: [...new Set(notDataActions)],
+          }],
           assignableScopes: [expr('resourceGroup().id')],
         },
       });
