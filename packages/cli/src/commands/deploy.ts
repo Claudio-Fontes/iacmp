@@ -237,12 +237,16 @@ export default class Deploy extends Command {
       for (const t of templates) {
         let content: string;
         try { content = fs.readFileSync(t.filePath, 'utf-8'); } catch { continue; }
-        // Encontra params com default '' que agora têm valor nos outputs acumulados
+        // Encontra params com default '' que agora têm valor nos outputs acumulados.
+        // sharedCaeId é excluído: resolvido pela ordem do 1º passo (não pelo 2º).
+        // Reinjetar sharedCaeId na stack que criou o CAE causaria deleção do recurso.
+        const SECOND_PASS_SKIP = new Set(['sharedCaeId']);
         const satisfiedOptionals: string[] = [];
         for (const line of content.split('\n')) {
           const m = line.match(/^param\s+(\w+)\s+string\s*=\s*''\s*$/);
           if (!m) continue;
           const paramName = m[1];
+          if (SECOND_PASS_SKIP.has(paramName)) continue;
           const value = outputsByLower.get(paramName.toLowerCase());
           if (value) satisfiedOptionals.push(paramName);
         }
