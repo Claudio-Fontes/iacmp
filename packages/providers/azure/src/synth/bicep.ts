@@ -1543,7 +1543,7 @@ function synthesizeConstruct(
       outputs.push({ name: crossParamName(construct.id, 'Url'), type: 'string', value: `'sb://\${${nsSym}.name}.servicebus.windows.net/'` });
       // Output da connection string completa — para ref(..., 'ConnectionString') cross-stack.
       // O handler usa @azure/service-bus com esta string (ServiceBusClient.fromConnectionString).
-      outputs.push({ name: crossParamName(construct.id, 'ConnectionString'), type: 'string', value: expr(`listKeys(resourceId('Microsoft.ServiceBus/namespaces/authorizationRules', ${nsSym}.name, 'RootManageSharedAccessKey'), '2022-10-01-preview').primaryConnectionString`) });
+      outputs.push({ name: crossParamName(construct.id, 'ConnectionString'), type: 'string', value: `listKeys(resourceId('Microsoft.ServiceBus/namespaces/authorizationRules', ${nsSym}.name, 'RootManageSharedAccessKey'), '2022-10-01-preview').primaryConnectionString` });
       break;
     }
 
