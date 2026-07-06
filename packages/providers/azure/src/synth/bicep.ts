@@ -471,12 +471,14 @@ function synthesizeConstruct(
     }
 
     case 'Storage.Bucket': {
-      const storageName = safeStorageName(construct.id);
+      // Nome globalmente único: prefixo ≤ 11 chars + uniqueString(rg) 13 chars = 24 (limite).
+      const safePfx = construct.id.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 11) || 'st';
+      const storageNameExpr = expr(`'${safePfx}\${uniqueString(resourceGroup().id)}'`);
       resources.push({
         sym,
         type: 'Microsoft.Storage/storageAccounts',
         apiVersion: '2023-01-01',
-        name: storageName,
+        name: storageNameExpr,
         location: 'location',
         kind: 'StorageV2',
         sku: { name: 'Standard_LRS' },
@@ -587,7 +589,8 @@ function synthesizeConstruct(
     }
 
     case 'Storage.FileSystem': {
-      const storageName = safeStorageName(construct.id) + 'share';
+      const fsPfx = (construct.id.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 7) || 'fs') + 'sh';
+      const storageNameExprFs = expr(`'${fsPfx}\${uniqueString(resourceGroup().id)}'`);
       const storageSym = `${sym}Storage`;
       const fileSvcSym = `${sym}FileService`;
       const shareSym = `${sym}Share`;
@@ -595,7 +598,7 @@ function synthesizeConstruct(
         sym: storageSym,
         type: 'Microsoft.Storage/storageAccounts',
         apiVersion: '2023-01-01',
-        name: storageName,
+        name: storageNameExprFs,
         location: 'location',
         kind: 'StorageV2',
         sku: { name: 'Standard_LRS' },
