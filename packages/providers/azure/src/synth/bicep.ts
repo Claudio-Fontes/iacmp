@@ -52,7 +52,7 @@ const AZURE_ATTR_MAP: Record<string, Record<string, string>> = {
   'Database.DynamoDB':     { Arn: 'id', Name: 'name', ConnectionString: '__connection_string__' },
   'Messaging.Stream':      { Arn: 'id', Name: 'name' },
   'Messaging.Topic':       { Arn: 'id', TopicArn: 'id' },
-  'Messaging.Queue':       { Arn: 'id', QueueUrl: 'id', QueueArn: 'id' },
+  'Messaging.Queue':       { Arn: 'id', QueueUrl: 'id', QueueArn: 'id', ConnectionString: '__sb_connection_string__' },
   'Cache.Redis':           { Endpoint: 'properties.hostName', Port: 'properties.sslPort' },
   'Secret.Vault':          { SecretArn: 'id', Arn: 'id', VaultUri: 'properties.vaultUri', Name: 'name' },
   'Network.LoadBalancer':  { TargetGroupArn: 'id', DnsName: 'properties.dnsName' },
@@ -86,6 +86,12 @@ function resolveRef(r: Ref, idx: Map<string, BaseConstruct>, crossParams: Map<st
   // Retorna URI mongodb://... pronta para o driver mongodb nativo.
   if (c.type === 'Database.DocumentDB' && r.attribute === 'ConnectionString') {
     return expr(`${sym}.listConnectionStrings().connectionStrings[0].connectionString`);
+  }
+  // ConnectionString do Service Bus (Messaging.Queue) — obtida via listKeys() na
+  // authorization rule padrão. O handler usa @azure/service-bus com esta string.
+  if (c.type === 'Messaging.Queue' && r.attribute === 'ConnectionString') {
+    const nsSym = `${sym}Ns`;
+    return expr(`listKeys(resourceId('Microsoft.ServiceBus/namespaces/authorizationRules', ${nsSym}.name, 'RootManageSharedAccessKey'), '2022-10-01-preview').primaryConnectionString`);
   }
   // ConnectionString do Storage.Bucket (blob) — com a account key via listKeys().
   // O handler usa BlobServiceClient.fromConnectionString; antes o modelo punha
@@ -1535,6 +1541,9 @@ function synthesizeConstruct(
       // Output para referência cross-stack via ref(..., 'Url') — gera param ApprovalQueueUrl
       // na stack consumidora. Valor = endpoint do Service Bus namespace (sb://<name>.servicebus.windows.net/).
       outputs.push({ name: crossParamName(construct.id, 'Url'), type: 'string', value: `'sb://\${${nsSym}.name}.servicebus.windows.net/'` });
+      // Output da connection string completa — para ref(..., 'ConnectionString') cross-stack.
+      // O handler usa @azure/service-bus com esta string (ServiceBusClient.fromConnectionString).
+      outputs.push({ name: crossParamName(construct.id, 'ConnectionString'), type: 'string', value: expr(`listKeys(resourceId('Microsoft.ServiceBus/namespaces/authorizationRules', ${nsSym}.name, 'RootManageSharedAccessKey'), '2022-10-01-preview').primaryConnectionString`) });
       break;
     }
 
