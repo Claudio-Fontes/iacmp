@@ -53,7 +53,7 @@ const AZURE_ATTR_MAP: Record<string, Record<string, string>> = {
   'Messaging.Stream':      { Arn: 'id', Name: 'name' },
   'Messaging.Topic':       { Arn: 'id', TopicArn: 'id' },
   'Messaging.Queue':       { Arn: 'id', QueueUrl: 'id', QueueArn: 'id', ConnectionString: '__sb_connection_string__' },
-  'Cache.Redis':           { Endpoint: 'properties.hostName', Port: 'properties.sslPort' },
+  'Cache.Redis':           { Endpoint: 'properties.hostName', Port: 'properties.sslPort', ConnectionString: '__redis_cs__' },
   'Secret.Vault':          { SecretArn: 'id', Arn: 'id', VaultUri: 'properties.vaultUri', Name: 'name' },
   'Network.LoadBalancer':  { TargetGroupArn: 'id', DnsName: 'properties.dnsName' },
   'Compute.Container':     { Arn: 'id', Fqdn: 'properties.configuration.ingress.fqdn', DnsName: 'properties.configuration.ingress.fqdn' },
@@ -92,6 +92,10 @@ function resolveRef(r: Ref, idx: Map<string, BaseConstruct>, crossParams: Map<st
   if (c.type === 'Messaging.Queue' && r.attribute === 'ConnectionString') {
     const nsSym = `${sym}Ns`;
     return expr(`listKeys(resourceId('Microsoft.ServiceBus/namespaces/authorizationRules', ${nsSym}.name, 'RootManageSharedAccessKey'), '2022-10-01-preview').primaryConnectionString`);
+  }
+  // ConnectionString do Cache.Redis — formato ioredis rediss://:KEY@HOST:PORT via listKeys().
+  if (c.type === 'Cache.Redis' && r.attribute === 'ConnectionString') {
+    return expr(`'rediss://:$\{${sym}.listKeys().primaryKey}@$\{${sym}.properties.hostName}:6380'`);
   }
   // ConnectionString do Storage.Bucket (blob) — com a account key via listKeys().
   // O handler usa BlobServiceClient.fromConnectionString; antes o modelo punha

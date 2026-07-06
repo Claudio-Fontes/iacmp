@@ -69,7 +69,7 @@ export const CONSTRUCT_TYPES: Record<ConstructType, ConstructTypeInfo> = {
         gcp: 'Memorystore (Redis)',
       },
     },
-    attributes: ['Endpoint', 'Port'],
+    attributes: ['Endpoint', 'Port', 'ConnectionString'],
   },
   'Cache.Memcached': {
     layer: 'cache',
