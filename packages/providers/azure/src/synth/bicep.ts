@@ -1017,7 +1017,9 @@ function synthesizeConstruct(
         break;
       }
       if (engine === 'postgres') {
-        resources.push({ sym, type: 'Microsoft.DBforPostgreSQL/flexibleServers', apiVersion: '2023-06-01-preview', name: serverName, location: 'location', tags: tag(construct.id), sku: dbSku, properties: { administratorLogin: 'dbadmin', administratorLoginPassword: expr('adminPassword'), version: '15', storage: { storageSizeGB: props.storageGb ?? 32 }, backup: { backupRetentionDays: Math.max(Number(props.backupRetentionDays ?? 7), 7), geoRedundantBackup: 'Disabled' }, highAvailability: { mode: zoneRedundant ? 'ZoneRedundant' : 'Disabled' } } });
+        const pgStorageRaw = Number(props.storageGb ?? 32);
+        const pgStorageGB = pgStorageRaw < 32 ? 32 : pgStorageRaw;
+        resources.push({ sym, type: 'Microsoft.DBforPostgreSQL/flexibleServers', apiVersion: '2023-06-01-preview', name: serverName, location: 'location', tags: tag(construct.id), sku: dbSku, properties: { administratorLogin: 'dbadmin', administratorLoginPassword: expr('adminPassword'), version: '15', storage: { storageSizeGB: pgStorageGB }, backup: { backupRetentionDays: Math.max(Number(props.backupRetentionDays ?? 7), 7), geoRedundantBackup: 'Disabled' }, highAvailability: { mode: zoneRedundant ? 'ZoneRedundant' : 'Disabled' } } });
         resources.push({ ...fwRule, type: 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules', apiVersion: '2023-06-01-preview' });
         outputs.push({ name: `${construct.id}Endpoint`, type: 'string', value: `${sym}.properties.fullyQualifiedDomainName` });
         outputs.push({ name: `${construct.id}Port`, type: 'string', value: `'5432'` });
