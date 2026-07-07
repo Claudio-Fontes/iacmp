@@ -53,8 +53,10 @@ export async function handler(event: any) {
     const data = JSON.parse(response.toString());
 
     // Gravar no Cosmos DB Table API
+    // ATENÇÃO: 'id' é propriedade RESERVADA na Table API — excluir do spread antes de createEntity
+    const { id: dataId, ...dataRest } = data;
     const tableClient = TableClient.fromConnectionString(process.env.COSMOS_CONNECTION!, process.env.TABLE_NAME!);
-    await tableClient.createEntity({ partitionKey: 'items', rowKey: data.id || Date.now().toString(), ...data });
+    await tableClient.createEntity({ partitionKey: 'items', rowKey: dataId || Date.now().toString(), ...dataRest });
 
     // Mover para bucket processado
     const processedContainerClient = processedBlobServiceClient.getContainerClient('processed');

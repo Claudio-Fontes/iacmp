@@ -63,8 +63,10 @@ const client = TableClient.fromConnectionString(
 export async function handler(event: any) {
   const body = typeof event.body === 'string' ? JSON.parse(event.body) : (event.body ?? {});
   const id = randomUUID();
-  await client.createEntity({ partitionKey: 'items', rowKey: id, ...body });
-  return { statusCode: 201, body: JSON.stringify({ id, ...body }) };
+  // ATENÇÃO: 'id' é propriedade RESERVADA na Table API — excluir do spread
+  const { id: _id, ...rest } = body;
+  await client.createEntity({ partitionKey: 'items', rowKey: id, ...rest });
+  return { statusCode: 201, body: JSON.stringify({ id, ...rest }) };
 }
 
 // LIST
@@ -87,8 +89,9 @@ export async function handler(event: any) {
 export async function handler(event: any) {
   const id = event.pathParameters?.id ?? event.path?.split('/').pop();
   const body = typeof event.body === 'string' ? JSON.parse(event.body) : (event.body ?? {});
-  await client.updateEntity({ partitionKey: 'items', rowKey: id, ...body }, 'Replace');
-  return { statusCode: 200, body: JSON.stringify({ id, ...body }) };
+  const { id: _id, ...rest } = body;  // 'id' é reservado — excluir do spread
+  await client.updateEntity({ partitionKey: 'items', rowKey: id, ...rest }, 'Replace');
+  return { statusCode: 200, body: JSON.stringify({ id, ...rest }) };
 }
 
 // DELETE
