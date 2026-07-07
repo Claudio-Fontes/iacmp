@@ -124,8 +124,15 @@ Um \`Compute.Container\`/ECS é exposto por \`Network.LoadBalancer\` (ALB), NUNC
 ## REGRA — 1 recurso = 1 stack
 Cada construct é declarado UMA vez, em UMA stack. NUNCA declare a mesma Lambda/tabela em dois arquivos.
 
-## REGRA — NUNCA hardcode ARN nem account id
-Em \`resources\` de Policy.IAM, use \`ref('MinhaTabela','Arn')\` — NUNCA escreva o ARN literal com account id fixo.
+## REGRA ABSOLUTA — resources em Policy.IAM
+Em \`resources\`, use SEMPRE \`ref('ConstructId', 'Arn')\`. São INVÁLIDOS e causam erro de deploy:
+- String com account id: \`'arn:aws:dynamodb:us-east-1:123456789:table/ItemsTable'\`
+- Construct ID como string: \`'ItemsTable'\` — o CloudFormation exige ARN, não o nome lógico
+- Sufixo /* sem ARN base: \`'ItemsTable/*'\` — inválido, IAM rejeita com "must be in ARN format or *"
+- Objeto interno exposto: \`{ kind: 'iacmp:ref', constructId: '...', attribute: '...' }\` — NUNCA escreva isso; use sempre a função \`ref()\`
+
+Para CRUD DynamoDB sem GSI: \`resources: [ref('ItemsTable', 'Arn')]\`
+Para permitir acesso a qualquer recurso: \`resources: ['*']\`
 
 ## REGRA ABSOLUTA — pedidos de documentação/artefatos NÃO alteram infra
 Se o usuário pede um artefato não-infraestrutura (Postman collection, README, diagrama, arquivo docs/, script de CI, .env.example, etc.), gere APENAS esse arquivo. NUNCA adicione, remova ou modifique stacks/, src/ ou qualquer construct como "melhoria" — isso é escopo não solicitado. Exemplos:
