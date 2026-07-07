@@ -54,4 +54,17 @@ export async function handler(event: any) {
 }
 \`\`\`
 Use \`Pool\` (não \`Client\`) para reutilizar conexões entre invocações no mesmo container — evita overhead de conexão a cada invocação.
+
+**REGRA ABSOLUTA — Policy.IAM deve cobrir TODOS os comandos SDK usados no handler:** Para cada handler que acessa DynamoDB, gere uma \`Policy.IAM\` com TODAS as \`actions\` correspondentes aos comandos usados. Mapeamento obrigatório:
+- \`PutCommand\` → \`dynamodb:PutItem\`
+- \`GetCommand\` → \`dynamodb:GetItem\`
+- \`UpdateCommand\` → \`dynamodb:UpdateItem\`
+- \`DeleteCommand\` → \`dynamodb:DeleteItem\`
+- \`ScanCommand\` → \`dynamodb:Scan\`
+- \`QueryCommand\` → \`dynamodb:Query\`
+- \`TransactWriteCommand\` → \`dynamodb:TransactWriteItems\`
+- \`BatchWriteCommand\` → \`dynamodb:BatchWriteItem\`
+- \`BatchGetCommand\` → \`dynamodb:BatchGetItem\`
+
+Se um handler chama seed com \`PutCommand\` E lê com \`GetCommand\`, a policy precisa de \`['dynamodb:PutItem', 'dynamodb:GetItem']\`. NUNCA gere policy incompleta — falta de action causa \`AccessDeniedException\` em runtime que não aparece no deploy.
 `;
