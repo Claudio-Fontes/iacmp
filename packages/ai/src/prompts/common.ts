@@ -125,6 +125,7 @@ securityGroupIds: ['LambdaSG']                      // OK — ID lógico do Netw
 5. NUNCA referencie via \`Ref\`/\`Fn::GetAtt\` um logical id que não existe de verdade na stack
 6. Toda Lambda que serve de \`ServiceToken\` de um \`AWS::CloudFormation::CustomResource\` é OBRIGADA a sinalizar o resultado via HTTP PUT para \`event.ResponseURL\`
 7. **Imports de módulos built-in do Node.js** usam SEMPRE \`import * as X from 'X'\`, NUNCA \`import X from 'X'\`
+8. **NUNCA use \`Custom.Resource\` para inserir dados em banco** — não existe recurso nativo (CloudFormation, ARM, Terraform, Deployment Manager) que insira itens em DynamoDB/Cosmos DB/Firestore/PostgreSQL. O deploy falha com erro de validação. Dados de seed vão no handler com lógica idempotente (PutItem + ConditionExpression / upsert / INSERT ON CONFLICT DO NOTHING).
 
 ## Apps frontend (React, Vue, etc.)
 1. Use variáveis de ambiente para a URL da API — nunca hardcode
