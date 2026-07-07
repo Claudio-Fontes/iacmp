@@ -481,12 +481,26 @@ export const azureExecutor: DeployExecutor = {
       // Usados pelo mecanismo de 2º passo para Event Grid subscriptions cross-stack —
       // 1º passo deploya sem o FQDN (subscrição não é criada por Bicep if-condition);
       // 2º passo re-deploya com FQDN disponível nos outputs acumulados.
+      //
+      // EXCEÇÃO sharedCaeId: não injetar se o valor em outputsByLower veio da PRÓPRIA
+      // stack (output da 1ª passagem). Injetar o próprio sharedCaeId torna
+      // empty(sharedCaeId)=false → CAE sai do template → ARM tenta deletar o env
+      // → DeploymentStackDeleteResourcesFailed (CAE tem Container Apps attachados).
+      // Para detectar auto-injeção: lê os outputs ATUAIS da stack e compara.
+      let ownSharedCaeId: string | undefined;
+      if (ctx.stackName && ctx.resourceGroup) {
+        const ownOutputs = getAzureStackOutputs(ctx.stackName, ctx.resourceGroup);
+        ownSharedCaeId = ownOutputs['sharedCaeId'];
+      }
       const softParams = getSoftCrossStackParams(ctx.templatePath!);
       const providedAfterHard = new Set(paramValues.map(p => p.split('=')[0]));
       for (const p of softParams) {
         if (providedAfterHard.has(p)) continue;
         const value = outputsByLower.get(p.toLowerCase());
-        if (value) paramValues.push(`${p}=${value}`);
+        if (!value) continue;
+        // Pular injeção de sharedCaeId se o valor é o CAE desta própria stack.
+        if (p === 'sharedCaeId' && ownSharedCaeId && value === ownSharedCaeId) continue;
+        paramValues.push(`${p}=${value}`);
         // Sem erro se ausente — o default '' é válido (subscrição condicional não é criada)
       }
     }
