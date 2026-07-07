@@ -1,0 +1,99 @@
+import { BaseConstruct, isRef } from '@iacmp/core';
+import { expr, tag, toSym, crossParamName, SynthContext } from './shared';
+
+export function synthesizeMonitoring(construct: BaseConstruct, ctx: SynthContext): void {
+  const { resources, outputs, crossParams } = ctx;
+  const props = (construct.props ?? {}) as Record<string, unknown>;
+  const sym = toSym(construct.id);
+
+  switch (construct.type) {
+    case 'Monitoring.Alarm': {
+      const operatorMap: Record<string, string> = { GreaterThanThreshold: 'GreaterThan', LessThanThreshold: 'LessThan', GreaterThanOrEqualToThreshold: 'GreaterThanOrEqual', LessThanOrEqualToThreshold: 'LessThanOrEqual' };
+      const rawAlarmActions = (props.alarmActions as unknown[]) ?? [];
+      let alarmActionList: Array<Record<string, unknown>> = [];
+      if (rawAlarmActions.length > 0) {
+        const agSym = `${sym}Ag`;
+        const agName = `${construct.id}-ag`;
+        const azureFunctionReceivers: Array<Record<string, unknown>> = [];
+        for (const action of rawAlarmActions) {
+          if (isRef(action as Record<string, unknown>)) {
+            const ref = action as { constructId: string; attribute: string };
+            const target = ctx.idx.get(ref.constructId);
+            if (target && (target.type === 'Function.Lambda' || target.type === 'Compute.Container')) {
+              const tSym = toSym(ref.constructId);
+              azureFunctionReceivers.push({
+                name: `fn-${ref.constructId}`,
+                functionAppResourceId: expr(`${tSym}.id`),
+                functionName: ref.constructId,
+                httpTriggerUrl: expr(`'https://\${${tSym}.properties.configuration.ingress.fqdn}/api/alert'`),
+                useCommonAlertSchema: true,
+              });
+            }
+          }
+        }
+        resources.push({ sym: agSym, type: 'Microsoft.Insights/actionGroups', apiVersion: '2023-01-01', name: agName, location: "'global'", tags: tag(construct.id), properties: { groupShortName: 'alert-ag', enabled: true, emailReceivers: [], smsReceivers: [], webhookReceivers: [], azureFunctionReceivers } });
+        alarmActionList = [{ actionGroupId: expr(`${agSym}.id`) }];
+      }
+      const allowedMins = [1, 5, 15, 30, 60, 360, 720, 1440];
+      const toInterval = (secs: number): string => {
+        const mins = Math.round(secs / 60) || 1;
+        const clamped = allowedMins.reduce((a, b) => Math.abs(b - mins) < Math.abs(a - mins) ? b : a);
+        if (clamped >= 1440) return 'P1D';
+        if (clamped >= 60) return `PT${clamped / 60}H`;
+        return `PT${clamped}M`;
+      };
+      const periodSecs = (props.periodSeconds as number) ?? 60;
+      const evalPeriods = (props.evaluationPeriods as number) ?? 1;
+      const evalFreq = toInterval(periodSecs);
+      const windowSizeVal = toInterval(periodSecs * evalPeriods);
+      const lambdaConstruct = [...ctx.idx.values()].find(c => c.type === 'Function.Lambda' || c.type === 'Compute.Container');
+      let alarmScopes: unknown[];
+      let alarmCriteriaType: string;
+      let alarmMetricNamespace: string;
+      let alarmCondition: string | undefined;
+      if (lambdaConstruct) {
+        const lSym = toSym(lambdaConstruct.id);
+        alarmScopes = [expr(`${lSym}.id`)];
+        alarmCriteriaType = 'Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria';
+        alarmMetricNamespace = 'Microsoft.App/containerApps';
+      } else {
+        const alarmScopeParam = `${sym}ScopeId`;
+        crossParams.set(alarmScopeParam, 'string:optional');
+        alarmScopes = [expr(alarmScopeParam)];
+        alarmCriteriaType = 'Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria';
+        alarmMetricNamespace = 'Microsoft.App/containerApps';
+        alarmCondition = `${alarmScopeParam} != ''`;
+      }
+      const metricNameMap: Record<string, string> = {
+        Errors: 'Requests', p99: 'Requests', Latency: 'Requests',
+        ThrottledRequests: 'Requests', Duration: 'TotalCpuUsage', Invocations: 'Requests',
+        ConcurrentExecutions: 'Replicas', Count: 'Requests', RequestDuration: 'Requests',
+      };
+      const rawMetricName = props.metricName as string;
+      const azureMetricName = metricNameMap[rawMetricName] ?? (alarmMetricNamespace === 'Microsoft.App/containerApps' ? 'Requests' : rawMetricName);
+      resources.push({ sym, type: 'Microsoft.Insights/metricAlerts', apiVersion: '2018-03-01', name: construct.id, location: "'global'", condition: alarmCondition, tags: tag(construct.id), properties: { description: `Alarm for ${props.metricName}`, severity: 2, enabled: true, scopes: alarmScopes, evaluationFrequency: evalFreq, windowSize: windowSizeVal, criteria: { 'odata.type': alarmCriteriaType, allOf: [{ name: 'criterion1', criterionType: 'StaticThresholdCriterion', metricName: azureMetricName, metricNamespace: alarmMetricNamespace, operator: operatorMap[(props.comparisonOperator as string) ?? 'GreaterThanThreshold'] ?? 'GreaterThan', threshold: props.threshold as number, timeAggregation: (props.statistic as string) ?? 'Average', dimensions: [] }] }, actions: alarmActionList } });
+      break;
+    }
+
+    case 'Monitoring.Dashboard': {
+      const widgets = (props.widgets as Array<Record<string, unknown>>) ?? [];
+      resources.push({ sym, type: 'Microsoft.Portal/dashboards', apiVersion: '2020-09-01-preview', name: construct.id, location: 'location', tags: { 'hidden-title': construct.id }, properties: { lenses: [{ order: 0, parts: widgets.map((w, i) => ({ position: { x: (i % 3) * 4, y: Math.floor(i / 3) * 4, colSpan: 4, rowSpan: 4 }, metadata: { type: 'Extension/Microsoft_Azure_Monitoring/PartType/MetricsChartPart', settings: { content: { options: { chart: { metrics: [{ name: w.metricName, resourceMetadata: {} }] } }, title: w.title as string } } } })) }] } });
+      break;
+    }
+
+    case 'Logging.Stream': {
+      const wsName = `${construct.id}-law`;
+      resources.push({ sym, type: 'Microsoft.OperationalInsights/workspaces', apiVersion: '2022-10-01', name: wsName, location: 'location', tags: tag(construct.id), properties: { sku: { name: 'PerGB2018' }, retentionInDays: (props.retentionDays as number) ?? 30, features: { enableLogAccessUsingOnlyResourcePermissions: true } } });
+      break;
+    }
+
+    case 'Custom.Resource': {
+      const bicepCustom = props.bicep as { type: string; apiVersion: string; properties: Record<string, unknown>; sku?: Record<string, unknown>; kind?: string } | undefined;
+      const armCustom = props.arm as { type: string; apiVersion: string; properties: Record<string, unknown>; sku?: Record<string, unknown>; kind?: string } | undefined;
+      const custom = bicepCustom ?? armCustom;
+      if (!custom) break;
+      resources.push({ sym, type: custom.type, apiVersion: custom.apiVersion, name: (props.name as string) ?? construct.id, location: 'location', tags: tag(construct.id), sku: custom.sku, kind: custom.kind, properties: custom.properties });
+      break;
+    }
+  }
+}
