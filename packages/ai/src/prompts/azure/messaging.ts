@@ -87,6 +87,33 @@ export async function handler(event: any) {
 ### EXEMPLO OBRIGATÓRIO — fan-out Messaging.Topic no Azure
 
 \`\`\`typescript
+// stacks/messaging/topic-stack.ts — OBRIGATÓRIO: declarar subscriptions no Topic
+import { Stack, Messaging } from '@iacmp/core';
+const stack = new Stack('notification-topic-stack');
+new Messaging.Topic(stack, 'NotificationsTopic', {
+  subscriptions: [
+    { name: 'email-sub', filterPolicy: { type: ['email'] } },
+    { name: 'push-sub', filterPolicy: { type: ['push'] } },
+    { name: 'audit-sub' },  // sem filtro — recebe todos os tipos
+  ],
+});
+export default stack;
+
+// stacks/compute/publisher-stack.ts — PRODUTOR: ref() é FUNÇÃO, NÃO string template
+import { Stack, Fn, ref } from '@iacmp/core';
+const stack = new Stack('publisher-stack');
+new Fn.Lambda(stack, 'PublishNotificationFn', {
+  runtime: 'nodejs20', handler: 'dist/publish.handler', code: '.',
+  environment: {
+    // ref() é FUNÇÃO — NÃO coloque backtick ou aspas ao redor da chamada inteira
+    NOTIFICATIONS_TOPIC_CONNECTION_STRING: ref('NotificationsTopic', 'ConnectionString'),
+    TOPIC_NAME: 'NotificationsTopic',
+  },
+});
+export default stack;
+\`\`\`
+
+\`\`\`typescript
 // src/publish.ts — PRODUTOR usa @azure/service-bus (NUNCA @azure/data-tables)
 import { ServiceBusClient } from '@azure/service-bus';
 

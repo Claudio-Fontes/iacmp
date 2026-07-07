@@ -98,9 +98,9 @@ function resolveRef(r: Ref, idx: Map<string, BaseConstruct>, crossParams: Map<st
   if (c.type === 'Database.DocumentDB' && r.attribute === 'ConnectionString') {
     return expr(`${sym}.listConnectionStrings().connectionStrings[0].connectionString`);
   }
-  // ConnectionString do Service Bus (Messaging.Queue) — obtida via listKeys() na
+  // ConnectionString do Service Bus (Messaging.Queue ou Messaging.Topic) — obtida via listKeys() na
   // authorization rule padrão. O handler usa @azure/service-bus com esta string.
-  if (c.type === 'Messaging.Queue' && r.attribute === 'ConnectionString') {
+  if ((c.type === 'Messaging.Queue' || c.type === 'Messaging.Topic') && r.attribute === 'ConnectionString') {
     const nsSym = `${sym}Ns`;
     return expr(`listKeys(resourceId('Microsoft.ServiceBus/namespaces/authorizationRules', ${nsSym}.name, 'RootManageSharedAccessKey'), '2022-10-01-preview').primaryConnectionString`);
   }
@@ -299,7 +299,7 @@ function synthesizeConstruct(
   subnetsByVpc: Map<string, Array<{id: string; cidr: string; public: boolean}>>,
   accountTier: 'free' | 'standard' = 'standard',
 ): void {
-  const props = construct.props as Record<string, unknown>;
+  const props = (construct.props ?? {}) as Record<string, unknown>;
   const sym = toSym(construct.id);
 
   switch (construct.type) {
@@ -1675,14 +1675,17 @@ function synthesizeConstruct(
       resources.push({ sym: nsSym, type: 'Microsoft.ServiceBus/namespaces', apiVersion: '2022-10-01-preview', name: nsName, location: 'location', tags: tag(construct.id), sku: { name: 'Standard', tier: 'Standard' }, properties: {} });
       resources.push({ sym: topicSym, type: 'Microsoft.ServiceBus/namespaces/topics', apiVersion: '2022-10-01-preview', parent: nsSym, name: construct.id, properties: { defaultMessageTimeToLive: 'P14D', requiresDuplicateDetection: false } });
       subscriptions.forEach((s, i) => {
-        // forwardTo is only valid for Service Bus queues/topics in the same namespace.
-        // Lambda/container protocol endpoints are external — omit forwardTo.
-        const isInternalForward = s.protocol !== 'lambda' && s.protocol !== 'function' && s.protocol !== 'container' && !isRef(s.endpoint as unknown);
+        // forwardTo only works within the SAME Service Bus namespace.
+        // In iacmp Azure, each Messaging.Queue creates its own namespace, so cross-namespace
+        // forwarding is never possible. Create subscriptions without forwardTo; consumers
+        // read directly from the topic subscription via ServiceBusReceiver.
+        const subName = (s.endpoint as string) ? (s.endpoint as string).toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') + '-sub' : `sub-${i}`;
         const subProps: Record<string, unknown> = { lockDuration: 'PT30S', deadLetteringOnMessageExpiration: false };
-        if (isInternalForward) subProps.forwardTo = s.endpoint;
-        resources.push({ sym: `${sym}Sub${i}`, type: 'Microsoft.ServiceBus/namespaces/topics/subscriptions', apiVersion: '2022-10-01-preview', parent: topicSym, name: `sub-${i}`, properties: subProps });
+        resources.push({ sym: `${sym}Sub${i}`, type: 'Microsoft.ServiceBus/namespaces/topics/subscriptions', apiVersion: '2022-10-01-preview', parent: topicSym, name: subName, properties: subProps });
       });
       outputs.push({ name: `${construct.id}Id`, type: 'string', value: `${nsSym}.id` });
+      // ConnectionString do namespace do Topic — necessário para o publisher (@azure/service-bus).
+      outputs.push({ name: `${construct.id}ConnectionString`, type: 'string', value: `listKeys(resourceId('Microsoft.ServiceBus/namespaces/authorizationRules', ${nsSym}.name, 'RootManageSharedAccessKey'), '2022-10-01-preview').primaryConnectionString` });
       break;
     }
 
