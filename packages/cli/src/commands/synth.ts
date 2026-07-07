@@ -249,6 +249,17 @@ export default class Synth extends Command {
       );
     }
 
+    // ── REDIS_PORT hardcoded como '6379' quando existe Cache.Redis ────────────
+    // Redis Enterprise (Azure) usa TLS na porta 10000 — não existe porta 6379.
+    // '6379' hardcoded → conexão recusada em runtime. Forçar ref('Id','Port').
+    const redisPortErrors = this.validateRedisPortRef(loadedStacks);
+    if (redisPortErrors.length > 0) {
+      this.error(
+        `REDIS_PORT hardcoded no Fn.Lambda (Redis Enterprise usa TLS:10000 — '6379' não existe):\n\n` +
+        redisPortErrors.map(e => `  • ${e}`).join('\n'),
+      );
+    }
+
     // ── Passada 2: sintetiza e grava só as stacks que o --stack pediu ───────
     const targetStacks = loadedStacks.filter(s => !flags.stack || s.stackName === flags.stack);
     if (targetStacks.length === 0) {
@@ -490,6 +501,11 @@ export default class Synth extends Command {
         // quota que o deploy orquestra via outputs acumulados entre stacks.
         if (output.includes('MaxNumberOfRegionalEnvironmentsInSubExceeded')) {
           this.log(`  az deployment validate: ${stackName} — CAE quota (sharedCaeId resolve em deploy)`);
+        } else if (output.includes('Alerts are currently not supported at') && output.includes('microsoft.app/containerapps')) {
+          // Metric alerts para Container Apps só aceitam escopo de recurso individual.
+          // O bicep.ts gera param alarmScopeId (default '') com condition — o alarm
+          // só é criado quando o deploy injeta o resource ID real do Container App.
+          this.log(`  az deployment validate: ${stackName} — Container Apps alert scope resolve em deploy (param alarmScopeId)`);
         } else {
           this.warn(`az deployment group validate falhou para '${stackName}':\n${output}`);
           hasError = true;
@@ -762,6 +778,29 @@ export default class Synth extends Command {
             errors.push(
               `Fn.Lambda "${c.id}": ${key} está hardcoded como '${v}'. Use ref('<DbId>','Username') — ` +
               `o admin do Database.SQL varia por cloud (AWS/Azure = 'dbadmin'); um valor cravado quebra a auth em runtime.`,
+            );
+          }
+        }
+      }
+    }
+    return errors;
+  }
+
+  private validateRedisPortRef(loaded: LoadedStack[]): string[] {
+    const errors: string[] = [];
+    const hasRedis = loaded.some(({ stack }) => stack.constructs.some(c => c.type === 'Cache.Redis'));
+    if (!hasRedis) return errors;
+    for (const { stack } of loaded) {
+      for (const c of stack.constructs) {
+        if (c.type !== 'Function.Lambda') continue;
+        const env = (c.props as Record<string, unknown>).environment as Record<string, unknown> | undefined;
+        if (!env) continue;
+        for (const key of ['REDIS_PORT', 'CACHE_PORT']) {
+          const v = env[key];
+          if (typeof v === 'string' && v.trim() === '6379') {
+            errors.push(
+              `Fn.Lambda "${c.id}": ${key} hardcoded como '6379'. Redis Enterprise usa TLS na porta 10000 — ` +
+              `use ref('<CacheId>','Port') que resolve para '10000'.`,
             );
           }
         }
