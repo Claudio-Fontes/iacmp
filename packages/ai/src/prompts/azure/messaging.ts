@@ -73,4 +73,58 @@ export async function handler(event: any) {
 \`\`\`
 
 ### nextSteps obrigatório: inclua "npm install @azure/service-bus" (só no produtor) e NÃO mencione @azure/data-tables nem @aws-sdk/*.
+
+---
+
+**REGRA ABSOLUTA AZURE — Messaging.Topic usa @azure/service-bus (NUNCA @azure/data-tables/@azure/cosmos/@aws-sdk/*)**
+
+\`Messaging.Topic\` no Azure vira um \`Microsoft.ServiceBus/namespaces\` + \`.../topics\` + \`.../subscriptions\` (fan-out SNS). O SDK do PRODUTOR é SEMPRE \`@azure/service-bus\`. Gerar \`@azure/data-tables\` para um tópico é ERRO — data-tables é para \`Database.DynamoDB\`, NUNCA para tópico/fila.
+
+- **Atributo válido de \`ref()\` para \`Messaging.Topic\`:** \`ConnectionString\` (= connection string do namespace Service Bus, RootManageSharedAccessKey). Passe também o nome do tópico como string literal: \`TOPIC_NAME: 'NotificationsTopic'\` (= o construct.id do tópico).
+- **Produtor usa \`createSender(topicName)\`** para publicar no tópico.
+- **Consumidor de tópico**: cada subscriber recebe via \`ServiceBusReceiver\` (NÃO via eventSources — eventSources só funciona para Messaging.Queue).
+
+### EXEMPLO OBRIGATÓRIO — fan-out Messaging.Topic no Azure
+
+\`\`\`typescript
+// src/publish.ts — PRODUTOR usa @azure/service-bus (NUNCA @azure/data-tables)
+import { ServiceBusClient } from '@azure/service-bus';
+
+export async function handler(event: any) {
+  const payload = typeof event.body === 'string' ? JSON.parse(event.body) : (event.body ?? {});
+  const client = new ServiceBusClient(process.env.NOTIFICATIONS_TOPIC_CONNECTION_STRING!);
+  const sender = client.createSender(process.env.TOPIC_NAME!);
+  try {
+    await sender.sendMessages({ body: JSON.stringify(payload) });
+  } finally {
+    await sender.close();
+    await client.close();
+  }
+  return { statusCode: 200, body: JSON.stringify({ published: true }) };
+}
+\`\`\`
+
+\`\`\`typescript
+// src/subscriber.ts — CONSUMIDOR de tópico usa ServiceBusReceiver
+import { ServiceBusClient } from '@azure/service-bus';
+
+export async function handler(event: any) {
+  // event.Records pode estar vazio num Container App sem eventSources de tópico.
+  // Consumidores de Messaging.Topic geralmente PUXAM mensagens via receiveMessages().
+  const client = new ServiceBusClient(process.env.NOTIFICATIONS_TOPIC_CONNECTION_STRING!);
+  const receiver = client.createReceiver(process.env.TOPIC_NAME!, process.env.SUBSCRIPTION_NAME!);
+  try {
+    const messages = await receiver.receiveMessages(10, { maxWaitTimeInMs: 5000 });
+    for (const msg of messages) {
+      const body = typeof msg.body === 'string' ? JSON.parse(msg.body) : msg.body;
+      // ... processa notificação
+      await receiver.completeMessage(msg);
+    }
+  } finally {
+    await receiver.close();
+    await client.close();
+  }
+  return { statusCode: 200, body: '' };
+}
+\`\`\`
 `;
