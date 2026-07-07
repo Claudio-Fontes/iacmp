@@ -65,53 +65,26 @@ export async function handler() {
 \`\`\`typescript
 import { TableClient } from '@azure/data-tables';
 import { randomUUID } from 'crypto';
+const client = TableClient.fromConnectionString(process.env.COSMOS_CONNECTION!, process.env.TABLE_NAME!);
 
-const client = TableClient.fromConnectionString(
-  process.env.COSMOS_CONNECTION!,
-  process.env.TABLE_NAME!,
-);
-
-// CREATE
+// CREATE — ATENÇÃO: 'id' é RESERVADO na Table API — excluir do spread
 export async function handler(event: any) {
   const body = typeof event.body === 'string' ? JSON.parse(event.body) : (event.body ?? {});
   const id = randomUUID();
-  // ATENÇÃO: 'id' é propriedade RESERVADA na Table API — excluir do spread
   const { id: _id, ...rest } = body;
   await client.createEntity({ partitionKey: 'items', rowKey: id, ...rest });
   return { statusCode: 201, body: JSON.stringify({ id, ...rest }) };
 }
 
-// LIST
-export async function handler(event: any) {
+// LIST — listEntities() é AsyncIterable — use for await
+export async function handler() {
   const items: any[] = [];
-  for await (const e of client.listEntities()) {
-    items.push({ id: e.rowKey, name: e.name, description: e.description });
-  }
+  for await (const e of client.listEntities()) items.push({ id: e.rowKey, ...e });
   return { statusCode: 200, body: JSON.stringify(items) };
 }
-
-// GET
-export async function handler(event: any) {
-  const id = event.pathParameters?.id ?? event.path?.split('/').pop();
-  const e = await client.getEntity('items', id);
-  return { statusCode: 200, body: JSON.stringify({ id: e.rowKey, name: e.name, description: e.description }) };
-}
-
-// UPDATE
-export async function handler(event: any) {
-  const id = event.pathParameters?.id ?? event.path?.split('/').pop();
-  const body = typeof event.body === 'string' ? JSON.parse(event.body) : (event.body ?? {});
-  const { id: _id, ...rest } = body;  // 'id' é reservado — excluir do spread
-  await client.updateEntity({ partitionKey: 'items', rowKey: id, ...rest }, 'Replace');
-  return { statusCode: 200, body: JSON.stringify({ id, ...rest }) };
-}
-
-// DELETE
-export async function handler(event: any) {
-  const id = event.pathParameters?.id ?? event.path?.split('/').pop();
-  await client.deleteEntity('items', id);
-  return { statusCode: 204, body: '' };
-}
+// GET: client.getEntity('items', id)
+// UPDATE: client.updateEntity({ partitionKey: 'items', rowKey: id, ...rest }, 'Replace') — excluir 'id' do spread
+// DELETE: client.deleteEntity('items', id)
 \`\`\`
 
 ### Env vars obrigatórias no Fn.Lambda que acessa Database.DynamoDB:

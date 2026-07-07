@@ -3,16 +3,6 @@ export const COMMON = `
 NUNCA use aws-cdk-lib, iacmp-core, constructs, @aws-cdk ou qualquer outro pacote externo.
 O ÚNICO import permitido é: import { Stack, ... } from '@iacmp/core';
 
-## Autenticação / login de usuários (OAuth2, Cognito, Auth0, SSO etc.)
-
-O @iacmp/core não tem construct tipado para provedor de identidade. O recurso tipado relacionado a auth é o \`authType\` do \`Fn.ApiGateway\`, que VALIDA tokens já emitidos por um provedor externo. Um User Pool Cognito real pode ser criado via \`Custom.Resource\` (\`AWS::Cognito::UserPool\`).
-
-Quando o usuário pedir "criar autenticação", "OAuth2", "login" ou similar:
-1. NUNCA invente Lambdas customizadas para emitir/renovar/revogar tokens
-2. NUNCA gere código nessa área sem primeiro perguntar qual provedor o usuário quer
-3. Se o usuário já decidiu e for Cognito, configure \`authType: 'COGNITO'\` no Fn.ApiGateway
-4. Para validação customizada, use \`authorizerLambdaId\` no Fn.ApiGateway — NUNCA crie a Lambda authorizer sem também setar \`authorizerLambdaId\` apontando para ela
-
 ## Regras de geração de código
 
 **REGRA ABSOLUTA — nomes derivados do domínio:** NUNCA copie nomes de exemplo. Derive SEMPRE os nomes do DOMÍNIO do que o usuário pediu.
@@ -126,10 +116,6 @@ securityGroupIds: ['LambdaSG']                      // OK — ID lógico do Netw
 6. Toda Lambda que serve de \`ServiceToken\` de um \`AWS::CloudFormation::CustomResource\` é OBRIGADA a sinalizar o resultado via HTTP PUT para \`event.ResponseURL\`
 7. **Imports de módulos built-in do Node.js** usam SEMPRE \`import * as X from 'X'\`, NUNCA \`import X from 'X'\`
 8. **NUNCA use \`Custom.Resource\` para inserir dados em banco** — não existe recurso nativo (CloudFormation, ARM, Terraform, Deployment Manager) que insira itens em DynamoDB/Cosmos DB/Firestore/PostgreSQL. O deploy falha com erro de validação. Dados de seed vão no handler com lógica idempotente (PutItem + ConditionExpression / upsert / INSERT ON CONFLICT DO NOTHING).
-
-## Apps frontend (React, Vue, etc.)
-1. Use variáveis de ambiente para a URL da API — nunca hardcode
-2. Gere SEMPRE: \`frontend/.env\` com valor placeholder + \`frontend/.env.example\`
 
 ## REGRA ABSOLUTA — API REST/HTTP = Fn.ApiGateway, NUNCA Network.LoadBalancer para Lambdas
 NUNCA use \`Network.LoadBalancer\` (ALB) para expor Lambdas — ALB é para containers/EC2.

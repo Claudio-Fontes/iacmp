@@ -3,16 +3,7 @@ export const DATABASE_AWS = `
 
 SEMPRE defina \`partitionKeyType\`/\`sortKeyType\` (e o equivalente nos GSIs) de acordo com o tipo real do dado — ex: \`id: number\` no payload da aplicação → \`partitionKeyType: 'N'\`. Na AWS, DynamoDB rejeita em runtime (\`ValidationException: Type mismatch\`) qualquer escrita/leitura cujo tipo do valor não bata com o tipo declarado na tabela — não dá pra simplesmente enviar um número numa chave declarada como string. Ao alterar o tipo de uma chave existente que já tenha dados, avise no \`warnings\` que a tabela precisa ser recriada (chave primária não é alterável em uma tabela existente).
 
-**REGRA — GSI: só consulte índice que a tabela declara.** Se um handler faz \`QueryCommand({ IndexName: 'X', ... })\`, a \`Database.DynamoDB\` correspondente TEM que declarar esse índice em \`globalSecondaryIndexes\` (com o mesmo \`name: 'X'\`) E a Policy.IAM da Lambda tem que liberar \`<TableArn>/index/*\` além do ARN da tabela — senão o deploy sobe mas a query estoura \`ValidationException: The table does not have the specified index\` em runtime. Para **limpeza por TTL / itens expirados NÃO crie um GSI**: use \`ScanCommand\` + \`FilterExpression\` — e o writer que grava os itens precisa gravar o atributo \`ttl\` (epoch em segundos) para que algo de fato expire. **CUIDADO — \`ttl\` é PALAVRA RESERVADA no DynamoDB** (assim como \`name\`, \`status\`, \`date\`, \`timestamp\`, \`type\`, \`data\`, \`value\`, \`count\`, \`size\`, \`user\`, \`source\`, \`region\`, \`year\`, \`month\`, \`day\`, \`state\`, \`group\`, \`role\`, \`order\`, \`key\`, \`range\`, \`hour\`, \`minute\`, \`second\`, \`time\`, \`token\` e centenas de outras): usar o nome cru numa \`FilterExpression\`/\`KeyConditionExpression\`/\`ConditionExpression\` estoura \`ValidationException: Attribute name is a reserved keyword\` em runtime. SEMPRE aliase com \`ExpressionAttributeNames\` e use o \`#alias\` na expressão:
-\`\`\`ts
-await doc.send(new ScanCommand({
-  TableName: 'ReportsTable',
-  FilterExpression: '#ttl < :now',
-  ExpressionAttributeNames: { '#ttl': 'ttl' },
-  ExpressionAttributeValues: { ':now': Math.floor(Date.now() / 1000) },
-}));
-\`\`\`
-Na dúvida sobre um nome de atributo, aliase — atributos comuns como \`date\` (que pode ser sua sortKey!), \`name\`, \`status\` são todos reservados e exigem \`#\`.
+**REGRA — GSI: só consulte índice que a tabela declara.** Se um handler faz \`QueryCommand({ IndexName: 'X', ... })\`, a \`Database.DynamoDB\` TEM que declarar esse índice em \`globalSecondaryIndexes\` E a Policy.IAM deve liberar \`<TableArn>/index/*\`. Para limpeza por TTL use \`ScanCommand + FilterExpression\` (sem GSI). **PALAVRAS RESERVADAS** (\`name\`, \`status\`, \`date\`, \`timestamp\`, \`ttl\`, etc.) precisam de alias: \`FilterExpression: '#name = :n', ExpressionAttributeNames: { '#name': 'name' }\` — na dúvida, sempre aliase.
 
 **REGRA Aurora**: sempre informe subnetIds (2 subnets em AZs diferentes) e securityGroupIds. Aurora sem subnets só funciona em contas com VPC default — nunca adequado para produção. A senha é gerada automaticamente no Secrets Manager e injetada no cluster via resolve:secretsmanager.
 
@@ -55,16 +46,5 @@ export async function handler(event: any) {
 \`\`\`
 Use \`Pool\` (não \`Client\`) para reutilizar conexões entre invocações no mesmo container — evita overhead de conexão a cada invocação.
 
-**REGRA ABSOLUTA — Policy.IAM deve cobrir TODOS os comandos SDK usados no handler:** Para cada handler que acessa DynamoDB, gere uma \`Policy.IAM\` com TODAS as \`actions\` correspondentes aos comandos usados. Mapeamento obrigatório:
-- \`PutCommand\` → \`dynamodb:PutItem\`
-- \`GetCommand\` → \`dynamodb:GetItem\`
-- \`UpdateCommand\` → \`dynamodb:UpdateItem\`
-- \`DeleteCommand\` → \`dynamodb:DeleteItem\`
-- \`ScanCommand\` → \`dynamodb:Scan\`
-- \`QueryCommand\` → \`dynamodb:Query\`
-- \`TransactWriteCommand\` → \`dynamodb:TransactWriteItems\`
-- \`BatchWriteCommand\` → \`dynamodb:BatchWriteItem\`
-- \`BatchGetCommand\` → \`dynamodb:BatchGetItem\`
-
-Se um handler chama seed com \`PutCommand\` E lê com \`GetCommand\`, a policy precisa de \`['dynamodb:PutItem', 'dynamodb:GetItem']\`. NUNCA gere policy incompleta — falta de action causa \`AccessDeniedException\` em runtime que não aparece no deploy.
+**REGRA — Policy.IAM cobre TODOS os SDK commands do handler.** Ações frequentemente esquecidas: \`PutCommand→dynamodb:PutItem\`, \`UpdateCommand→dynamodb:UpdateItem\`, \`DeleteCommand→dynamodb:DeleteItem\`. Handler com seed + leitura precisa de ambas as actions. Falta de action causa \`AccessDeniedException\` silencioso em runtime.
 `;
