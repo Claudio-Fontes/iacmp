@@ -18,17 +18,15 @@ environment: {
 \`\`\`typescript
 import Redis from 'ioredis';
 
-const redis = new Redis({
-  host: process.env.REDIS_HOST!,
-  port: Number(process.env.REDIS_PORT ?? 10000),  // 10000 para Redis Enterprise (TLS)
-  tls: {},  // OBRIGATÓRIO — Redis Enterprise exige TLS
-  password: process.env.REDIS_CONNECTION_STRING?.split(',')
-    .find(p => p.startsWith('password='))?.split('=')[1],
-});
+// Redis Enterprise ConnectionString é uma URL rediss:// — ioredis aceita DIRETAMENTE.
+// NÃO use split(',').find('password=') — esse é o formato do Azure Cache for Redis Standard,
+// NÃO do Redis Enterprise. A URL rediss:// já inclui TLS e autenticação.
+const redis = new Redis(process.env.REDIS_CONNECTION_STRING!);
 \`\`\`
 
 - **npm install:** \`ioredis\` (NÃO \`@aws-sdk/client-elasticache\`)
 - **Atributos válidos de ref() para Cache.Redis:** \`Host, Port, ConnectionString\`
-- \`Port\` resolve para \`'10000'\` (TLS do Redis Enterprise) — use diretamente, sem hardcode
-- \`tls: {}\` é OBRIGATÓRIO no ioredis — sem ele a conexão é recusada
+- \`ConnectionString\` retorna URL no formato \`rediss://:PASSWORD@host:10000\` — passe DIRETO ao new Redis()
+- NUNCA faça \`split(',').find(p => p.startsWith('password='))\` — isso é para Azure Cache Standard, NÃO Redis Enterprise
+- \`tls: {}\` NÃO é necessário quando se usa a URL \`rediss://\` (TLS já está incluso no scheme)
 `;
