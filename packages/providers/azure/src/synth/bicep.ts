@@ -69,6 +69,15 @@ function resolveRef(r: Ref, idx: Map<string, BaseConstruct>, crossParams: Map<st
     // Referência cross-stack — vira parâmetro no template.
     // 'string:optional' gera default '' — permite deploy mesmo quando o construto
     // referenciado não existe em nenhuma stack (env var fica vazia, não bloqueia ARM).
+    //
+    // EXCEÇÃO Password: refs cross-stack cujo atributo é Password usam adminPassword
+    // diretamente — o mesmo @secure() param que o servidor recebe. O deploy garante
+    // o mesmo valor em todas as stacks de uma execução. Sem isso, o param gerado
+    // fica como soft (= '') e o handler não consegue autenticar no banco.
+    if (/^password$/i.test(r.attribute)) {
+      crossParams.set('adminPassword', 'secureString');
+      return expr('adminPassword');
+    }
     const pName = crossParamName(r.constructId, r.attribute);
     if (!crossParams.has(pName)) crossParams.set(pName, 'string:optional');
     return expr(pName);
