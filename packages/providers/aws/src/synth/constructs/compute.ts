@@ -104,7 +104,7 @@ export function synthCompute(
       const svcLogicalId = `${logicalId}Service`;
       const executionRoleLogicalId = `${logicalId}ExecutionRole`;
       const logGroupLogicalId = `${logicalId}LogGroup`;
-      const environment = props.environment as Record<string, string> | undefined;
+      const environment = props.environment as Record<string, string | Ref> | undefined;
       const subnetIds = (props.subnetIds as string[]) ?? [];
 
       const entries: Array<[string, CloudFormationResource]> = [
@@ -138,7 +138,7 @@ export function synthCompute(
               Image: props.image as string,
               PortMappings: props.port ? [{ ContainerPort: props.port, Protocol: 'tcp' }] : [],
               Environment: environment
-                ? Object.entries(environment).map(([k, v]) => ({ Name: k, Value: v }))
+                ? Object.entries(environment).map(([k, v]) => ({ Name: k, Value: isRef(v) ? resolveRef(v, ctx) : v }))
                 : [],
               LogConfiguration: {
                 LogDriver: 'awslogs',

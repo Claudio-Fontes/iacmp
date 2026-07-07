@@ -27,7 +27,7 @@ export interface ComputeContainerProps {
   cpu?: number;
   memory?: number;
   port?: number;
-  environment?: Record<string, string>;
+  environment?: Record<string, string | Ref>;
   desiredCount?: number;
   publicIp?: boolean;
   subnetIds?: string[];

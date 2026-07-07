@@ -83,12 +83,14 @@ Use os IDs lógicos do próprio iacmp (ex: o nome passado no segundo argumento d
 
 \`ref('Recurso', 'Attr')\` retorna \`{ kind: 'iacmp:ref', constructId: 'Recurso', attribute: 'Attr' }\` — um **objeto interno**, NÃO uma string.
 
-**NUNCA chame \`.toString()\` em um \`ref()\`** — \`.toString()\` em qualquer objeto JS que não implemente o método produz \`[object Object]\`, que chega literal ao template e quebra o deploy silenciosamente.
+**NUNCA chame \`.toString()\` nem \`String()\` em um \`ref()\`** — qualquer conversão para string produz \`[object Object]\`, que chega literal ao template e quebra o deploy silenciosamente.
 
 Proibido:
 \`\`\`typescript
 vpcId: ref('NetworkVpc', 'VpcId').toString()            // produz "[object Object]"
 subnetIds: [ref('NetworkSubnet', 'SubnetId').toString()] // idem
+DB_HOST: String(ref('ProductDB', 'Endpoint'))           // produz "[object Object]"
+REDIS_PORT: String(ref('ProductCache', 'Port'))         // produz "[object Object]"
 \`\`\`
 
 **Onde \`ref()\` pode ser usado:** apenas em campos cujo tipo aceita \`Ref\` — na prática, exclusivamente os valores de \`environment\`, e nos campos \`resources\`, \`alarmActions\`, \`okActions\` de Policy.IAM e Monitoring.Alarm.
