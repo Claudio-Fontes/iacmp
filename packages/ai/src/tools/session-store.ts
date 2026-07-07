@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import { AIMessage } from '../providers/base';
+import { AIMessage } from '../llm-models/base';
 
 const SESSION_FILE = '.iacmp/session.json';
 const TOKEN_BUDGET = 40_000;

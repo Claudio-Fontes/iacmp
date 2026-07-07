@@ -1,7 +1,7 @@
-export { AIProvider, AIMessage, AIResponse } from './providers/base';
-export { AnthropicProvider } from './providers/anthropic';
-export { OpenAIProvider } from './providers/openai';
-export { CopilotProvider } from './providers/copilot';
+export { AIProvider, AIMessage, AIResponse } from './llm-models/base';
+export { AnthropicProvider } from './llm-models/anthropic';
+export { OpenAIProvider } from './llm-models/openai';
+export { CopilotProvider } from './llm-models/copilot';
 export { SYSTEM_PROMPT, SYSTEM_PROMPT_TEMPLATE, buildSystemPrompt } from './prompts/system-prompt';
 export { extractResponse, GeneratedFile, AIGeneratedResponse } from './parser/code-extractor';
 export { validateTypeScript, ValidationResult } from './parser/validator';

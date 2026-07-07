@@ -1,4 +1,4 @@
-import { AIMessage } from '../providers/base';
+import { AIMessage } from '../llm-models/base';
 
 export class ChatSession {
   private messages: AIMessage[] = [];
