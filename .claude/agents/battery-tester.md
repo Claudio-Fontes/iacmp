@@ -45,6 +45,13 @@ Nunca edite stacks ou handlers gerados para "fazer passar". O bug fica no prompt
 8. ~/.local/bin/iacmp synth --provider <aws|azure>
 9. ~/.local/bin/iacmp deploy --provider <aws|azure>
 10. Aguardar stacks (sem poll loop longo — verificar a cada 2-3min, máx 30min total)
+    **Se uma stack falhar:** antes de destruir tudo, verifique se outras stacks já estão succeeded.
+    - Se a stack falha é isolada (outras succeeded não dependem dela para funcionar) →
+      re-deployar SÓ essa stack: `iacmp deploy --stack <nome-da-stack> --provider <cloud>`
+    - Se a falha é em cadeia (ex: api-stack depende de database-stack que falhou) →
+      corrigir a raiz e re-deployar as dependentes em ordem
+    - Só destrua tudo e recomeça se o estado ficou irrecuperável (ciclo circular de dependência,
+      RG corrompido, ou a falha exige mudança no synth)
 11. Testar endpoints funcionais
 12. ~/.local/bin/iacmp destroy --force --provider <aws|azure>
     (se travar: az group delete --name <rg> --yes --no-wait / aws cloudformation delete-stack)
