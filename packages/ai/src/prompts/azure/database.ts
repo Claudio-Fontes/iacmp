@@ -47,11 +47,16 @@ export async function handler() {
     ssl: { rejectUnauthorized: false },   // OBRIGATÓRIO — o servidor exige TLS
   });
   await db.connect();
+  // REGRA: todos os handlers SQL criam a tabela no cold start (CREATE TABLE IF NOT EXISTS)
+  // NUNCA omita isso em nenhum handler — POST antes de GET retorna 500 "relation does not exist"
+  await db.query('CREATE TABLE IF NOT EXISTS items (id SERIAL PRIMARY KEY, name TEXT NOT NULL, description TEXT, price NUMERIC(10,2))');
   const r = await db.query('SELECT * FROM items');
   await db.end();
   return { statusCode: 200, body: JSON.stringify(r.rows) };
 }
 \`\`\`
+
+**REGRA CRÍTICA — CREATE TABLE em todos os handlers:** O PostgreSQL Flexible Server não cria tabelas automaticamente. Todo handler que acessa uma tabela DEVE executar \`CREATE TABLE IF NOT EXISTS\` antes de qualquer SELECT/INSERT/UPDATE/DELETE. Isso vale para TODOS os handlers (list, create, get, update, delete) — não só o de listagem.
 
 ### Padrão obrigatório para handlers com Database.DynamoDB (Cosmos DB Table API):
 \`\`\`typescript
