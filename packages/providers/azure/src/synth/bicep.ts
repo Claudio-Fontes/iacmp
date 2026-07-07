@@ -785,7 +785,9 @@ function synthesizeConstruct(
         AWSManagedRulesPHPRuleSet: { ruleSetType: 'OWASP', ruleSetVersion: '3.2' },
         AWSManagedRulesWordPressRuleSet: { ruleSetType: 'OWASP', ruleSetVersion: '3.2' },
       };
-      const customRules = rules.filter(r => !r.managedGroup).map((r, i) => ({
+      // Regras com rateLimit são omitidas: App GW WAF Policy não tem rate-based rules.
+      // Esse conceito existe no Azure Front Door WAF, não no App Gateway WAF.
+      const customRules = rules.filter(r => !r.managedGroup && !r.rateLimit).map((r, i) => ({
         name: (r.name as string) ?? `custom-rule-${i}`,
         priority: (r.priority as number) ?? (i + 1),
         // App Gateway WAF suporta apenas MatchRule — RateLimitRule é exclusivo do Front Door
@@ -1290,7 +1292,7 @@ function synthesizeConstruct(
         apiVersion: '2023-05-01-preview',
         parent: sym,
         name: 'main',
-        properties: { displayName: rawName, path: '', protocols: ['https'], subscriptionRequired: false, serviceUrl: '' },
+        properties: { displayName: rawName, path: 'api', protocols: ['https'], subscriptionRequired: false, serviceUrl: '' },
       });
 
       // CORS no nível da API — sem ele o browser bloqueia a SAS request (preflight OPTIONS).
