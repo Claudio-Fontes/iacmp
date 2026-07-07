@@ -1679,7 +1679,7 @@ function synthesizeConstruct(
         // In iacmp Azure, each Messaging.Queue creates its own namespace, so cross-namespace
         // forwarding is never possible. Create subscriptions without forwardTo; consumers
         // read directly from the topic subscription via ServiceBusReceiver.
-        const subName = (s.name as string) || ((s.endpoint as string) ? (s.endpoint as string).toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') + '-sub' : `sub-${i}`);
+        const subName = ((s.name as string) || (s.endpoint as string) || `sub-${i}`).toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
         const subProps: Record<string, unknown> = { lockDuration: 'PT30S', deadLetteringOnMessageExpiration: false };
         resources.push({ sym: `${sym}Sub${i}`, type: 'Microsoft.ServiceBus/namespaces/topics/subscriptions', apiVersion: '2022-10-01-preview', parent: topicSym, name: subName, properties: subProps });
       });
