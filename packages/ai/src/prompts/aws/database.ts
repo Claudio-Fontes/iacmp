@@ -18,6 +18,15 @@ Na dúvida sobre um nome de atributo, aliase — atributos comuns como \`date\` 
 
 **REGRA ABSOLUTA — secret do banco é automático**: \`Database.SQL\` e \`Database.DocumentDB\` JÁ criam o secret da senha no Secrets Manager sozinhos. NUNCA crie um \`Secret.Vault\` nem \`Custom.Resource\` do tipo \`AWS::SecretsManager::Secret\` para a senha do banco — é redundante e fica desconectado do banco. As Lambdas acessam o secret automático via as env vars \`<DbId>.Password\`/\`<DbId>.SecretArn\` (ver regra de env vars de banco).
 
+**REGRA ABSOLUTA — dados iniciais vão no handler, NUNCA no CloudFormation**: CloudFormation não tem recurso nativo para inserir itens no DynamoDB. NUNCA use \`Custom.Resource\` com \`type: 'AWS::DynamoDB::Table'\` nem qualquer propriedade \`Item\` nesse tipo — isso é inválido e o deploy falha com \`AWS::EarlyValidation::PropertyValidation\`. Para dados de seed (ex: inserir item com id=1 na primeira chamada), faça no handler com \`PutCommand\` + \`ConditionExpression: 'attribute_not_exists(id)'\` (idempotente — não sobrescreve se já existir):
+\`\`\`typescript
+await docClient.send(new PutCommand({
+  TableName: process.env.TABLE_NAME,
+  Item: { id: 1, message: 'Hello World' },
+  ConditionExpression: 'attribute_not_exists(id)',
+})).catch(() => {}); // ignora ConditionalCheckFailedException se já existir
+\`\`\`
+
 **REGRA — handler que conecta no DocumentDB (driver \`mongodb\`):** o handler NÃO pode ter connection string hardcoded nem placeholder — monte a URI a partir das env vars. Passe nas env vars da Lambda: \`DB_HOST: '<DbId>.Endpoint'\`, \`DB_PORT: '<DbId>.Port'\`, \`DB_PASSWORD: '<DbId>.Password'\` (dynamic-ref resolvido no deploy — NÃO buscar do Secrets Manager em runtime, que uma Lambda em subnet privada sem NAT não alcança), \`DB_USER: 'docdbadmin'\`, \`DB_NAME: 'documents'\`. DocumentDB EXIGE TLS e NÃO suporta retryable writes. Padrão (o cliente fora do handler, reusa conexão):
 \`\`\`typescript
 import { MongoClient } from 'mongodb';
