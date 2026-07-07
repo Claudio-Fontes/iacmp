@@ -467,7 +467,9 @@ function synthesizeConstruct(
       });
       outputs.push({ name: `${construct.id}Id`, type: 'string', value: `${sym}.id` });
       outputs.push({ name: `${construct.id}PrincipalId`, type: 'string', value: `${sym}.identity.principalId` });
-      outputs.push({ name: `${construct.id}Fqdn`, type: 'string', value: `${sym}.properties.configuration.ingress.fqdn` });
+      // crossParamName: remove hífens → identificador Bicep válido que casa com
+      // o param cross-stack gerado pelo APIM (crossParamName(lambdaId, 'Fqdn')).
+      outputs.push({ name: crossParamName(construct.id, 'Fqdn'), type: 'string', value: `${sym}.properties.configuration.ingress.fqdn` });
       break;
     }
 
@@ -546,10 +548,11 @@ function synthesizeConstruct(
         });
       }
       outputs.push({ name: `${construct.id}Id`, type: 'string', value: `${sym}.id` });
-      outputs.push({ name: `${construct.id}Name`, type: 'string', value: `${sym}.name` });
+      // crossParamName: remove hífens → identificador Bicep válido que casa com o param cross-stack.
+      outputs.push({ name: crossParamName(construct.id, 'Name'), type: 'string', value: `${sym}.name` });
       // ConnectionString (com a account key) — cross-stack para o handler blob
       // (BlobServiceClient.fromConnectionString). Ver resolveRef Storage.Bucket.
-      outputs.push({ name: `${construct.id}ConnectionString`, type: 'string', value: `'DefaultEndpointsProtocol=https;AccountName=\${${sym}.name};AccountKey=\${${sym}.listKeys().keys[0].value};EndpointSuffix=core.windows.net'` });
+      outputs.push({ name: crossParamName(construct.id, 'ConnectionString'), type: 'string', value: `'DefaultEndpointsProtocol=https;AccountName=\${${sym}.name};AccountKey=\${${sym}.listKeys().keys[0].value};EndpointSuffix=core.windows.net'` });
       // Event Grid trigger — eventNotifications → systemTopic no storage account + eventSubscription por lambdaId.
       // Abordagem: Event Grid (não KEDA). KEDA só escala réplicas, não entrega o payload BlobCreated ao handler.
       // Event Grid envia o evento via webhook HTTP (/events) e o adaptador server.js traduz
@@ -1224,9 +1227,10 @@ function synthesizeConstruct(
       });
       outputs.push({ name: `${construct.id}Id`, type: 'string', value: `${sym}.id` });
       outputs.push({ name: `${construct.id}PrincipalId`, type: 'string', value: `${sym}.identity.principalId` });
-      // Fqdn: APIM (cross-stack) consome este output para montar a URL do backend.
-      // O FQDN só está disponível após criação com ingress externo — ARM resolve em deploy-time.
-      outputs.push({ name: `${construct.id}Fqdn`, type: 'string', value: `${sym}.properties.configuration.ingress.fqdn` });
+      // Fqdn: APIM e Event Grid (cross-stack) consomem este output para montar a URL do backend.
+      // crossParamName: remove hífens → identificador Bicep válido que casa com
+      // crossParamName(lambdaId, 'Fqdn') usado pelo APIM e pela subscription de Event Grid.
+      outputs.push({ name: crossParamName(construct.id, 'Fqdn'), type: 'string', value: `${sym}.properties.configuration.ingress.fqdn` });
       break;
     }
 
