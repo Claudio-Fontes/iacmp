@@ -10,6 +10,7 @@ import {
   CopilotProvider,
   ChatSession,
   readProjectContext,
+  readProjectMeta,
   buildSystemPrompt,
   buildIndexes,
   retrieve,
@@ -177,15 +178,18 @@ export default class AI extends Command {
 
     const session = new ChatSession();
     const { ask, close } = createDirectAsk();
-    let projectContext = readProjectContext(cwd);
-    // RAG: enriquece o contexto da geração com conhecimento relevante ao pedido
-    // (docs de construct + padrões de plataforma) — em vez de inflar o prompt fixo.
+    // RAG: quando retorna hits, usa só o meta (lista de stacks) + chunks relevantes.
+    // Sem RAG: fallback para readProjectContext (conteúdo completo).
+    // Isso evita injetar o conteúdo completo de todas as stacks + RAG ao mesmo tempo
+    // (causava 429 Request too large no gpt-4o com limite de 30k TPM).
     const ragSpinner = ora({ text: 'Recuperando conhecimento relevante...', spinner: 'dots', discardStdin: false }).start();
     const ragContext = await retrieveGenerationContext(cwd, args.prompt!, buildSystemPrompt(''));
+    let projectContext: string;
     if (ragContext) {
-      projectContext = `${projectContext}\n\n${ragContext}`;
+      projectContext = `${readProjectMeta(cwd)}\n\n${ragContext}`;
       ragSpinner.succeed('Conhecimento recuperado (RAG)');
     } else {
+      projectContext = readProjectContext(cwd);
       ragSpinner.stop();
     }
     const provider = createContextualProvider(aiProvider, projectContext, iacProvider);
