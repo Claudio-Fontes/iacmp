@@ -263,17 +263,6 @@ function helloHandlerContent(): string {
 `;
 }
 
-function testContent(projectName: string, stackImportPath: string): string {
-  return `import { Stack } from '@iacmp/core';
-import stack from '${stackImportPath}';
-
-test('${projectName} stack tem pelo menos um construct', () => {
-  expect(stack).toBeInstanceOf(Stack);
-  expect(stack.constructs.length).toBeGreaterThan(0);
-});
-`;
-}
-
 function packageJson(projectName: string, coreRef: string): string {
   return JSON.stringify({
     name: projectName,
@@ -282,7 +271,6 @@ function packageJson(projectName: string, coreRef: string): string {
     scripts: {
       build: 'tsc',
       watch: 'tsc -w',
-      test: 'jest',
       synth: 'iacmp synth',
       deploy: 'iacmp deploy',
     },
@@ -290,16 +278,9 @@ function packageJson(projectName: string, coreRef: string): string {
       '@iacmp/core': coreRef,
     },
     devDependencies: {
-      '@types/jest': '^30',
       '@types/node': '^22',
-      jest: '^30',
-      'ts-jest': '^29',
       'ts-node': '^10',
       typescript: '~5.5.0',
-    },
-    jest: {
-      preset: 'ts-jest',
-      testEnvironment: 'node',
     },
   }, null, 2) + '\n';
 }
@@ -566,19 +547,6 @@ export default class Init extends Command {
         }
       }
 
-      // test/ — só faz sentido quando há uma stack principal para testar
-      if (template.stackContent) {
-        const testDir = path.join(projectDir, 'test');
-        fs.mkdirSync(testDir, { recursive: true });
-        const stackImportPath = template.stackSubDir
-          ? `../${template.stackSubDir}/${projectName}-stack`
-          : `../stacks/${projectName}-stack`;
-        fs.writeFileSync(
-          path.join(testDir, `${projectName}.test.ts`),
-          testContent(projectName, stackImportPath),
-        );
-      }
-
       // CI/CD
       const githubWorkflowsDir = path.join(projectDir, '.github', 'workflows');
       fs.mkdirSync(githubWorkflowsDir, { recursive: true });
@@ -619,7 +587,6 @@ export default class Init extends Command {
           ? `${template.stackSubDir}/${stackFileName}`
           : `stacks/${stackFileName}`;
         this.log(`  ${rel}/${stackRelPath}`);
-        this.log(`  ${rel}/test/${projectName}.test.ts`);
       }
       this.log(`  ${rel}/.github/workflows/iacmp.yml`);
       this.log(`  ${rel}/.gitlab-ci.yml`);
