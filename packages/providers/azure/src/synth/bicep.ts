@@ -70,11 +70,13 @@ function resolveRef(r: Ref, idx: Map<string, BaseConstruct>, crossParams: Map<st
     // 'string:optional' gera default '' — permite deploy mesmo quando o construto
     // referenciado não existe em nenhuma stack (env var fica vazia, não bloqueia ARM).
     //
-    // EXCEÇÃO Password: refs cross-stack cujo atributo é Password usam adminPassword
-    // diretamente — o mesmo @secure() param que o servidor recebe. O deploy garante
-    // o mesmo valor em todas as stacks de uma execução. Sem isso, o param gerado
-    // fica como soft (= '') e o handler não consegue autenticar no banco.
-    if (/^password$/i.test(r.attribute)) {
+    // EXCEÇÃO Password / SecretValue: refs cross-stack cujo atributo sugere senha
+    // usam adminPassword diretamente — o mesmo @secure() param que o servidor recebe.
+    // O deploy garante o mesmo valor em todas as stacks de uma execução.
+    // Sem isso o param fica como soft (= '') e o handler não autentica no banco.
+    // SecretValue cobre o padrão ref(vaultId, 'SecretValue') que a IA gera ao usar
+    // Key Vault como proxy para a senha do banco.
+    if (/^(password|secretvalue)$/i.test(r.attribute)) {
       crossParams.set('adminPassword', 'secureString');
       return expr('adminPassword');
     }
@@ -113,6 +115,16 @@ function resolveRef(r: Ref, idx: Map<string, BaseConstruct>, crossParams: Map<st
   // BLOB_KEY: 'your-key' literal (placeholder) → SAS 403 (ciclo p04az5).
   if (c.type === 'Storage.Bucket' && r.attribute === 'ConnectionString') {
     return expr(`'DefaultEndpointsProtocol=https;AccountName=\${${sym}.name};AccountKey=\${${sym}.listKeys().keys[0].value};EndpointSuffix=core.windows.net'`);
+  }
+  // Secret.Vault + SecretValue: a IA frequentemente usa ref(vaultId, 'SecretValue')
+  // como atalho para "a senha do banco guardada no vault". No Azure, o valor real do
+  // segredo não é acessível via propriedade ARM — usa-se o SDK em runtime.
+  // Para o framework, o equivalente funcional é adminPassword (o mesmo valor
+  // injetado no servidor pelo deploy). Retornar adminPassword garante autenticação
+  // correta sem expor o segredo como output de Bicep.
+  if (c.type === 'Secret.Vault' && r.attribute === 'SecretValue') {
+    crossParams.set('adminPassword', 'secureString');
+    return expr('adminPassword');
   }
   // Database.SQL: Password/Username/Port viram valores REAIS (o attr map genérico
   // caía em `.id` — resource ID do ARM ia parar na env do handler; ciclo p01az6).
