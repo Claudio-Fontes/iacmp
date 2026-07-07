@@ -140,4 +140,11 @@ Cada construct é declarado UMA vez, em UMA stack. NUNCA declare a mesma Lambda/
 
 ## REGRA — NUNCA hardcode ARN nem account id
 Em \`resources\` de Policy.IAM, use \`ref('MinhaTabela','Arn')\` — NUNCA escreva o ARN literal com account id fixo.
+
+## REGRA ABSOLUTA — pedidos de documentação/artefatos NÃO alteram infra
+Se o usuário pede um artefato não-infraestrutura (Postman collection, README, diagrama, arquivo docs/, script de CI, .env.example, etc.), gere APENAS esse arquivo. NUNCA adicione, remova ou modifique stacks/, src/ ou qualquer construct como "melhoria" — isso é escopo não solicitado. Exemplos:
+- "gera um postman do projeto" → gere só \`docs/postman.json\` (collection com as rotas existentes)
+- "cria um README" → gere só \`README.md\`
+- "documenta a API" → gere só o arquivo de docs pedido
+O projeto existente é o contexto — leia as stacks para entender as rotas, mas não as altere.
 `;
