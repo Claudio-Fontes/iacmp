@@ -1,36 +1,11 @@
 import { Stack, BaseConstruct } from '@iacmp/core';
-
-const INSTANCE_TYPE_MAP: Record<string, string> = {
-  small: 'e2-small',
-  medium: 'e2-medium',
-  large: 'e2-standard-4',
-};
-
-const GCP_IMAGE_MAP: Record<string, string> = {
-  'ubuntu': 'projects/ubuntu-os-cloud/global/images/family/ubuntu-2204-lts',
-  'ubuntu-22.04': 'projects/ubuntu-os-cloud/global/images/family/ubuntu-2204-lts',
-  'ubuntu-20.04': 'projects/ubuntu-os-cloud/global/images/family/ubuntu-2004-lts',
-  'windows-2022': 'projects/windows-cloud/global/images/family/windows-2022',
-  'windows-2019': 'projects/windows-cloud/global/images/family/windows-2019',
-};
-
-const CACHE_TIER_MAP: Record<string, string> = {
-  small: 'BASIC',
-  medium: 'STANDARD_HA',
-  large: 'STANDARD_HA',
-};
-
-const CACHE_CAPACITY_MAP: Record<string, number> = {
-  small: 1,
-  medium: 5,
-  large: 16,
-};
-
-const K8S_MACHINE_MAP: Record<string, string> = {
-  small: 'e2-medium',
-  medium: 'e2-standard-4',
-  large: 'n2-standard-8',
-};
+import {
+  INSTANCE_TYPE_MAP,
+  CACHE_TIER_MAP,
+  CACHE_CAPACITY_MAP,
+  K8S_MACHINE_MAP,
+  resolveGcpImage,
+} from './common.js';
 
 const RUNTIME_MAP: Record<string, string> = {
   'nodejs20': 'nodejs20',
@@ -44,20 +19,6 @@ const RUNTIME_MAP: Record<string, string> = {
 
 export function toTfId(id: string): string {
   return id.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
-}
-
-function resolveGcpImage(image: string | undefined): string {
-  if (!image) return 'projects/ubuntu-os-cloud/global/images/family/ubuntu-2204-lts';
-  return GCP_IMAGE_MAP[image] ?? `global/images/${image}`;
-}
-
-function gcpRegion(regionOrZone?: string): string {
-  if (!regionOrZone) return '${var.gcp_region}';
-  const parts = regionOrZone.split('-');
-  if (parts.length >= 3 && /^[a-z]$/.test(parts[parts.length - 1])) {
-    return parts.slice(0, -1).join('-');
-  }
-  return regionOrZone;
 }
 
 interface TFOutput {
