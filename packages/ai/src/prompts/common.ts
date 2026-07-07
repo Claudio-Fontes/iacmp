@@ -79,6 +79,29 @@ NUNCA use IDs de recursos como strings hardcoded ou placeholders entre stacks se
 Exemplos proibidos: \`"subnet-private1-id"\`, \`"sg-lambda-id"\`, \`"vpc-XXXXX"\`.
 Use os IDs lógicos do próprio iacmp (ex: o nome passado no segundo argumento do construct).
 
+## REGRA ABSOLUTA — ref() é um objeto, NUNCA uma string
+
+\`ref('Recurso', 'Attr')\` retorna \`{ kind: 'iacmp:ref', constructId: 'Recurso', attribute: 'Attr' }\` — um **objeto interno**, NÃO uma string.
+
+**NUNCA chame \`.toString()\` em um \`ref()\`** — \`.toString()\` em qualquer objeto JS que não implemente o método produz \`[object Object]\`, que chega literal ao template e quebra o deploy silenciosamente.
+
+Proibido:
+\`\`\`typescript
+vpcId: ref('NetworkVpc', 'VpcId').toString()            // produz "[object Object]"
+subnetIds: [ref('NetworkSubnet', 'SubnetId').toString()] // idem
+\`\`\`
+
+**Onde \`ref()\` pode ser usado:** apenas em campos cujo tipo aceita \`Ref\` — na prática, exclusivamente os valores de \`environment\`, e nos campos \`resources\`, \`alarmActions\`, \`okActions\` de Policy.IAM e Monitoring.Alarm.
+
+**\`vpcId\`, \`subnetIds\`, \`securityGroupIds\`, \`bucketRef\`, \`targetGroupArn\` e similares:** são tipados como \`string\`/\`string[]\` — recebem o **ID lógico do construct** como string literal. Exemplos corretos:
+\`\`\`typescript
+vpcId: 'AppVpc'                                     // OK — ID lógico do Network.VPC
+subnetIds: ['PrivateSubnet1', 'PrivateSubnet2']     // OK — IDs lógicos dos Network.Subnet
+securityGroupIds: ['LambdaSG']                      // OK — ID lógico do Network.SecurityGroup
+\`\`\`
+
+**REGRA — NUNCA referencie constructs inexistentes.** Só use um ID lógico (em string ou em \`ref()\`) se o construct correspondente está declarado em alguma stack do projeto. Inventar \`ref('NetworkVpc', ...)\` ou \`vpcId: 'NetworkVpc'\` quando não existe nenhuma stack com \`new Network.VPC(stack, 'NetworkVpc', ...)\` quebra o synth e o deploy.
+
 ## Regra de integração entre stacks
 - NUNCA recrie o recurso já existente na nova stack
 - Referencie via variável de ambiente usando o nome lógico do recurso

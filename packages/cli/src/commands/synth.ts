@@ -578,8 +578,9 @@ export default class Synth extends Command {
         ];
         if (!candidates.some(p => fs.existsSync(p))) {
           errors.push(
-            `Fn.Lambda "${c.id}": handler '${handler}' não tem origem — esperado src/${stem}.ts. ` +
-            `Crie o arquivo do handler ou ajuste o campo handler.`,
+            `Fn.Lambda "${c.id}": handler '${handler}' não tem arquivo de origem — esperado src/${stem}.ts. ` +
+            `AÇÃO CORRETA: CRIE o arquivo src/${stem}.ts exportando a função do handler. ` +
+            `NÃO altere o campo handler na stack — o path está correto; o que falta é o arquivo src/${stem}.ts.`,
           );
         }
       }

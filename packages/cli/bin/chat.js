@@ -388,10 +388,27 @@ async function runGeneration(provider, session, lastPrompt, projectContext, aiPr
       process.stderr.write(chalk.yellow(`  ✗ Synth falhou — corrigindo automaticamente...\n`));
       if (attempt === MAX_SYNTH_RETRIES) break;
       const originalFileCount = parsed.files.length;
-      session.addUserMessage(
-        `O comando "iacmp synth" falhou com o seguinte erro:\n\n${output}\n\n` +
-        `Corrija os arquivos e retorne o JSON completo com TODOS os ${originalFileCount} arquivo(s) da resposta anterior.`
-      );
+      // Erro "handler sem arquivo de origem": o modelo tende a "corrigir" mudando o
+      // campo handler na stack em vez de criar o src/ faltante — e nunca converge.
+      // Detecta o erro, extrai os src/ esperados e pede EXPLICITAMENTE para criá-los.
+      const missingSrc = [
+        ...new Set([...output.matchAll(/esperado (src\/[\w./-]+\.ts)/g)].map(m => m[1])),
+      ];
+      if (missingSrc.length > 0) {
+        session.addUserMessage(
+          `O comando "iacmp synth" falhou porque handlers de Lambda NÃO têm arquivo de origem:\n\n${output}\n\n` +
+          `AÇÃO OBRIGATÓRIA: os arquivos de handler abaixo estão FALTANDO — CRIE cada um com a função exportada:\n` +
+          missingSrc.map(p => `  • ${p}`).join('\n') + `\n\n` +
+          `NÃO altere o campo "handler" nas stacks para contornar o erro — o path está correto; o que falta é o arquivo src/. ` +
+          `Retorne o JSON completo com TODAS as ${originalFileCount} stack(s)/arquivo(s) anteriores MAIS os novos arquivos src/ criados acima.`
+        );
+      } else {
+        session.addUserMessage(
+          `O comando "iacmp synth" falhou com o seguinte erro:\n\n${output}\n\n` +
+          `Corrija os arquivos e retorne o JSON completo com TODOS os ${originalFileCount} arquivo(s) da resposta anterior. ` +
+          `Se o erro indicar arquivos faltando (ex: handlers src/), ADICIONE esses arquivos novos — não se limite ao conjunto anterior.`
+        );
+      }
       const retryChunks = [];
       try {
         await provider.stream(session.getMessages(), chunk => retryChunks.push(chunk));

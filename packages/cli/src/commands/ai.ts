@@ -539,6 +539,26 @@ async function runGeneration(
             `A key continua: \`const key = decodeURIComponent(record.s3.object.key.replace(/\\+/g, ' '))\`. ` +
             `Buckets de SAÍDA (outra stack, sem trigger) PODEM continuar como env var: \`process.env.PROCESSED_BUCKET_NAME\`. ` +
             `Retorne o JSON completo com TODOS os ${parsed.files.length} arquivo(s) mas altere APENAS os handlers src/ (tentativa ${attempt} de ${MAX_SYNTH_RETRIES}).`;
+        } else if (/n[ãa]o tem arquivo de origem|Handler\(s\) de Lambda sem arquivo de origem/.test(output)) {
+          // Handler de Lambda sem arquivo src/ correspondente. O corretor genérico
+          // ("retorne TODOS os N arquivos da resposta anterior") ANCORA o modelo no
+          // conjunto atual — ele "conserta" mudando o campo handler na stack em vez
+          // de CRIAR o src/ faltante, e o loop nunca converge. Aqui extraímos os
+          // src/ esperados do erro e exigimos EXPLICITAMENTE a criação de cada um.
+          const missingSrc = [
+            ...new Set([...output.matchAll(/esperado (src\/[\w./-]+\.ts)/g)].map(m => m[1])),
+          ];
+          const list = missingSrc.length > 0
+            ? missingSrc.map(p => `  • ${p}`).join('\n')
+            : '  • (veja os caminhos src/ apontados no erro acima)';
+          correctionMsg =
+            `O comando "iacmp synth" falhou porque handlers de Lambda NÃO têm arquivo de origem:\n\n${output}\n\n` +
+            `A CAUSA é arquivo FALTANDO, não path errado. AÇÃO OBRIGATÓRIA: CRIE cada arquivo de handler abaixo, ` +
+            `exportando a função \`handler\` (ex: \`export const handler = async (event) => { ... }\`):\n${list}\n\n` +
+            `NÃO altere o campo "handler" nas stacks para contornar o erro — o path está CORRETO; o que falta é o arquivo src/. ` +
+            `Cada Fn.Lambda com \`handler: 'dist/X.handler'\` (ou 'src/X.handler') EXIGE um src/X.ts com a mesma raiz de nome. ` +
+            `Retorne o JSON completo com TODAS as ${parsed.files.length} stack(s)/arquivo(s) anteriores MAIS os novos arquivos src/ criados acima ` +
+            `(tentativa ${attempt} de ${MAX_SYNTH_RETRIES}).`;
         } else {
           correctionMsg =
             `O comando "iacmp synth" falhou com o seguinte erro:\n\n${output}\n\n` +
