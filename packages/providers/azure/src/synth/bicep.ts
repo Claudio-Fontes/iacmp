@@ -1161,8 +1161,8 @@ function synthesizeConstruct(
       const reName = expr(`'${construct.id.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 40) || 're'}-\${uniqueString(resourceGroup().id)}'`);
       resources.push({ sym, type: 'Microsoft.Cache/redisEnterprise', apiVersion: '2024-10-01', name: reName, location: 'location', tags: tag(construct.id), sku: { name: 'Balanced_B0' }, properties: {} });
       resources.push({ sym: dbSym, type: 'Microsoft.Cache/redisEnterprise/databases', apiVersion: '2024-10-01', parent: sym, name: 'default', properties: { clientProtocol: 'Encrypted', port: 10000, clusteringPolicy: 'EnterpriseCluster', evictionPolicy: 'VolatileLRU', modules: [], persistence: { aofEnabled: false } } });
-      outputs.push({ name: `${construct.id}Endpoint`, type: 'string', value: `${sym}.properties.hostName` });
-      outputs.push({ name: `${construct.id}Port`, type: 'int', value: `${dbSym}.properties.port` });
+      outputs.push({ name: crossParamName(construct.id, 'Endpoint'), type: 'string', value: `${sym}.properties.hostName` });
+      outputs.push({ name: crossParamName(construct.id, 'Port'), type: 'string', value: `'10000'` });
       // Host exportado como output nomeado com crossParamName para que ref(..., 'Host')
       // cross-stack receba o valor correto (properties.hostName do redisEnterprise).
       outputs.push({ name: crossParamName(construct.id, 'Host'), type: 'string', value: `${sym}.properties.hostName` });
