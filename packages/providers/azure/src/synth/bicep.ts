@@ -53,7 +53,7 @@ const AZURE_ATTR_MAP: Record<string, Record<string, string>> = {
   'Messaging.Stream':      { Arn: 'id', Name: 'name' },
   'Messaging.Topic':       { Arn: 'id', TopicArn: 'id' },
   'Messaging.Queue':       { Arn: 'id', QueueUrl: 'id', QueueArn: 'id', ConnectionString: '__sb_connection_string__' },
-  'Cache.Redis':           { Endpoint: 'properties.hostName', Port: 'properties.sslPort', ConnectionString: '__redis_cs__' },
+  'Cache.Redis':           { Endpoint: 'properties.hostName', Host: 'properties.hostName', Port: 'properties.sslPort', ConnectionString: '__redis_cs__' },
   'Secret.Vault':          { SecretArn: 'id', Arn: 'id', VaultUri: 'properties.vaultUri', Name: 'name' },
   'Network.LoadBalancer':  { TargetGroupArn: 'id', DnsName: 'properties.dnsName' },
   'Compute.Container':     { Arn: 'id', Fqdn: 'properties.configuration.ingress.fqdn', DnsName: 'properties.configuration.ingress.fqdn' },
@@ -109,6 +109,10 @@ function resolveRef(r: Ref, idx: Map<string, BaseConstruct>, crossParams: Map<st
   if (c.type === 'Cache.Redis' && r.attribute === 'ConnectionString') {
     const dbSym = `${sym}Db`;
     return expr(`'rediss://:$\{${dbSym}.listKeys().primaryKey}@$\{${sym}.properties.hostName}:10000'`);
+  }
+  // Redis Enterprise porta: sempre 10000 (TLS). properties.sslPort não existe no recurso Enterprise.
+  if (c.type === 'Cache.Redis' && r.attribute === 'Port') {
+    return '10000';
   }
   // ConnectionString do Storage.Bucket (blob) — com a account key via listKeys().
   // O handler usa BlobServiceClient.fromConnectionString; antes o modelo punha
@@ -1156,6 +1160,9 @@ function synthesizeConstruct(
       resources.push({ sym: dbSym, type: 'Microsoft.Cache/redisEnterprise/databases', apiVersion: '2024-10-01', parent: sym, name: 'default', properties: { clientProtocol: 'Encrypted', port: 10000, clusteringPolicy: 'EnterpriseCluster', evictionPolicy: 'VolatileLRU', modules: [], persistence: { aofEnabled: false } } });
       outputs.push({ name: `${construct.id}Endpoint`, type: 'string', value: `${sym}.properties.hostName` });
       outputs.push({ name: `${construct.id}Port`, type: 'int', value: `${dbSym}.properties.port` });
+      // Host exportado como output nomeado com crossParamName para que ref(..., 'Host')
+      // cross-stack receba o valor correto (properties.hostName do redisEnterprise).
+      outputs.push({ name: crossParamName(construct.id, 'Host'), type: 'string', value: `${sym}.properties.hostName` });
       // ConnectionString no formato ioredis: rediss://:KEY@HOSTNAME:PORT
       // Consumido cross-stack via param (compute-stack env var REDIS_CONNECTION_STRING).
       outputs.push({ name: crossParamName(construct.id, 'ConnectionString'), type: 'string', value: `'rediss://:$\{${dbSym}.listKeys().primaryKey}@$\{${sym}.properties.hostName}:10000'` });
@@ -1771,15 +1778,22 @@ function synthesizeConstruct(
       let alarmScopes: unknown[];
       let alarmCriteriaType: string;
       let alarmMetricNamespace: string;
+      let alarmCondition: string | undefined;
       if (lambdaConstruct) {
         const lSym = toSym(lambdaConstruct.id);
         alarmScopes = [expr(`${lSym}.id`)];
         alarmCriteriaType = 'Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria';
         alarmMetricNamespace = 'Microsoft.App/containerApps';
       } else {
-        alarmScopes = [expr('subscription().id')];
-        alarmCriteriaType = 'Microsoft.Azure.Monitor.MultipleResourceMultipleMetricCriteria';
+        // No Container App in this stack — use a parameter injected at deploy time with the
+        // actual Container App resource ID. The alarm is only created when the param is non-empty.
+        // Azure Container Apps metric alerts only support individual resource scope (not RG/sub).
+        const alarmScopeParam = `${sym}ScopeId`;
+        crossParams.set(alarmScopeParam, 'string:optional');
+        alarmScopes = [expr(alarmScopeParam)];
+        alarmCriteriaType = 'Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria';
         alarmMetricNamespace = 'Microsoft.App/containerApps';
+        alarmCondition = `${alarmScopeParam} != ''`;
       }
       // Map AWS/abstract metric names to valid Azure Container Apps metrics.
       // Valid Container Apps metrics: Requests, TotalCpuUsage, TotalMemoryUsage, Replicas, RestartCount.
@@ -1790,7 +1804,7 @@ function synthesizeConstruct(
       };
       const rawMetricName = props.metricName as string;
       const azureMetricName = metricNameMap[rawMetricName] ?? (alarmMetricNamespace === 'Microsoft.App/containerApps' ? 'Requests' : rawMetricName);
-      resources.push({ sym, type: 'Microsoft.Insights/metricAlerts', apiVersion: '2018-03-01', name: construct.id, location: "'global'", tags: tag(construct.id), properties: { description: `Alarm for ${props.metricName}`, severity: 2, enabled: true, scopes: alarmScopes, evaluationFrequency: evalFreq, windowSize: windowSizeVal, criteria: { 'odata.type': alarmCriteriaType, allOf: [{ name: 'criterion1', criterionType: 'StaticThresholdCriterion', metricName: azureMetricName, metricNamespace: alarmMetricNamespace, operator: operatorMap[(props.comparisonOperator as string) ?? 'GreaterThanThreshold'] ?? 'GreaterThan', threshold: props.threshold as number, timeAggregation: (props.statistic as string) ?? 'Average', dimensions: [] }] }, actions: alarmActionList } });
+      resources.push({ sym, type: 'Microsoft.Insights/metricAlerts', apiVersion: '2018-03-01', name: construct.id, location: "'global'", condition: alarmCondition, tags: tag(construct.id), properties: { description: `Alarm for ${props.metricName}`, severity: 2, enabled: true, scopes: alarmScopes, evaluationFrequency: evalFreq, windowSize: windowSizeVal, criteria: { 'odata.type': alarmCriteriaType, allOf: [{ name: 'criterion1', criterionType: 'StaticThresholdCriterion', metricName: azureMetricName, metricNamespace: alarmMetricNamespace, operator: operatorMap[(props.comparisonOperator as string) ?? 'GreaterThanThreshold'] ?? 'GreaterThan', threshold: props.threshold as number, timeAggregation: (props.statistic as string) ?? 'Average', dimensions: [] }] }, actions: alarmActionList } });
       break;
     }
 
