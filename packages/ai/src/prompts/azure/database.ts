@@ -9,6 +9,8 @@ export const DATABASE_AZURE = `
 - **Policy.IAM para \`Database.SQL\`: NÃO gere.** O acesso ao Postgres/MySQL é por usuário/senha via env vars — não existe IAM de data-plane. Só gere Policy.IAM quando o handler usa um serviço com IAM real (fila, storage, tabela NoSQL).
 - **Policy.IAM para Cosmos DB no Azure: NÃO gere** — a connection string já autentica.
 
+**REGRA CRÍTICA AZURE — DB_NAME:** O PostgreSQL Flexible Server cria apenas o banco \`postgres\` por padrão. NUNCA use o nome da aplicação como banco (ex: \`DB_NAME: 'products'\`, \`DB_NAME: 'myapp'\` → "database does not exist"). SEMPRE use \`DB_NAME: 'postgres'\` (o banco padrão) ou crie o banco no handler de inicialização com \`CREATE DATABASE IF NOT EXISTS\`.
+
 **REGRA CRÍTICA AZURE — Database.SQL com Key Vault:** O handler usa \`process.env.DB_PASSWORD\` DIRETAMENTE — a plataforma Azure Container Apps resolve o Key Vault e injeta a senha como env var. NUNCA use \`DB_PASSWORD_SECRET_NAME\` nem chame o SDK do Key Vault em runtime para pegar a senha — isso é padrão AWS (Secrets Manager), NÃO Azure. O handler recebe \`DB_PASSWORD\` pronto para usar no \`new Client({ password: process.env.DB_PASSWORD })\`.
 
 ### EXEMPLO OBRIGATÓRIO — cenário SQL/PostgreSQL no Azure
