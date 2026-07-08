@@ -78,7 +78,11 @@ export function synthesizeStorage(construct: BaseConstruct, ctx: SynthContext): 
           let webhookUrl: string;
           let subCondition: string | undefined;
           if (lambdaConstruct) {
-            webhookUrl = expr(`'https://\${${lambdaSym}.properties.configuration.ingress.fqdn}/events'`);
+            if (lambdaConstruct.type === 'Function.Lambda') {
+              webhookUrl = expr(`'https://\${${lambdaSym}.properties.defaultHostName}/events'`);
+            } else {
+              webhookUrl = expr(`'https://\${${lambdaSym}.properties.configuration.ingress.fqdn}/events'`);
+            }
           } else {
             const fqdnParam = crossParamName(lambdaId, 'Fqdn');
             crossParams.set(fqdnParam, 'string:optional');

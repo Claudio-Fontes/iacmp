@@ -96,11 +96,10 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): void 
 // ── Function metadata for packaging ──────────────────────────────────────────
 export interface AzureFunctionMeta {
   constructId: string;
-  containerAppName: string;
+  functionAppName: string;
   handler: string;
   code: string;
   runtime: string;
-  imageParamName: string;
   /** Path patterns (ex: "/files/{key}", "/files/{key+}") de todos os ApiGateway que apontam pra esse lambda. */
   routePatterns: string[];
 }
@@ -127,14 +126,12 @@ export function extractAzureFunctionMeta(stack: Stack, allStacks?: Stack[]): Azu
     .filter(c => c.type === 'Function.Lambda')
     .map(c => {
       const props = c.props as Record<string, unknown>;
-      const sym = toSym(c.id);
       return {
         constructId: c.id,
-        containerAppName: c.id.toLowerCase().replace(/[^a-z0-9-]/g, '-'),
+        functionAppName: c.id.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 40),
         handler: (props.handler as string) ?? 'dist/handler.handler',
         code: (props.code as string) ?? 'dist/',
         runtime: (props.runtime as string) ?? 'nodejs20',
-        imageParamName: `${sym}Image`,
         routePatterns: routesByLambda.get(c.id) ?? [],
       };
     });
@@ -172,9 +169,9 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
     subnetsByVpc.get(vnetId)!.push({ id: c.id, cidr: p.cidr as string, public: (p.public as boolean) ?? false });
   }
 
-  const hasLambda = stack.constructs.some(c => c.type === 'Function.Lambda' || c.type === 'Compute.Container');
+  const hasContainerApp = stack.constructs.some(c => c.type === 'Compute.Container');
   let sharedContainerEnvSym: string | null = null;
-  if (hasLambda) {
+  if (hasContainerApp) {
     sharedContainerEnvSym = 'sharedContainerEnv';
     resources.push({
       sym: sharedContainerEnvSym,
@@ -260,7 +257,7 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
   for (const name of functionImageParams) {
     params.push({ name, type: 'string', default: 'node:20-alpine' });
   }
-  if (hasLambda) {
+  if (hasContainerApp) {
     params.push({ name: 'acrServer', type: 'string', default: '' });
     params.push({ name: 'acrUser', type: 'string', default: '' });
     params.push({ name: 'acrPassword', type: 'string', default: '', secure: true });

@@ -1,17 +1,50 @@
 import { BaseConstruct, isRef } from '@iacmp/core';
 import type { Ref } from '@iacmp/core';
-import { expr, tag, toSym, crossParamName, resolveValue, resolveRef, SynthContext } from './shared';
+import { expr, tag, toSym, safeStorageName, crossParamName, resolveValue, resolveRef, SynthContext } from './shared';
 
 export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext): void {
-  const { resources, outputs, crossParams, functionImageParams } = ctx;
+  const { resources, outputs, crossParams } = ctx;
   const props = (construct.props ?? {}) as Record<string, unknown>;
   const sym = toSym(construct.id);
 
   switch (construct.type) {
     case 'Function.Lambda': {
       const environment = (props.environment as Record<string, string>) ?? {};
-      const imageParamName = `${sym}Image`;
-      functionImageParams.add(imageParamName);
+      const fnBaseName = construct.id.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 40);
+      const saPrefix = safeStorageName(construct.id + 'fn').slice(0, 11);
+      const saSym = `${sym}Sa`;
+      const planSym = `${sym}Plan`;
+
+      // Storage Account para AzureWebJobsStorage (name = prefix 11 chars + uniqueString 13 chars = 24 chars)
+      resources.push({
+        sym: saSym,
+        type: 'Microsoft.Storage/storageAccounts',
+        apiVersion: '2023-01-01',
+        name: expr(`'${saPrefix}\${uniqueString(resourceGroup().id)}'`),
+        location: 'location',
+        kind: 'StorageV2',
+        sku: { name: 'Standard_LRS' },
+        tags: tag(construct.id),
+        properties: {
+          allowBlobPublicAccess: false,
+          supportsHttpsTrafficOnly: true,
+          minimumTlsVersion: 'TLS1_2',
+        },
+      });
+
+      // App Service Plan (Consumption)
+      resources.push({
+        sym: planSym,
+        type: 'Microsoft.Web/serverfarms',
+        apiVersion: '2022-03-01',
+        name: `${fnBaseName}-plan`,
+        location: 'location',
+        kind: 'functionapp',
+        sku: { name: 'Y1', tier: 'Dynamic' },
+        tags: tag(construct.id),
+        properties: { reserved: true },
+      });
+
       const envVars = Object.entries(environment).map(([k, v]) => {
         const value = resolveValue(v, ctx.idx, crossParams);
         if (value === undefined || value === null) {
@@ -19,36 +52,42 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
         }
         return { name: k, value };
       });
+
+      const connStr = expr(`'DefaultEndpointsProtocol=https;AccountName=\${${saSym}.name};AccountKey=\${${saSym}.listKeys().keys[0].value};EndpointSuffix=core.windows.net'`);
+
+      const appSettings = [
+        { name: 'AzureWebJobsStorage', value: connStr },
+        { name: 'FUNCTIONS_EXTENSION_VERSION', value: '~4' },
+        { name: 'FUNCTIONS_WORKER_RUNTIME', value: 'node' },
+        { name: 'WEBSITE_RUN_FROM_PACKAGE', value: '1' },
+        ...envVars,
+      ];
+
+      // Function App
       resources.push({
         sym,
-        type: 'Microsoft.App/containerApps',
-        apiVersion: '2023-05-01',
-        name: construct.id.toLowerCase().replace(/[^a-z0-9-]/g, '-'),
+        type: 'Microsoft.Web/sites',
+        apiVersion: '2022-03-01',
+        name: expr(`'${fnBaseName}-\${uniqueString(resourceGroup().id)}'`),
         location: 'location',
+        kind: 'functionapp,linux',
         tags: tag(construct.id),
         identity: { type: 'SystemAssigned' },
         properties: {
-          managedEnvironmentId: expr(`empty(sharedCaeId) ? sharedContainerEnv.id : sharedCaeId`),
-          configuration: {
-            ingress: { external: true, targetPort: 3000 },
-            registries: expr(`empty(acrServer) ? [] : [{\n    server: acrServer\n    username: acrUser\n    passwordSecretRef: 'acr-pwd'\n  }]`),
-            secrets: expr(`empty(acrPassword) ? [] : [{\n    name: 'acr-pwd'\n    value: acrPassword\n  }]`),
+          serverFarmId: expr(`${planSym}.id`),
+          siteConfig: {
+            linuxFxVersion: 'Node|20',
+            appSettings,
           },
-          template: {
-            containers: [{
-              name: construct.id.toLowerCase(),
-              image: expr(imageParamName),
-              resources: { cpu: expr("json('0.25')"), memory: '0.5Gi' },
-              env: envVars,
-              probes: [{ type: 'Startup', tcpSocket: { port: 3000 }, periodSeconds: 5, failureThreshold: 30 }],
-            }],
-            scale: { minReplicas: 0, maxReplicas: 10 },
-          },
+          httpsOnly: true,
         },
       });
+
+      const fnAppNameOutputKey = `${construct.id.replace(/[^a-zA-Z0-9]/g, '')}FunctionAppName`;
       outputs.push({ name: `${construct.id}Id`, type: 'string', value: `${sym}.id` });
       outputs.push({ name: `${construct.id}PrincipalId`, type: 'string', value: `${sym}.identity.principalId` });
-      outputs.push({ name: crossParamName(construct.id, 'Fqdn'), type: 'string', value: `${sym}.properties.configuration.ingress.fqdn` });
+      outputs.push({ name: crossParamName(construct.id, 'Fqdn'), type: 'string', value: `${sym}.properties.defaultHostName` });
+      outputs.push({ name: fnAppNameOutputKey, type: 'string', value: `${sym}.name` });
       break;
     }
 
@@ -107,9 +146,14 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
         const backendName = `backend-${lambdaId.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
         backendNameMap.set(lambdaId, backendName);
         let backendUrl: string;
-        if (ctx.idx.get(lambdaId)) {
+        const lambdaConst = ctx.idx.get(lambdaId);
+        if (lambdaConst) {
           const lambdaSym = toSym(lambdaId);
-          backendUrl = expr(`'https://\${${lambdaSym}.properties.configuration.ingress.fqdn}'`);
+          if (lambdaConst.type === 'Function.Lambda') {
+            backendUrl = expr(`'https://\${${lambdaSym}.properties.defaultHostName}'`);
+          } else {
+            backendUrl = expr(`'https://\${${lambdaSym}.properties.configuration.ingress.fqdn}'`);
+          }
         } else {
           const fqdnParam = crossParamName(lambdaId, 'Fqdn');
           crossParams.set(fqdnParam, 'string');
@@ -124,7 +168,7 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
           properties: {
             url: backendUrl,
             protocol: 'http',
-            description: `Container App backend for ${lambdaId}`,
+            description: `Function App backend for ${lambdaId}`,
           },
         });
       }
@@ -205,15 +249,20 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
 
       if (authorizerLambdaId) {
         let authUrl: string;
-        if (ctx.idx.get(authorizerLambdaId)) {
+        const authConst = ctx.idx.get(authorizerLambdaId);
+        if (authConst) {
           const authFnSym = toSym(authorizerLambdaId);
-          authUrl = expr(`'https://\${${authFnSym}.properties.configuration.ingress.fqdn}'`);
+          if (authConst.type === 'Function.Lambda') {
+            authUrl = expr(`'https://\${${authFnSym}.properties.defaultHostName}'`);
+          } else {
+            authUrl = expr(`'https://\${${authFnSym}.properties.configuration.ingress.fqdn}'`);
+          }
         } else {
           const authFqdnParam = crossParamName(authorizerLambdaId, 'Fqdn');
           crossParams.set(authFqdnParam, 'string');
           authUrl = expr(`'https://\${${authFqdnParam}}'`);
         }
-        resources.push({ sym: `${sym}AuthorizerBackend`, type: 'Microsoft.ApiManagement/service/backends', apiVersion: '2023-05-01-preview', parent: sym, name: 'authorizer-backend', properties: { description: `Lambda authorizer backend (${authorizerLambdaId})`, url: authUrl, protocol: 'http' } });
+        resources.push({ sym: `${sym}AuthorizerBackend`, type: 'Microsoft.ApiManagement/service/backends', apiVersion: '2023-05-01-preview', parent: sym, name: 'authorizer-backend', properties: { description: `Function App authorizer backend (${authorizerLambdaId})`, url: authUrl, protocol: 'http' } });
       }
 
       outputs.push({ name: `${construct.id}Url`, type: 'string', value: `${sym}.properties.gatewayUrl` });
@@ -244,9 +293,14 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
         let targetUrl: unknown = '';
         const targetLambdaId = r.targetLambdaId as string | undefined;
         if (targetLambdaId) {
-          if (ctx.idx.get(targetLambdaId)) {
+          const targetConst = ctx.idx.get(targetLambdaId);
+          if (targetConst) {
             const lSym = toSym(targetLambdaId);
-            targetUrl = expr(`'https://\${${lSym}.properties.configuration.ingress.fqdn}/invoke'`);
+            if (targetConst.type === 'Function.Lambda') {
+              targetUrl = expr(`'https://\${${lSym}.properties.defaultHostName}/invoke'`);
+            } else {
+              targetUrl = expr(`'https://\${${lSym}.properties.configuration.ingress.fqdn}/invoke'`);
+            }
           } else {
             const fqdnParam = crossParamName(targetLambdaId, 'Fqdn');
             crossParams.set(fqdnParam, 'string');
@@ -303,7 +357,11 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
             const refConstruct = ctx.idx.get(refObj.constructId);
             if (refConstruct && (refConstruct.type === 'Function.Lambda' || refConstruct.type === 'Compute.Container')) {
               const lambdaSym = toSym(refObj.constructId);
-              uri = expr(`'https://\${${lambdaSym}.properties.configuration.ingress.fqdn}'`);
+              if (refConstruct.type === 'Function.Lambda') {
+                uri = expr(`'https://\${${lambdaSym}.properties.defaultHostName}'`);
+              } else {
+                uri = expr(`'https://\${${lambdaSym}.properties.configuration.ingress.fqdn}'`);
+              }
             } else if (!refConstruct) {
               const fqdnParam = crossParamName(refObj.constructId, 'Fqdn');
               crossParams.set(fqdnParam, 'string');
