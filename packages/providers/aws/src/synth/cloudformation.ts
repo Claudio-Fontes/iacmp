@@ -9,7 +9,7 @@ import {
 } from '@iacmp/core';
 import { type CloudFormationResource, type CloudFormationTemplate, type SynthContext } from './types';
 export type { CloudFormationResource, CloudFormationTemplate, SynthContext } from './types';
-import { validateResourceReferences, validateNoNullValues, validateHandlerEnvVarAccess } from './validation';
+import { validateResourceReferences, validateNoNullValues, validateHandlerEnvVarAccess, validateEnvVarRefs } from './validation';
 import type { ResourceNode, StackExport, StackGraph } from './graph';
 import { resourceRef } from './graph';
 import { emitCloudFormation } from './emit/cloudformation';
@@ -141,6 +141,8 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
       }
     }
   }
+  validateEnvVarRefs(universe, registry);
+
   // Lambdas que têm refs a AWS services no environment — sem Policy.IAM explícito,
   // a default role não inclui essas permissões e o runtime falha com AccessDeniedException.
   const dynamoRefLambdas = new Map<string, Set<string>>();

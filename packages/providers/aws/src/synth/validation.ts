@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type { BaseConstruct } from '@iacmp/core';
+import type { BaseConstruct, Stack } from '@iacmp/core';
 import { type CloudFormationResource, type SynthContext } from './types';
 import { isSamestackS3BucketRef } from './resolvers';
 
@@ -185,5 +185,46 @@ export function validateHandlerEnvVarAccess(constructs: BaseConstruct[], ctx: Sy
 
   if (errors.length > 0) {
     throw new Error(errors.join('\n'));
+  }
+}
+
+const ENV_VAR_PHYSICAL_ATTR: Record<string, string> = {
+  'Database.DynamoDB': 'Name',
+  'Storage.Bucket': 'Name',
+  'Messaging.Queue': 'QueueUrl',
+  'Messaging.Topic': 'TopicArn',
+  'Messaging.Stream': 'Name',
+  'Cache.Redis': 'Endpoint',
+  'Database.SQL': 'Endpoint',
+  'Secret.Vault': 'SecretArn',
+};
+
+export function validateEnvVarRefs(
+  universe: Stack[],
+  registry: Map<string, { stackName: string; type: string }>,
+): void {
+  const errors: string[] = [];
+  for (const stack of universe) {
+    for (const construct of stack.constructs) {
+      if (construct.type !== 'Function.Lambda') continue;
+      const env = (construct.props as Record<string, unknown>).environment as Record<string, unknown> | undefined;
+      if (!env) continue;
+      for (const [varName, value] of Object.entries(env)) {
+        if (typeof value !== 'string') continue;
+        const entry = registry.get(value);
+        if (!entry) continue;
+        const attr = ENV_VAR_PHYSICAL_ATTR[entry.type];
+        if (!attr) continue;
+        errors.push(
+          `Lambda "${construct.id}": environment.${varName} = '${value}' é o ID lógico, não o nome físico. ` +
+          `Use ref('${value}', '${attr}').`,
+        );
+      }
+    }
+  }
+  if (errors.length > 0) {
+    throw new Error(
+      `env vars com ID lógico em vez de ref() detectadas:\n- ${errors.join('\n- ')}`,
+    );
   }
 }
