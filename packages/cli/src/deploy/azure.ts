@@ -1,4 +1,4 @@
-import { execFileSync } from 'child_process';
+import { execFileSync, spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -381,7 +381,17 @@ export const azureExecutor: DeployExecutor = {
           execFileSync('docker', ['version', '--format', '{{.Client.Version}}'], { stdio: 'pipe' });
           dockerAvailable = true;
         } catch {
-          // Docker não disponível — usará ACR Tasks
+          // Docker instalado mas daemon parado → orienta o usuário em vez de silenciosamente
+          // cair no ACR Tasks (que pode estar bloqueado na subscription).
+          const cliCheck = spawnSync('docker', ['--version'], { encoding: 'utf-8' });
+          if (cliCheck.status === 0) {
+            throw new Error(
+              'Docker está instalado mas o daemon não está rodando.\n' +
+              'Inicie o Docker Desktop e tente novamente.\n' +
+              '(Alternativa: habilite ACR Tasks na sua subscription Azure.)'
+            );
+          }
+          // Docker não instalado — tenta ACR Tasks
         }
 
         if (dockerAvailable) {
