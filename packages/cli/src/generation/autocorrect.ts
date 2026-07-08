@@ -155,6 +155,21 @@ export function classifySynthError(output: string, files: GeneratedFile[], attem
       `Buckets de SAÍDA (outra stack, sem trigger) PODEM continuar como env var: \`process.env.PROCESSED_BUCKET_NAME\`. ` +
       `Retorne o JSON completo com TODOS os ${fileCount} arquivo(s) mas altere APENAS os handlers src/ (tentativa ${attempt} de ${maxRetries}).`;
   }
+  if (/env vars com ID l[oó]gico em vez de ref\(\)/.test(output)) {
+    const fixes = [...output.matchAll(/Lambda "([^"]+)": environment\.(\w+) = '([^']+)' [^.]+\. Use ref\('([^']+)', '([^']+)'\)/g)]
+      .map(m => `  ANTES: ${m[2]}: '${m[3]}'\n  DEPOIS: ${m[2]}: ref('${m[4]}', '${m[5]}')`);
+    const fixBlock = fixes.length > 0 ? fixes.join('\n') : '  (veja os pares Lambda/env var apontados acima)';
+    return `O synth detectou env vars com ID lógico em vez de ref():\n\n${output}\n\n` +
+      `ATENÇÃO — corrija APENAS as linhas de environment apontadas. NÃO altere resources, attachTo nem Policy.IAM:\n` +
+      `${fixBlock}\n\n` +
+      `Regra: em environment{}, NUNCA use string literal de construct ID. Use sempre ref(constructId, atributo):\n` +
+      `  TABLE_NAME: ref('ItemsTable', 'Name')        // DynamoDB\n` +
+      `  BUCKET_NAME: ref('MyBucket', 'Name')         // S3\n` +
+      `  QUEUE_URL: ref('MyQueue', 'QueueUrl')        // SQS\n` +
+      `  TOPIC_ARN: ref('MyTopic', 'TopicArn')        // SNS\n` +
+      `  REDIS_HOST: ref('MyCache', 'Endpoint')       // Redis\n` +
+      `Retorne o JSON completo com TODOS os ${fileCount} arquivo(s) (tentativa ${attempt} de ${maxRetries}).`;
+  }
   if (/n[ãa]o tem arquivo de origem|Handler\(s\) de Lambda sem arquivo de origem/.test(output)) {
     // Handler de Lambda sem arquivo src/ correspondente. Extrai os src/ esperados
     // do erro e exige EXPLICITAMENTE a criação de cada um.
