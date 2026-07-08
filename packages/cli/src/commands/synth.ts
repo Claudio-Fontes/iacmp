@@ -389,7 +389,8 @@ export default class Synth extends Command {
     if (provider === 'aws') {
       this.validateAwsTemplates(cwd, flags.stack);
     } else if (provider === 'azure') {
-      this.validateAzureTemplates(cwd, config.resourceGroup, flags.stack);
+      const rg = config.resourceGroup ?? (config.name ? `${config.name}-rg` : undefined);
+      this.validateAzureTemplates(cwd, rg, flags.stack);
     }
   }
 
@@ -483,7 +484,6 @@ export default class Synth extends Command {
       { encoding: 'utf-8' },
     );
     if (rgCheck.status !== 0) {
-      this.log(`  az deployment validate: resource group "${resourceGroup}" não existe — skipped.`);
       return;
     }
 

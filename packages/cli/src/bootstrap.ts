@@ -48,13 +48,16 @@ export function ensureProjectInitialized(cwd: string, options: BootstrapOptions 
   // 1. iacmp.json — accountTier free é o default seguro; o usuário muda para
   //    standard editando o arquivo quando a conta suportar (RDS cripto/backup).
   if (!hasConfig) {
-    const config = {
+    const config: Record<string, unknown> = {
       name: projectName,
       provider,
       region: 'us-east-1',
       language: 'typescript',
       accountTier: 'free',
     };
+    if (provider === 'azure') {
+      config['resourceGroup'] = `${projectName}-rg`;
+    }
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');
     created.push('iacmp.json');
   }
