@@ -9,6 +9,7 @@ export interface AIGeneratedResponse {
   deletions: string[];
   nextSteps: string[];
   warnings: string[];
+  config?: Record<string, string>;
 }
 
 // Limites defensivos para resposta da IA — evita estouro de memoria/disco
@@ -112,6 +113,16 @@ function validate(obj: unknown): AIGeneratedResponse {
     );
   }
 
+  const rawConfig = o['config'];
+  const config: Record<string, string> | undefined =
+    rawConfig && typeof rawConfig === 'object' && !Array.isArray(rawConfig)
+      ? Object.fromEntries(
+          Object.entries(rawConfig as Record<string, unknown>)
+            .filter(([, v]) => typeof v === 'string')
+            .map(([k, v]) => [k, v as string])
+        )
+      : undefined;
+
   return {
     explanation: o['explanation'] as string,
     files,
@@ -122,5 +133,6 @@ function validate(obj: unknown): AIGeneratedResponse {
     warnings: Array.isArray(o['warnings'])
       ? (o['warnings'] as unknown[]).filter((s): s is string => typeof s === 'string')
       : [],
+    config: config && Object.keys(config).length > 0 ? config : undefined,
   };
 }

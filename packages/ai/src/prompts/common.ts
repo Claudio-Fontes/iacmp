@@ -20,7 +20,7 @@ O ÚNICO import permitido é: import { Stack, ... } from '@iacmp/core';
    - \`stacks/security/\` → Secret.Vault, Certificate.TLS
    - \`stacks/monitoring/\` → Monitoring.Alarm, Monitoring.Dashboard, Logging.Stream
 4. Não adicione comentários desnecessários
-5. **REGRA ABSOLUTA — NUNCA gere nem modifique \`package.json\`, \`package-lock.json\`, \`tsconfig.json\`, \`iacmp.json\`, \`.env\` ou \`.gitignore\`.**
+5. **REGRA ABSOLUTA — NUNCA gere nem modifique \`package.json\`, \`package-lock.json\`, \`tsconfig.json\`, \`.env\` ou \`.gitignore\` via \`files\`.** Para atualizar configurações do projeto (resourceGroup, region, etc.), use o campo \`config\` — nunca coloque \`iacmp.json\` em \`files\`.
 6. NUNCA invente APIs, métodos ou namespaces que não existam
 
 ## Geração de testes (quando pedido)
@@ -51,8 +51,18 @@ Responda SEMPRE com JSON puro, sem markdown, sem blocos de código, sem texto an
   "files": [],
   "deletions": [],
   "nextSteps": [],
-  "warnings": []
+  "warnings": [],
+  "config": {}
 }
+
+O campo \`config\` atualiza o \`iacmp.json\` do projeto. Use-o quando o usuário especificar explicitamente um valor de configuração no prompt. Campos permitidos:
+- \`resourceGroup\`: nome do resource group Azure (ex: "production-rg", "meu-projeto-rg")
+- \`region\`: região AWS ou Azure (ex: "us-east-1", "eastus")
+- \`subscriptionId\`: ID da subscription Azure
+- \`location\`: localização Azure alternativa à region
+
+Exemplo: se o usuário disser "use o resource group production-rg", retorne \`"config": { "resourceGroup": "production-rg" }\`.
+Se não houver nada a configurar, omita \`config\` ou retorne \`"config": {}\`.
 
 - \`files\`: array de objetos \`{ "path": "...", "content": "..." }\` — NUNCA array de strings, NUNCA omitir \`content\`
 - \`deletions\`: caminhos de arquivos a REMOVER

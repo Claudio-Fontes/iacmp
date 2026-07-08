@@ -3,6 +3,35 @@ import * as path from 'path';
 import chalk from 'chalk';
 import { AIGeneratedResponse, writeGeneratedFiles, removeOrphanedGeneratedFiles } from '@iacmp/ai';
 
+const ALLOWED_CONFIG_KEYS = new Set([
+  'resourceGroup', 'region', 'accountTier', 'subscriptionId', 'tenantId', 'projectId', 'location',
+]);
+
+export function applyConfig(parsed: AIGeneratedResponse, cwd: string): void {
+  if (!parsed.config || Object.keys(parsed.config).length === 0) return;
+  const configPath = path.join(cwd, 'iacmp.json');
+  if (!fs.existsSync(configPath)) return;
+  let current: Record<string, unknown>;
+  try {
+    current = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+  } catch {
+    return;
+  }
+  let changed = false;
+  for (const [k, v] of Object.entries(parsed.config)) {
+    if (!ALLOWED_CONFIG_KEYS.has(k)) continue;
+    if (current[k] !== v) {
+      current[k] = v;
+      changed = true;
+    }
+  }
+  if (changed) {
+    fs.writeFileSync(configPath, JSON.stringify(current, null, 2) + '\n');
+    const keys = Object.keys(parsed.config).filter(k => ALLOWED_CONFIG_KEYS.has(k));
+    console.log(chalk.dim(`  iacmp.json atualizado: ${keys.join(', ')}`));
+  }
+}
+
 export type AskFn = (question: string) => Promise<string>;
 
 // Coleta todos os artefatos geráveis (stacks/**/*.ts e src/**/*.ts/.js) já
@@ -39,6 +68,7 @@ export async function persistInitial(
   ask: AskFn,
   preExistingGeneratedFiles: string[]
 ): Promise<string[]> {
+  if (!dryRun) applyConfig(parsed, cwd);
   const previouslyWritten = await writeGeneratedFiles(parsed.files, cwd, dryRun, ask);
   if (!dryRun && preExistingGeneratedFiles.length > 0) {
     const staleOrphans = removeOrphanedGeneratedFiles(preExistingGeneratedFiles, parsed.files, cwd);
@@ -58,6 +88,7 @@ export async function rewriteAndReconcile(
   cwd: string,
   previouslyWritten: string[]
 ): Promise<string[]> {
+  applyConfig(parsed, cwd);
   const written = await writeGeneratedFiles(parsed.files, cwd, false, async () => 'y');
   if (written.length === 0) return previouslyWritten;
   const orphans = removeOrphanedGeneratedFiles(previouslyWritten, parsed.files, cwd);
