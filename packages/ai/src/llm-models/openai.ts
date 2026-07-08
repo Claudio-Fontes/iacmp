@@ -51,25 +51,39 @@ export class OpenAIProvider implements AIProvider {
       openaiMessages.unshift({ role: 'system', content: SYSTEM_PROMPT });
     }
 
-    let emittedAny = false;
-    await withRetry(async () => {
-      if (emittedAny) throw Object.assign(new Error('stream interrompido após início — sem retry'), { noRetry: true });
+    let accumulated = '';
+    let attempts = 0;
+    const MAX_ATTEMPTS = 3;
 
-      const stream = await this.client.chat.completions.create({
-        model: this.model,
-        max_tokens: 12000,
-        temperature: this.temperature,
-        messages: openaiMessages,
-        stream: true,
-      });
+    while (attempts < MAX_ATTEMPTS) {
+      attempts++;
+      try {
+        // Se já temos parte da resposta, pede ao modelo para continuar de onde parou
+        const msgs = accumulated
+          ? [...openaiMessages, { role: 'assistant' as const, content: accumulated }, { role: 'user' as const, content: 'Continue exatamente de onde parou, sem repetir o que já foi gerado.' }]
+          : openaiMessages;
 
-      for await (const chunk of stream) {
-        const delta = chunk.choices[0]?.delta?.content;
-        if (delta) {
-          emittedAny = true;
-          onChunk(delta);
+        const stream = await this.client.chat.completions.create({
+          model: this.model,
+          max_tokens: 12000,
+          temperature: this.temperature,
+          messages: msgs,
+          stream: true,
+        });
+
+        for await (const chunk of stream) {
+          const delta = chunk.choices[0]?.delta?.content;
+          if (delta) {
+            accumulated += delta;
+            onChunk(delta);
+          }
         }
+        return; // stream completou normalmente
+      } catch (err: any) {
+        const retryable = err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT' || err.code === 'ERR_STREAM_PREMATURE_CLOSE' || err.status === 500 || err.status === 502 || err.status === 503;
+        if (!retryable || attempts >= MAX_ATTEMPTS) throw err;
+        await new Promise(r => setTimeout(r, 500 * 2 ** (attempts - 1)));
       }
-    });
+    }
   }
 }
