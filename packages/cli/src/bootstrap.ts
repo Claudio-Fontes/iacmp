@@ -57,6 +57,7 @@ export function ensureProjectInitialized(cwd: string, options: BootstrapOptions 
     };
     if (provider === 'azure') {
       config['resourceGroup'] = `${projectName}-rg`;
+      config['azureRegion'] = 'eastus2';
     }
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');
     created.push('iacmp.json');
