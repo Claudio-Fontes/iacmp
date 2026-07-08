@@ -83,7 +83,8 @@ export function searchKnowledgeBase(query: string, provider: string, limit = 2):
     for (const { row } of top) {
       const content = JSON.parse(row.content) as {
         stacks: Record<string, string>;
-        notes?: string[];
+        handlers?: Record<string, string>;
+        notes?: string | string[];
       };
       const constructs = JSON.parse(row.constructs) as string[];
       parts.push(`\n### ${row.title}`);
@@ -91,9 +92,18 @@ export function searchKnowledgeBase(query: string, provider: string, limit = 2):
       for (const [filePath, code] of Object.entries(content.stacks)) {
         parts.push(`\`\`\`typescript\n// ${filePath}\n${truncate(code)}\n\`\`\``);
       }
-      if (content.notes?.length) {
-        const rules = content.notes.slice(0, 3).map(n => `- ${n}`).join('\n');
-        parts.push(`Regras:\n${rules}`);
+      if (content.handlers) {
+        for (const [filePath, code] of Object.entries(content.handlers)) {
+          parts.push(`\`\`\`typescript\n// ${filePath}\n${truncate(code, 40)}\n\`\`\``);
+        }
+      }
+      const notesArr = Array.isArray(content.notes)
+        ? content.notes
+        : typeof content.notes === 'string' && content.notes.length > 0
+          ? [content.notes]
+          : [];
+      if (notesArr.length) {
+        parts.push(`Regras:\n${notesArr.slice(0, 3).map(n => `- ${n}`).join('\n')}`);
       }
     }
     return parts.join('\n');

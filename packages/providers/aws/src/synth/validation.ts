@@ -54,6 +54,49 @@ export function validateResourceReferences(resources: Record<string, CloudFormat
 }
 
 /**
+ * Detecta handlers de CREATE/POST que leem body.id em vez de gerar UUID server-side.
+ * IDs gerados pelo cliente não têm unicidade garantida e causam colisões silenciosas
+ * ou PutItem com partition key undefined quando o cliente não manda o campo.
+ * O guard lê src/*.ts e verifica se create/post handlers contêm body.id sem UUID.
+ */
+export function validateCreateHandlerUUID(projectDir: string = process.cwd()): void {
+  const srcDir = path.join(projectDir, 'src');
+  if (!fs.existsSync(srcDir)) return;
+
+  let files: string[];
+  try {
+    files = fs.readdirSync(srcDir)
+      .filter(f => f.endsWith('.ts') || f.endsWith('.js'))
+      .map(f => path.join(srcDir, f));
+  } catch {
+    return;
+  }
+
+  const CREATE_FILE = /create|insert|post/i;
+  const UUID_PRESENT = /randomUUID|uuid\(\)|uuidv4|nanoid|cuid/i;
+  const BODY_ID = /body\.id\b|body\["id"\]|body\['id'\]/;
+
+  const errors: string[] = [];
+  for (const file of files) {
+    if (!CREATE_FILE.test(path.basename(file))) continue;
+    let content: string;
+    try { content = fs.readFileSync(file, 'utf-8'); } catch { continue; }
+
+    if (BODY_ID.test(content) && !UUID_PRESENT.test(content)) {
+      const rel = path.relative(projectDir, file);
+      errors.push(
+        `Handler ${rel}: lê body.id sem gerar UUID server-side. ` +
+        `IDs DEVEM ser gerados internamente: \`const id = crypto.randomUUID();\`. ` +
+        `NUNCA use body.id como chave primária — o cliente pode mandar undefined, duplicado ou vazio.`,
+      );
+    }
+  }
+  if (errors.length > 0) {
+    throw new Error(`Handlers de CREATE com body.id sem UUID detectados:\n- ${errors.join('\n- ')}`);
+  }
+}
+
+/**
  * Detecta null/undefined em qualquer propriedade dos resources ANTES do deploy.
  * Causa típica: a IA referencia uma propriedade que não existe no construct
  * (ex: `secretArn` em Secret.Vault), que em TS é `undefined` e vira `null` no
@@ -188,7 +231,8 @@ export function validateHandlerEnvVarAccess(constructs: BaseConstruct[], ctx: Sy
   }
 }
 
-const ENV_VAR_PHYSICAL_ATTR: Record<string, string> = {
+// Atributo canônico por tipo de construct — usado quando env var é string literal (ID lógico)
+const CONSTRUCT_DEFAULT_ATTR: Record<string, string> = {
   'Database.DynamoDB': 'Name',
   'Storage.Bucket': 'Name',
   'Messaging.Queue': 'QueueUrl',
@@ -199,32 +243,157 @@ const ENV_VAR_PHYSICAL_ATTR: Record<string, string> = {
   'Secret.Vault': 'SecretArn',
 };
 
+// Regra geral: sufixo do nome da env var → atributo esperado do ref().
+// Cobre TODOS os padrões de nomenclatura comuns — sem exceções por caso.
+// O atributo 'Arn' é EXCLUSIVO de resources[] em Policy.IAM, nunca em environment{}.
+const ENV_SUFFIX_TO_ATTR: Array<{ suffix: RegExp; expected: string[]; suggest: string }> = [
+  { suffix: /_NAME$/,             expected: ['Name'],                             suggest: 'Name' },
+  { suffix: /_TOPIC_ARN$/,        expected: ['TopicArn', 'Arn'],                  suggest: 'TopicArn' },
+  { suffix: /_SECRET_ARN$/,       expected: ['SecretArn', 'Arn'],                 suggest: 'SecretArn' },
+  { suffix: /_ARN$/,              expected: ['Arn', 'TopicArn', 'SecretArn'],     suggest: 'Arn' },
+  { suffix: /_URL$/,              expected: ['QueueUrl', 'Url', 'Endpoint'],      suggest: 'QueueUrl' },
+  { suffix: /_(HOST|ENDPOINT)$/,  expected: ['Endpoint', 'Url'],                  suggest: 'Endpoint' },
+  { suffix: /_PORT$/,             expected: ['Port'],                             suggest: 'Port' },
+  { suffix: /_PASSWORD$/,         expected: ['Password'],                         suggest: 'Password' },
+  { suffix: /_(USERNAME|USER)$/,  expected: ['Username'],                         suggest: 'Username' },
+  { suffix: /_(CONNECTION|CONN)_?STRING$/i, expected: ['ConnectionString'],       suggest: 'ConnectionString' },
+];
+
+/**
+ * Detecta handlers de UPDATE/PUT que usam UpdateExpression sem ExpressionAttributeNames.
+ * Qualquer nome de campo pode ser palavra reservada do DynamoDB (item, name, value,
+ * status, size, type, data, key, etc.). Sem o alias #f=fieldName, o deploy sobe mas
+ * o PUT falha em runtime com ValidationException para qualquer campo reservado.
+ */
+export function validateUpdateHandlerExpression(projectDir: string = process.cwd()): void {
+  const srcDir = path.join(projectDir, 'src');
+  if (!fs.existsSync(srcDir)) return;
+
+  let files: string[];
+  try {
+    files = fs.readdirSync(srcDir)
+      .filter(f => f.endsWith('.ts') || f.endsWith('.js'))
+      .map(f => path.join(srcDir, f));
+  } catch {
+    return;
+  }
+
+  const UPDATE_FILE = /update|put|patch/i;
+  const HAS_UPDATE_EXPR = /UpdateExpression/;
+  const HAS_EXPR_NAMES = /ExpressionAttributeNames/;
+
+  const errors: string[] = [];
+  for (const file of files) {
+    if (!UPDATE_FILE.test(path.basename(file))) continue;
+    let content: string;
+    try { content = fs.readFileSync(file, 'utf-8'); } catch { continue; }
+
+    if (HAS_UPDATE_EXPR.test(content) && !HAS_EXPR_NAMES.test(content)) {
+      const rel = path.relative(projectDir, file);
+      errors.push(
+        `Handler ${rel}: usa UpdateExpression sem ExpressionAttributeNames. ` +
+        `Qualquer campo pode ser palavra reservada do DynamoDB (item, name, value, status...). ` +
+        `Use o padrão com alias: UpdateExpression: 'SET #f0 = :v0', ExpressionAttributeNames: { '#f0': fieldName }.`,
+      );
+    }
+  }
+  if (errors.length > 0) {
+    throw new Error(`Handlers de UPDATE sem ExpressionAttributeNames detectados:\n- ${errors.join('\n- ')}`);
+  }
+}
+
+/**
+ * Bloqueia partitionKeyType/sortKeyType 'N' em tabelas DynamoDB.
+ * IDs vindos de path params, UUID, slug e hash são sempre strings — 'N' quase
+ * nunca é o tipo certo e causa ValidationException em runtime. O modelo 'S'
+ * é o default universal; 'N' deve ser explicitamente justificado no prompt.
+ */
+export function validateDynamoKeyTypes(universe: Stack[]): void {
+  const errors: string[] = [];
+  for (const stack of universe) {
+    for (const construct of stack.constructs) {
+      if (construct.type !== 'Database.DynamoDB') continue;
+      const props = construct.props as Record<string, unknown>;
+      if (props.partitionKeyType === 'N') {
+        errors.push(
+          `Database.DynamoDB "${construct.id}": partitionKeyType 'N' (Number) raramente é correto. ` +
+          `IDs de CRUD (UUID, slug, path param) são SEMPRE string → use partitionKeyType: 'S'. ` +
+          `Se a chave for realmente um número (ex: timestamp numérico), omita este campo pois o default já é 'S'.`,
+        );
+      }
+      if (props.sortKeyType === 'N') {
+        errors.push(
+          `Database.DynamoDB "${construct.id}": sortKeyType 'N' raramente é correto — use 'S' para sort keys de string/data.`,
+        );
+      }
+    }
+  }
+  if (errors.length > 0) {
+    throw new Error(`partitionKeyType/sortKeyType 'N' detectado:\n- ${errors.join('\n- ')}`);
+  }
+}
+
+function expectedAttrForVarName(varName: string): { suggest: string } | null {
+  for (const rule of ENV_SUFFIX_TO_ATTR) {
+    if (rule.suffix.test(varName)) return rule;
+  }
+  return null;
+}
+
+function attrIsAllowed(varName: string, attribute: string): boolean {
+  for (const rule of ENV_SUFFIX_TO_ATTR) {
+    if (rule.suffix.test(varName)) return rule.expected.includes(attribute);
+  }
+  return true; // sem regra para esse sufixo → qualquer atributo é permitido
+}
+
 export function validateEnvVarRefs(
   universe: Stack[],
   registry: Map<string, { stackName: string; type: string }>,
 ): void {
-  const errors: string[] = [];
+  const stringErrors: string[] = [];
+  const attrErrors: string[] = [];
   for (const stack of universe) {
     for (const construct of stack.constructs) {
       if (construct.type !== 'Function.Lambda') continue;
       const env = (construct.props as Record<string, unknown>).environment as Record<string, unknown> | undefined;
       if (!env) continue;
       for (const [varName, value] of Object.entries(env)) {
-        if (typeof value !== 'string') continue;
-        const entry = registry.get(value);
-        if (!entry) continue;
-        const attr = ENV_VAR_PHYSICAL_ATTR[entry.type];
-        if (!attr) continue;
-        errors.push(
-          `Lambda "${construct.id}": environment.${varName} = '${value}' é o ID lógico, não o nome físico. ` +
-          `Use ref('${value}', '${attr}').`,
-        );
+        // Caso 1: ID lógico como string literal — o modelo esqueceu de usar ref()
+        if (typeof value === 'string') {
+          const entry = registry.get(value);
+          if (!entry) continue;
+          const attr = CONSTRUCT_DEFAULT_ATTR[entry.type];
+          if (!attr) continue;
+          stringErrors.push(
+            `Lambda "${construct.id}": environment.${varName} = '${value}' é o ID lógico, não o valor físico. ` +
+            `Use ref('${value}', '${attr}').`,
+          );
+          continue;
+        }
+        // Caso 2: ref() com atributo que não bate com o sufixo do nome da env var
+        if (value && typeof value === 'object' && (value as Record<string, unknown>).kind === 'iacmp:ref') {
+          const r = value as { constructId: string; attribute: string };
+          if (!attrIsAllowed(varName, r.attribute)) {
+            const rule = expectedAttrForVarName(varName)!;
+            attrErrors.push(
+              `Lambda "${construct.id}": environment.${varName} usa ref('${r.constructId}', '${r.attribute}') ` +
+              `mas o sufixo "${varName}" exige atributo '${rule.suggest}'. ` +
+              `Corrija para ref('${r.constructId}', '${rule.suggest}').`,
+            );
+          }
+        }
       }
     }
   }
-  if (errors.length > 0) {
+  if (stringErrors.length > 0) {
     throw new Error(
-      `env vars com ID lógico em vez de ref() detectadas:\n- ${errors.join('\n- ')}`,
+      `env vars com ID lógico em vez de ref() detectadas:\n- ${stringErrors.join('\n- ')}`,
+    );
+  }
+  if (attrErrors.length > 0) {
+    throw new Error(
+      `env vars com atributo errado em ref() detectadas:\n- ${attrErrors.join('\n- ')}`,
     );
   }
 }

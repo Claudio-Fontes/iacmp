@@ -9,7 +9,7 @@ import {
 } from '@iacmp/core';
 import { type CloudFormationResource, type CloudFormationTemplate, type SynthContext } from './types';
 export type { CloudFormationResource, CloudFormationTemplate, SynthContext } from './types';
-import { validateResourceReferences, validateNoNullValues, validateHandlerEnvVarAccess, validateEnvVarRefs } from './validation';
+import { validateResourceReferences, validateNoNullValues, validateHandlerEnvVarAccess, validateEnvVarRefs, validateDynamoKeyTypes, validateCreateHandlerUUID, validateUpdateHandlerExpression } from './validation';
 import type { ResourceNode, StackExport, StackGraph } from './graph';
 import { resourceRef } from './graph';
 import { emitCloudFormation } from './emit/cloudformation';
@@ -141,7 +141,12 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
       }
     }
   }
-  validateEnvVarRefs(universe, registry);
+  // Coleta TODOS os erros de constructs antes de lançar — o modelo vê tudo de uma
+  // vez e corrige em uma rodada, em vez de corrigir um erro por tentativa.
+  const constructErrors: string[] = [];
+  try { validateEnvVarRefs(universe, registry); } catch (e) { constructErrors.push((e as Error).message); }
+  try { validateDynamoKeyTypes(universe); } catch (e) { constructErrors.push((e as Error).message); }
+  if (constructErrors.length > 0) throw new Error(constructErrors.join('\n\n'));
 
   // Lambdas que têm refs a AWS services no environment — sem Policy.IAM explícito,
   // a default role não inclui essas permissões e o runtime falha com AccessDeniedException.
@@ -191,7 +196,12 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
   // Guard: detecta handlers .ts que leem process.env de env vars omitidas pelo
   // synth (omitidas porque referenciam o bucket-trigger — evitar ciclo CFN).
   // O modelo de IA frequentemente gera essa leitura; sem o guard só falha em runtime.
-  validateHandlerEnvVarAccess(stack.constructs, ctx);
+  // Coleta TODOS os erros de handlers antes de lançar — mesma lógica dos constructs.
+  const handlerErrors: string[] = [];
+  try { validateHandlerEnvVarAccess(stack.constructs, ctx); } catch (e) { handlerErrors.push((e as Error).message); }
+  try { validateCreateHandlerUUID(); } catch (e) { handlerErrors.push((e as Error).message); }
+  try { validateUpdateHandlerExpression(); } catch (e) { handlerErrors.push((e as Error).message); }
+  if (handlerErrors.length > 0) throw new Error(handlerErrors.join('\n\n'));
 
   for (const construct of stack.constructs) {
     const entries = synthesizeConstruct(construct, ctx);

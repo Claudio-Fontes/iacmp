@@ -15,7 +15,9 @@ export const REVIEW_PROMPT = (fileCount: number): string =>
   `3. CRUD COMPLETO: todas as operações pedidas (listar, obter, criar, atualizar, deletar) existem e estão wireadas nas rotas.\n` +
   `4. SCHEMA E SQL: a tabela tem TODOS os campos da spec; o handler de listagem cria a tabela (CREATE TABLE IF NOT EXISTS) com todos os campos; INSERT/UPDATE leem e escrevem todos os campos; a contagem de colunas BATE com a de valores ($1,$2,...); SQL parametrizado.\n` +
   `5. REFERÊNCIAS: env vars de banco usam o id real do Database (ex: AppDB.Endpoint); rotas usam os lambdaId reais.\n` +
-  `6. IAM: toda Lambda que acessa um serviço AWS (DynamoDB, S3, SQS, SNS, Secrets Manager, etc.) TEM uma Policy.IAM anexada (attachTo) com as actions mínimas necessárias? Sem isso a Lambda dá AccessDenied em runtime. Se faltar, ADICIONE a Policy.IAM.\n\n` +
+  `6. IAM: toda Lambda que acessa um serviço AWS (DynamoDB, S3, SQS, SNS, Secrets Manager, etc.) TEM uma Policy.IAM anexada (attachTo) com as actions mínimas necessárias? Sem isso a Lambda dá AccessDenied em runtime. Se faltar, ADICIONE a Policy.IAM.\n` +
+  `7. UUID NO CREATE: o handler de criação (POST/create) gera o ID INTERNAMENTE com crypto.randomUUID() — NUNCA espera que o cliente mande um "id" no body. Verifique: o handler tem algo como \`const id = crypto.randomUUID();\` (ou uuid lib) antes do PutItem/INSERT? Se não, CORRIJA.\n` +
+  `8. DYNAMODB UPDATE — ExpressionAttributeNames OBRIGATÓRIO: o handler de update usa o padrão \`#f0 = :v0\` (com ExpressionAttributeNames mapeando os alias)? Se usar \`SET fieldName = :fieldName\` direto (sem alias #), CORRIJA — \`item\`, \`name\`, \`value\`, \`status\` e outros são palavras reservadas e quebram em runtime.\n\n` +
   `Se encontrar QUALQUER defeito, retorne o JSON COMPLETO CORRIGIDO com os ${fileCount} arquivo(s) (todos, não só os corrigidos). Se estiver tudo perfeito, retorne exatamente o mesmo JSON. Responda APENAS com o JSON, sem texto antes ou depois.`;
 
 /**
@@ -128,9 +130,10 @@ export function buildHandlerTsCorrection(errors: string[], fileCount: number): s
  */
 export function classifySynthError(output: string, files: GeneratedFile[], attempt: number, maxRetries: number): string {
   const fileCount = files.length;
+  const suffix = `\nRetorne o JSON completo com TODOS os ${fileCount} arquivo(s) (tentativa ${attempt} de ${maxRetries}).`;
+
+  // Erros exclusivos: exigem reestruturação completa — retornam imediatamente sozinhos.
   if (/[Dd]epend[êe]ncia circular entre stacks/.test(output)) {
-    // Ciclo cross-stack: a correção NÃO é mudar "um trecho" — é REESTRUTURAR
-    // os arquivos (mover os constructs interdependentes pra mesma stack).
     return `O comando "iacmp synth" falhou com DEPENDÊNCIA CIRCULAR entre stacks:\n\n${output}\n\n` +
       `Isso NÃO se conserta mudando uma linha: é preciso REESTRUTURAR os arquivos. ` +
       `MOVA para a MESMA stack APENAS o par de constructs com referência mútua apontado acima ` +
@@ -144,8 +147,6 @@ export function classifySynthError(output: string, files: GeneratedFile[], attem
       `Retorne o JSON completo com o novo conjunto de arquivos (tentativa ${attempt} de ${maxRetries}).`;
   }
   if (/usa process\.env\.\w+ mas essa env var é omitida pelo synth/.test(output)) {
-    // Handler usa process.env do bucket-trigger (omitida pelo synth para evitar ciclo CFN).
-    // A estrutura de stacks ESTÁ CORRETA — NÃO reorganize os arquivos de stack.
     return `O synth detectou que um handler usa process.env que foi omitido pelo synth:\n\n${output}\n\n` +
       `ATENÇÃO: a estrutura dos arquivos de stack ESTÁ CORRETA — NÃO mova constructs, NÃO reorganize os arquivos em stacks/. ` +
       `Corrija APENAS o handler em src/: ` +
@@ -155,38 +156,99 @@ export function classifySynthError(output: string, files: GeneratedFile[], attem
       `Buckets de SAÍDA (outra stack, sem trigger) PODEM continuar como env var: \`process.env.PROCESSED_BUCKET_NAME\`. ` +
       `Retorne o JSON completo com TODOS os ${fileCount} arquivo(s) mas altere APENAS os handlers src/ (tentativa ${attempt} de ${maxRetries}).`;
   }
+
+  // Erros combináveis: coletados todos de uma vez para o modelo corrigir numa rodada.
+  const corrections: string[] = [];
+
   if (/env vars com ID l[oó]gico em vez de ref\(\)/.test(output)) {
     const fixes = [...output.matchAll(/Lambda "([^"]+)": environment\.(\w+) = '([^']+)' [^.]+\. Use ref\('([^']+)', '([^']+)'\)/g)]
       .map(m => `  ANTES: ${m[2]}: '${m[3]}'\n  DEPOIS: ${m[2]}: ref('${m[4]}', '${m[5]}')`);
     const fixBlock = fixes.length > 0 ? fixes.join('\n') : '  (veja os pares Lambda/env var apontados acima)';
-    return `O synth detectou env vars com ID lógico em vez de ref():\n\n${output}\n\n` +
-      `ATENÇÃO — corrija APENAS as linhas de environment apontadas. NÃO altere resources, attachTo nem Policy.IAM:\n` +
-      `${fixBlock}\n\n` +
-      `Regra: em environment{}, NUNCA use string literal de construct ID. Use sempre ref(constructId, atributo):\n` +
-      `  TABLE_NAME: ref('ItemsTable', 'Name')        // DynamoDB\n` +
-      `  BUCKET_NAME: ref('MyBucket', 'Name')         // S3\n` +
-      `  QUEUE_URL: ref('MyQueue', 'QueueUrl')        // SQS\n` +
-      `  TOPIC_ARN: ref('MyTopic', 'TopicArn')        // SNS\n` +
-      `  REDIS_HOST: ref('MyCache', 'Endpoint')       // Redis\n` +
-      `Retorne o JSON completo com TODOS os ${fileCount} arquivo(s) (tentativa ${attempt} de ${maxRetries}).`;
+    corrections.push(
+      `[PROBLEMA: env vars com ID lógico em vez de ref()]\n` +
+      `Corrija APENAS as linhas de environment apontadas. NÃO altere resources, attachTo nem Policy.IAM:\n` +
+      `${fixBlock}\n` +
+      `Regra: em environment{}, NUNCA use string literal de construct ID:\n` +
+      `  TABLE_NAME: ref('ItemsTable', 'Name'), QUEUE_URL: ref('MyQueue', 'QueueUrl'), REDIS_HOST: ref('MyCache', 'Endpoint')`
+    );
   }
+  if (/env vars com atributo errado em ref\(\)/.test(output)) {
+    const fixes = [...output.matchAll(/Lambda "([^"]+)": environment\.(\w+) usa ref\('([^']+)', '(\w+)'\) mas deveria ser ref\('([^']+)', '(\w+)'\)/g)]
+      .map(m => `  ANTES: ${m[2]}: ref('${m[3]}', '${m[4]}')\n  DEPOIS: ${m[2]}: ref('${m[5]}', '${m[6]}')`);
+    const fixBlock = fixes.length > 0 ? fixes.join('\n') : '  (veja os pares apontados acima)';
+    corrections.push(
+      `[PROBLEMA: atributo errado em ref()]\n` +
+      `Troque o atributo do ref() nas linhas apontadas:\n` +
+      `${fixBlock}\n` +
+      `  TABLE_NAME → 'Name', QUEUE_URL → 'QueueUrl', TOPIC_ARN → 'TopicArn'. 'Arn' é EXCLUSIVO de resources[] em Policy.IAM.`
+    );
+  }
+  if (/partitionKeyType\/sortKeyType 'N' detectado/.test(output)) {
+    corrections.push(
+      `[PROBLEMA: partitionKeyType 'N']\n` +
+      `Troque para 'S' (ou omita — default é 'S'). IDs de CRUD são SEMPRE string (UUID, path param).`
+    );
+  }
+  if (/Handlers de CREATE com body\.id sem UUID detectados/.test(output)) {
+    corrections.push(
+      `[PROBLEMA: handler de CREATE lê body.id sem gerar UUID]\n` +
+      `  ANTES: const id = body.id;\n` +
+      `  DEPOIS: const id = crypto.randomUUID();\n` +
+      `O ID DEVE ser gerado pelo backend — nunca vir do cliente.`
+    );
+  }
+  if (/Handlers de UPDATE sem ExpressionAttributeNames detectados/.test(output)) {
+    corrections.push(
+      `[PROBLEMA: handler de UPDATE sem ExpressionAttributeNames]\n` +
+      `Use SEMPRE o padrão com alias:\n` +
+      `  const fields = Object.entries(body).filter(([k]) => k !== 'id');\n` +
+      `  const expr = 'SET ' + fields.map(([k], i) => \`#f\${i} = :v\${i}\`).join(', ');\n` +
+      `  const names = {}; const vals = {};\n` +
+      `  fields.forEach(([k,v],i) => { names[\`#f\${i}\`]=k; vals[\`:v\${i}\`]=v; });\n` +
+      `  UpdateExpression: expr, ExpressionAttributeNames: names, ExpressionAttributeValues: vals\n` +
+      `NUNCA escreva SET fieldName = :value direto — qualquer campo pode ser palavra reservada.`
+    );
+  }
+  if (/ref is not defined|Cannot find name ['"]ref['"]/.test(output)) {
+    const affectedFiles = [...output.matchAll(/[•·*\-]\s*([\w/.-]+\.ts):\s*(?:ref is not defined|Cannot find name .ref.)/g)]
+      .map(m => m[1]);
+    const fileList = affectedFiles.length > 0 ? affectedFiles.join(', ') : '(stacks listadas acima)';
+    corrections.push(
+      `[PROBLEMA: \`ref\` não importado em ${fileList}]\n` +
+      `  ANTES: import { Stack, Fn, Policy } from '@iacmp/core';\n` +
+      `  DEPOIS: import { Stack, Fn, Policy, ref } from '@iacmp/core';\n` +
+      `Toda stack que chama ref() DEVE importá-lo de @iacmp/core.`
+    );
+  }
+
+  if (corrections.length > 0) {
+    const header = corrections.length > 1
+      ? `O synth detectou ${corrections.length} PROBLEMAS — corrija TODOS de uma vez:\n\n${output}\n\n`
+      : `O synth detectou um problema:\n\n${output}\n\n`;
+    return header + corrections.join('\n\n') + suffix;
+  }
+
   if (/n[ãa]o tem arquivo de origem|Handler\(s\) de Lambda sem arquivo de origem/.test(output)) {
-    // Handler de Lambda sem arquivo src/ correspondente. Extrai os src/ esperados
-    // do erro e exige EXPLICITAMENTE a criação de cada um.
     const missingSrc = [
       ...new Set([...output.matchAll(/esperado (src\/[\w./-]+\.ts)/g)].map(m => m[1])),
     ];
     const list = missingSrc.length > 0
       ? missingSrc.map(p => `  • ${p}`).join('\n')
       : '  • (veja os caminhos src/ apontados no erro acima)';
-    return `O comando "iacmp synth" falhou porque handlers de Lambda NÃO têm arquivo de origem:\n\n${output}\n\n` +
-      `A CAUSA é arquivo FALTANDO, não path errado. AÇÃO OBRIGATÓRIA: CRIE cada arquivo de handler abaixo, ` +
-      `exportando a função \`handler\` (ex: \`export const handler = async (event) => { ... }\`):\n${list}\n\n` +
-      `NÃO altere o campo "handler" nas stacks para contornar o erro — o path está CORRETO; o que falta é o arquivo src/. ` +
-      `Cada Fn.Lambda com \`handler: 'dist/X.handler'\` (ou 'src/X.handler') EXIGE um src/X.ts com a mesma raiz de nome. ` +
-      `Retorne o JSON completo com TODAS as ${fileCount} stack(s)/arquivo(s) anteriores MAIS os novos arquivos src/ criados acima ` +
-      `(tentativa ${attempt} de ${maxRetries}).`;
+    corrections.push(
+      `[PROBLEMA: handlers de Lambda sem arquivo de origem]\n` +
+      `CRIE cada arquivo de handler abaixo, exportando a função \`handler\`:\n${list}\n` +
+      `NÃO altere o campo "handler" nas stacks — o path está CORRETO; o que falta é o arquivo src/.`
+    );
   }
+
+  if (corrections.length > 0) {
+    const header = corrections.length > 1
+      ? `O synth detectou ${corrections.length} PROBLEMAS — corrija TODOS de uma vez:\n\n${output}\n\n`
+      : `O synth detectou um problema:\n\n${output}\n\n`;
+    return header + corrections.join('\n\n') + suffix;
+  }
+
   return `O comando "iacmp synth" falhou com o seguinte erro:\n\n${output}\n\n` +
     `A geração anterior está ERRADA no ponto apontado acima — NÃO retorne o mesmo código: ` +
     `MUDE especificamente o trecho que causa o erro (tentativa ${attempt} de ${maxRetries}). ` +

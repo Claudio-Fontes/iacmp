@@ -1,7 +1,10 @@
 export const COMMON = `
 ## REGRA ABSOLUTA — imports
 NUNCA use aws-cdk-lib, iacmp-core, constructs, @aws-cdk ou qualquer outro pacote externo.
-O ÚNICO import permitido é: import { Stack, ... } from '@iacmp/core';
+O ÚNICO import permitido é: \`import { Stack, ... } from '@iacmp/core';\`
+**SEMPRE inclua \`ref\` no import se a stack usar \`ref()\` em qualquer lugar:**
+\`import { Stack, Fn, Policy, ref } from '@iacmp/core';\`
+**NUNCA use funções auxiliares (factory/helper) que recebem \`stack\` como parâmetro** — declare os constructs diretamente no escopo do módulo para não perder imports.
 
 ## Regras de geração de código
 
@@ -104,7 +107,61 @@ environment: { TABLE_NAME: 'ItemsTable' }
 // CORRETO — ref() resolve para o nome físico gerado no deploy
 environment: { TABLE_NAME: ref('ItemsTable', 'Name') }
 \`\`\`
-Atributos que OBRIGATORIAMENTE usam \`ref()\` em \`environment\`: \`Name\` (DynamoDB/S3/Bucket), \`Arn\`, \`Url\`, \`Endpoint\`, \`Port\`, \`ConnectionString\`, \`QueueUrl\`, \`TopicArn\`, \`SecretArn\`, \`Password\`, \`Username\`. String literal só é válida para valores que **não mudam por recurso** (ex: \`DB_NAME: 'postgres'\`, \`REGION: 'us-east-1'\`, \`LOG_LEVEL: 'info'\`).
+**REGRA GERAL de atributos em \`environment{}\` — o sufixo do nome da variável define o atributo:**
+| Sufixo da variável | Atributo correto em \`ref()\` | Exemplo |
+|---|---|---|
+| \`_NAME\` | \`'Name'\` | \`TABLE_NAME: ref('ItemsTable', 'Name')\` |
+| \`_ARN\` | \`'Arn'\` | \`TOPIC_ARN: ref('MyTopic', 'Arn')\` |
+| \`_TOPIC_ARN\` | \`'TopicArn'\` | \`NOTIF_TOPIC_ARN: ref('MyTopic', 'TopicArn')\` |
+| \`_SECRET_ARN\` | \`'SecretArn'\` | \`DB_SECRET_ARN: ref('DbSecret', 'SecretArn')\` |
+| \`_URL\` | \`'QueueUrl'\` | \`QUEUE_URL: ref('MyQueue', 'QueueUrl')\` |
+| \`_HOST\` / \`_ENDPOINT\` | \`'Endpoint'\` | \`DB_HOST: ref('AppDB', 'Endpoint')\` |
+| \`_PORT\` | \`'Port'\` | \`DB_PORT: ref('AppDB', 'Port')\` |
+| \`_PASSWORD\` | \`'Password'\` | \`DB_PASSWORD: ref('AppDB', 'Password')\` |
+| \`_USERNAME\` / \`_USER\` | \`'Username'\` | \`DB_USER: ref('AppDB', 'Username')\` |
+
+**\`'Arn'\` é EXCLUSIVO de \`resources[]\` em \`Policy.IAM\` — NUNCA use \`'Arn'\` em \`environment{}\` com sufixo \`_NAME\`, \`_URL\`, \`_HOST\`, \`_PORT\`, \`_PASSWORD\` ou \`_USERNAME\`.**
+
+String literal só é válida para constantes que não variam por recurso: \`DB_NAME: 'postgres'\`, \`REGION: 'us-east-1'\`, \`LOG_LEVEL: 'info'\`.
+
+**REGRA — DynamoDB UpdateExpression: SEMPRE use \`ExpressionAttributeNames\`.**
+\`name\`, \`item\`, \`value\`, \`status\`, \`size\`, \`type\` são palavras reservadas. Um \`SET name = :name\` quebra em runtime com \`ValidationException\`.
+Padrão obrigatório no handler de update:
+\`\`\`typescript
+const fields = Object.entries(body).filter(([k]) => k !== 'id');
+const expr = 'SET ' + fields.map(([k], i) => \`#f\${i} = :v\${i}\`).join(', ');
+const names: Record<string,string> = {}; const vals: Record<string,unknown> = {};
+fields.forEach(([k, v], i) => { names[\`#f\${i}\`] = k; vals[\`:v\${i}\`] = v; });
+await doc.send(new UpdateCommand({ TableName: process.env.TABLE_NAME, Key: { id },
+  UpdateExpression: expr, ExpressionAttributeNames: names, ExpressionAttributeValues: vals }));
+\`\`\`
+NUNCA escreva \`SET fieldName = :fieldName\` direto sem \`ExpressionAttributeNames\`.
+
+**Para CRUD com IDs vindos de \`event.pathParameters\`, use \`partitionKeyType: 'S'\`** — path params são SEMPRE strings; \`partitionKeyType: 'N'\` causa \`ValidationException\` em runtime.
+
+**REGRA — DynamoDB para CRUD simples por ID: NUNCA gere \`sortKey\`.**
+Um CRUD que acessa itens por ID usa APENAS \`partitionKey: 'id'\`. \`sortKey\` só existe quando o prompt pede explicitamente acesso por chave composta (ex: "listar por usuário e data"). Se a tabela tem \`sortKey: 'createdAt'\`, os handlers DEVEM incluir \`Key: { id, createdAt }\` — se você não puder garantir o \`createdAt\` nos handlers, NÃO coloque \`sortKey\` na tabela.
+
+**REGRA — API Gateway para CRUD DEVE ter as 5 rotas.**
+Para um CRUD exposto via API Gateway, as rotas obrigatórias são:
+\`\`\`
+POST   /items          → criar item (handler: create)
+GET    /items          → listar todos (handler: list)
+GET    /items/{id}     → buscar por ID (handler: read)
+PUT    /items/{id}     → atualizar (handler: update)
+DELETE /items/{id}     → deletar (handler: delete)
+\`\`\`
+NUNCA gere só \`GET /items\` sem \`GET /items/{id}\` — são handlers separados com behaviors distintos.
+
+**REGRA ABSOLUTA — handler de CREATE gera o ID internamente:**
+\`\`\`typescript
+// ERRADO — body.id pode ser undefined, duplicado ou string vazia
+const id = body.id;
+
+// CORRETO — ID gerado pelo backend, único garantido
+const id = crypto.randomUUID();
+\`\`\`
+NUNCA leia \`body.id\` como chave primária em handlers de create/insert/post.
 
 **\`vpcId\`, \`subnetIds\`, \`securityGroupIds\`, \`bucketRef\`, \`targetGroupArn\` e similares:** são tipados como \`string\`/\`string[]\` — recebem o **ID lógico do construct** como string literal. Exemplos corretos:
 \`\`\`typescript

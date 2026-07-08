@@ -69,11 +69,11 @@ function renderDiff(oldText: string, newText: string): boolean {
 
 // Deve reproduzir EXATAMENTE o que `synth` grava em disco, senão o diff acusa
 // uma mudança fantasma (ex.: synth grava JSON com '\n' final). Ver synth.ts.
-function synthStack(stack: Stack, provider: string, projectName?: string): string {
+function synthStack(stack: Stack, provider: string, allStacks: Stack[], projectName?: string): string {
   switch (provider) {
     case 'aws': {
       const p = new AWSProvider();
-      return JSON.stringify(p.synthesize(stack, undefined, undefined, projectName || undefined), null, 2) + '\n';
+      return JSON.stringify(p.synthesize(stack, allStacks, undefined, projectName || undefined), null, 2) + '\n';
     }
     case 'azure': {
       const p = new AzureProvider();
@@ -149,9 +149,29 @@ export default class Diff extends Command {
       this.error('Nenhuma stack encontrada em stacks/');
     }
 
+    // Carrega todos os stacks antes de sintetizar para que cross-stack refs resolvam
+    const loadedStacks: { stackPath: string; stack: Stack }[] = [];
+    for (const stackPath of stackFiles) {
+      const file = path.basename(stackPath);
+      let stackModule: Record<string, unknown>;
+      try {
+        stackModule = require(stackPath) as Record<string, unknown>;
+      } catch (err) {
+        this.warn(`Não foi possível carregar ${file}: ${errMessage(err)}`);
+        continue;
+      }
+      const stack = stackModule.default ?? stackModule.stack ?? stackModule;
+      if (!stack || typeof stack !== 'object' || !('constructs' in stack)) {
+        this.warn(`${file} não exporta uma Stack válida.`);
+        continue;
+      }
+      loadedStacks.push({ stackPath, stack: stack as Stack });
+    }
+
+    const allStacks = loadedStacks.map(s => s.stack);
     let anyDiff = false;
 
-    for (const stackPath of stackFiles) {
+    for (const { stackPath, stack } of loadedStacks) {
       const file = path.basename(stackPath);
       const stackName = file.replace(/\.(ts|js)$/, '');
       const savedPath = path.join(outDir, `${stackName}${ext}`);
@@ -162,24 +182,10 @@ export default class Diff extends Command {
         continue;
       }
 
-      let stackModule: Record<string, unknown>;
-      try {
-        stackModule = require(stackPath) as Record<string, unknown>;
-      } catch (err) {
-        this.warn(`Não foi possível carregar ${file}: ${errMessage(err)}`);
-        continue;
-      }
-
-      const stack = stackModule.default ?? stackModule.stack ?? stackModule;
-      if (!stack || typeof stack !== 'object' || !('constructs' in stack)) {
-        this.warn(`${file} não exporta uma Stack válida.`);
-        continue;
-      }
-
       const oldText = fs.readFileSync(savedPath, 'utf-8');
       let newText: string;
       try {
-        newText = synthStack(stack as Stack, provider, config.name);
+        newText = synthStack(stack, provider, allStacks, config.name);
       } catch (err) {
         this.warn(`Erro ao sintetizar ${stackName}: ${errMessage(err)}`);
         continue;
