@@ -1,6 +1,6 @@
 {
   "name": "@iacmp/provider-aws",
-  "version": "1.2.0",
+  "version": "2.2.1",
   "license": "MIT",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -15,7 +15,7 @@
     "test": "jest"
   },
   "dependencies": {
-    "@iacmp/core": "^1.2.0"
+    "@iacmp/core": "^2.2.1"
   },
   "devDependencies": {
     "@types/jest": "^29",

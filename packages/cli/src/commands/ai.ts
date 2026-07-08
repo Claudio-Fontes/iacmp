@@ -15,6 +15,7 @@ import {
   buildIndexes,
   retrieve,
   formatRetrievedContext,
+  searchKnowledgeBase,
 } from '@iacmp/ai';
 import { ensureProjectInitialized } from '../bootstrap';
 import { runGeneration, AskFn } from '../generation';
@@ -191,6 +192,12 @@ export default class AI extends Command {
     } else {
       projectContext = readProjectContext(cwd);
       ragSpinner.stop();
+    }
+    // Knowledge base: injeta exemplos validados do banco ~/.iacmp/knowledge.db (BM25).
+    // Só entra quando o banco existe — falha graciosamente caso contrário.
+    const kbExamples = searchKnowledgeBase(args.prompt!, iacProvider);
+    if (kbExamples) {
+      projectContext = `${kbExamples}\n\n${projectContext}`;
     }
     const provider = createContextualProvider(aiProvider, projectContext, iacProvider);
     // Quando provider=azure, o prompt pode mencionar SDKs AWS explicitamente (ex: o

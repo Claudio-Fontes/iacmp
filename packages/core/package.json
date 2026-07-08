@@ -1,6 +1,6 @@
 {
   "name": "@iacmp/core",
-  "version": "1.2.0",
+  "version": "2.2.1",
   "description": "Constructs agnósticos de provider para o iacmp — a API que os stacks do usuário importam",
   "keywords": ["iacmp", "iac", "infrastructure", "cdk", "constructs"],
   "license": "MIT",

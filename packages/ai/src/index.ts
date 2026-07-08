@@ -36,6 +36,7 @@ export {
 export { loadSession, saveSession, clearSession } from './tools/session-store';
 export { getCached, setCache, clearCache } from './tools/response-cache';
 // RAG
+export { searchKnowledgeBase } from './rag/knowledge-base';
 export { Chunk, chunkStackFile, chunkIacmpDocs, chunkKnowledgeFile } from './rag/chunker';
 export { Contextualizer } from './rag/contextualizer';
 export { buildBM25Index, bm25Search, BM25Index } from './rag/bm25';
