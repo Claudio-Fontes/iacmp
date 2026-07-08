@@ -195,9 +195,13 @@ export default class AI extends Command {
     }
     // Knowledge base: injeta exemplos validados do banco ~/.iacmp/knowledge.db (BM25).
     // Só entra quando o banco existe — falha graciosamente caso contrário.
+    const kbSpinner = ora({ text: 'Consultando knowledge base...', spinner: 'dots', discardStdin: false }).start();
     const kbExamples = searchKnowledgeBase(args.prompt!, iacProvider);
     if (kbExamples) {
       projectContext = `${kbExamples}\n\n${projectContext}`;
+      kbSpinner.succeed(`Knowledge base: exemplos relevantes encontrados`);
+    } else {
+      kbSpinner.stop();
     }
     const provider = createContextualProvider(aiProvider, projectContext, iacProvider);
     // Quando provider=azure, o prompt pode mencionar SDKs AWS explicitamente (ex: o

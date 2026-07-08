@@ -85,6 +85,17 @@ REDIS_PORT: String(ref('ProductCache', 'Port'))         // produz "[object Objec
 
 **Onde \`ref()\` pode ser usado:** apenas em campos cujo tipo aceita \`Ref\` — na prática, exclusivamente os valores de \`environment\`, e nos campos \`resources\`, \`alarmActions\`, \`okActions\` de Policy.IAM e Monitoring.Alarm.
 
+**REGRA ABSOLUTA — \`environment\` com atributo de recurso: SEMPRE \`ref()\`, NUNCA string literal.**
+O ID lógico (ex: \`'ItemsTable'\`) NÃO é o nome físico do recurso em cloud. Em AWS, o nome real da tabela DynamoDB é gerado pelo CloudFormation (ex: \`DatabaseStack-ItemsTable-XYZABC\`). Usar a string literal faz o handler falhar em runtime com "Table not found". Use sempre \`ref()\`:
+\`\`\`typescript
+// ERRADO — o handler vai receber a string 'ItemsTable', não o nome real da tabela
+environment: { TABLE_NAME: 'ItemsTable' }
+
+// CORRETO — ref() resolve para o nome físico gerado no deploy
+environment: { TABLE_NAME: ref('ItemsTable', 'Name') }
+\`\`\`
+Atributos que OBRIGATORIAMENTE usam \`ref()\` em \`environment\`: \`Name\` (DynamoDB/S3/Bucket), \`Arn\`, \`Url\`, \`Endpoint\`, \`Port\`, \`ConnectionString\`, \`QueueUrl\`, \`TopicArn\`, \`SecretArn\`, \`Password\`, \`Username\`. String literal só é válida para valores que **não mudam por recurso** (ex: \`DB_NAME: 'postgres'\`, \`REGION: 'us-east-1'\`, \`LOG_LEVEL: 'info'\`).
+
 **\`vpcId\`, \`subnetIds\`, \`securityGroupIds\`, \`bucketRef\`, \`targetGroupArn\` e similares:** são tipados como \`string\`/\`string[]\` — recebem o **ID lógico do construct** como string literal. Exemplos corretos:
 \`\`\`typescript
 vpcId: 'AppVpc'                                     // OK — ID lógico do Network.VPC
