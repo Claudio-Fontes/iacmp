@@ -112,7 +112,13 @@ export function synthesizeNetwork(construct: BaseConstruct, ctx: SynthContext): 
         AWSManagedRulesPHPRuleSet: { ruleSetType: 'OWASP', ruleSetVersion: '3.2' },
         AWSManagedRulesWordPressRuleSet: { ruleSetType: 'OWASP', ruleSetVersion: '3.2' },
       };
-      const customRules = rules.filter(r => !r.managedGroup && !r.rateLimit).map((r, i) => ({
+      const customRules = rules.filter(r => {
+        if (r.managedGroup) return false;
+        if (r.rateLimit) return false;
+        const ruleType = (r.type as string ?? '').toLowerCase();
+        if (ruleType.includes('rate')) return false;
+        return true;
+      }).map((r, i) => ({
         name: (r.name as string) ?? `custom-rule-${i}`,
         priority: (r.priority as number) ?? (i + 1),
         ruleType: 'MatchRule',

@@ -119,7 +119,7 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
         apiVersion: '2023-05-01-preview',
         parent: sym,
         name: 'main',
-        properties: { displayName: rawName, path: 'api', protocols: ['https'], subscriptionRequired: false, serviceUrl: '' },
+        properties: { displayName: rawName, path: ((props.path as string) || 'api'), protocols: ['https'], subscriptionRequired: false, serviceUrl: '' },
       });
 
       if (props.cors) {
