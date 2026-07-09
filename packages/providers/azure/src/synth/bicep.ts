@@ -220,6 +220,36 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
     synthesizeConstruct(construct, ctx);
   }
 
+  // Guard: handlers de Lambda que acessam Cache.Redis devem usar REDIS_CONNECTION_STRING
+  const hasRedis = stack.constructs.some(c => c.type === 'Cache.Redis');
+  if (hasRedis) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const fs = require('fs') as typeof import('fs');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const nodePath = require('path') as typeof import('path');
+    const srcDir = nodePath.join(process.cwd(), 'src');
+    if (fs.existsSync(srcDir)) {
+      const badHandlers: string[] = [];
+      for (const f of fs.readdirSync(srcDir).filter((f: string) => f.endsWith('.ts'))) {
+        const code = fs.readFileSync(nodePath.join(srcDir, f), 'utf-8');
+        const usesRedisHost = /new\s+Redis\s*\(\s*\{/.test(code) || /process\.env\.REDIS_HOST/.test(code);
+        const usesConnStr = /REDIS_CONNECTION_STRING/.test(code);
+        if (usesRedisHost && !usesConnStr) badHandlers.push(f);
+      }
+      if (badHandlers.length > 0) {
+        throw new Error(
+          `Handlers de Redis sem REDIS_CONNECTION_STRING detectados: ${badHandlers.join(', ')}\n\n` +
+          `No Azure, Cache.Redis usa Redis Enterprise (porta 10000, TLS obrigatório).\n` +
+          `NUNCA use new Redis({ host, port }) — falta autenticação e TLS.\n` +
+          `CORRETO:\n` +
+          `  environment: { REDIS_CONNECTION_STRING: ref('MyCache', 'ConnectionString') }\n` +
+          `  // handler:\n` +
+          `  const redis = new Redis(process.env.REDIS_CONNECTION_STRING!);`
+        );
+      }
+    }
+  }
+
   // Post-processing: Container Apps com Event Grid trigger same-stack → minReplicas:1.
   for (const lambdaId of lambdaWithEventGridTrigger) {
     const app = resources.find(r => r.sym === toSym(lambdaId) && r.type === 'Microsoft.App/containerApps');
