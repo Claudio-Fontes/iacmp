@@ -2,14 +2,10 @@ import Database from 'better-sqlite3';
 import { homedir } from 'os';
 import { join } from 'path';
 import { existsSync } from 'fs';
+import { buildBM25Index, bm25Search } from './bm25';
+import { Chunk } from './chunker';
 
-const K1 = 1.5;
-const B = 0.75;
 const DB_PATH = join(homedir(), '.iacmp', 'knowledge.db');
-
-function tokenize(text: string): string[] {
-  return text.toLowerCase().split(/\W+/).filter(t => t.length > 1);
-}
 
 interface ExampleRow {
   id: string;
@@ -29,30 +25,6 @@ function openDb(): Database.Database | null {
   }
 }
 
-function bm25Score(rows: ExampleRow[], qTokens: string[]): { row: ExampleRow; score: number }[] {
-  const avgLen = rows.reduce((s, r) => s + (JSON.parse(r.tokens) as string[]).length, 0) / rows.length;
-  const N = rows.length;
-  const df: Record<string, number> = {};
-  for (const row of rows) {
-    const toks = new Set(JSON.parse(row.tokens) as string[]);
-    for (const t of qTokens) {
-      if (toks.has(t)) df[t] = (df[t] ?? 0) + 1;
-    }
-  }
-  return rows.map(row => {
-    const toks = JSON.parse(row.tokens) as string[];
-    const dl = toks.length;
-    let score = 0;
-    for (const t of qTokens) {
-      const tf = toks.filter(x => x === t).length;
-      if (tf === 0) continue;
-      const idf = Math.log((N - (df[t] ?? 0) + 0.5) / ((df[t] ?? 0) + 0.5) + 1);
-      score += idf * (tf * (K1 + 1)) / (tf + K1 * (1 - B + B * (dl / avgLen)));
-    }
-    return { row, score };
-  });
-}
-
 function truncate(code: string, maxLines = 60): string {
   const lines = code.split('\n');
   return lines.length > maxLines
@@ -69,18 +41,24 @@ export function searchKnowledgeBase(query: string, provider: string, limit = 2):
     ).all(provider) as ExampleRow[];
     if (rows.length === 0) return '';
 
-    const qTokens = tokenize(query);
-    if (qTokens.length === 0) return '';
+    // Reusa o BM25 canônico (bm25.ts) para que qualquer ajuste de tokenizer ou
+    // scoring se propague. O corpus vem dos tokens já persistidos no banco.
+    const chunks: Chunk[] = rows.map(row => ({
+      id: row.id,
+      content: (JSON.parse(row.tokens) as string[]).join(' '),
+      metadata: { source: 'platform-knowledge' },
+    }));
 
-    const top = bm25Score(rows, qTokens)
-      .filter(s => s.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, limit);
+    const index = buildBM25Index(chunks);
+    const hits = bm25Search(index, query, limit).filter(h => h.score > 0);
+    if (hits.length === 0) return '';
 
-    if (top.length === 0) return '';
+    const rowById = new Map(rows.map(r => [r.id, r]));
 
     const parts: string[] = ['## Exemplos validados (knowledge base — use como referência estrutural):'];
-    for (const { row } of top) {
+    for (const hit of hits) {
+      const row = rowById.get(hit.id);
+      if (!row) continue;
       const content = JSON.parse(row.content) as {
         stacks: Record<string, string>;
         handlers?: Record<string, string>;

@@ -134,6 +134,10 @@ function buildFunctionBundle(
 
   if (!srcEntry) return null;
 
+  if (!fn.functionAppName) {
+    throw new Error(`[${fn.constructId}] functionAppName não encontrado em .iacmp-meta.json — rode 'iacmp synth' novamente`);
+  }
+
   const buildDir = path.join(path.dirname(templatePath), '.packaged', fn.functionAppName);
   fs.mkdirSync(buildDir, { recursive: true });
 
