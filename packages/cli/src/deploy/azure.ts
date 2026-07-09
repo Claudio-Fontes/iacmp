@@ -95,25 +95,24 @@ function requireResourceGroup(ctx: { resourceGroup?: string }): string {
 
 interface AzureFunctionMeta {
   constructId: string;
-  functionAppName: string;
+  containerAppName: string;
+  imageParamName: string;
   handler: string;
   code: string;
   runtime: string;
-  /** Path patterns das rotas APIM que apontam pra este Function App (ex: "/files/{key}", "/files/{key+}"). */
+  /** Path patterns das rotas APIM que apontam pra este Container App (ex: "/products/{id}"). */
   routePatterns?: string[];
 }
 
 /**
- * Empacota o handler de uma Function.Lambda para Azure Function App (zip deploy).
+ * Empacota o handler de uma Function.Lambda para Container App (Docker).
  *
  * Cria em <buildDir>:
- *   handler.js              — esbuild bundle do código do usuário
- *   host.json               — config do Azure Functions host (v2, routePrefix vazio)
- *   HttpTrigger/
- *     function.json         — binding HTTP catch-all (v3 programming model)
- *     index.js              — adapter que converte Azure Functions request → Lambda event
+ *   handler.js   — esbuild bundle do código do usuário
+ *   server.js    — HTTP server adapter (node:http) que converte request → Lambda event
+ *   Dockerfile   — FROM node:20-alpine; CMD node server.js; porta 3000
  *
- * Retorna o path do buildDir (a ser zipado e enviado via az functionapp deployment source config-zip),
+ * Retorna o path do buildDir (de onde `docker build` será executado),
  * ou null se não encontrou o fonte do handler.
  */
 function buildFunctionBundle(
@@ -134,11 +133,11 @@ function buildFunctionBundle(
 
   if (!srcEntry) return null;
 
-  if (!fn.functionAppName) {
-    throw new Error(`[${fn.constructId}] functionAppName não encontrado em .iacmp-meta.json — rode 'iacmp synth' novamente`);
+  if (!fn.containerAppName) {
+    throw new Error(`[${fn.constructId}] containerAppName não encontrado em .iacmp-meta.json — rode 'iacmp synth' novamente`);
   }
 
-  const buildDir = path.join(path.dirname(templatePath), '.packaged', fn.functionAppName);
+  const buildDir = path.join(path.dirname(templatePath), '.packaged', fn.containerAppName);
   fs.mkdirSync(buildDir, { recursive: true });
 
   // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -164,45 +163,12 @@ function buildFunctionBundle(
     logLevel: 'silent',
   });
 
-  // host.json: Azure Functions v2 runtime com routePrefix vazio para rotas limpas
-  fs.writeFileSync(
-    path.join(buildDir, 'host.json'),
-    JSON.stringify({
-      version: '2.0',
-      extensions: { http: { routePrefix: '' } },
-      extensionBundle: {
-        id: 'Microsoft.Azure.Functions.ExtensionBundle',
-        version: '[4.*, 5.0.0)',
-      },
-    }, null, 2),
-  );
-
-  // HttpTrigger: função HTTP catch-all (programming model v3, sem deps externas)
-  const triggerDir = path.join(buildDir, 'HttpTrigger');
-  fs.mkdirSync(triggerDir, { recursive: true });
-
-  fs.writeFileSync(
-    path.join(triggerDir, 'function.json'),
-    JSON.stringify({
-      bindings: [
-        {
-          authLevel: 'anonymous',
-          type: 'httpTrigger',
-          direction: 'in',
-          name: 'req',
-          route: '{*route}',
-          methods: ['get', 'post', 'put', 'delete', 'patch', 'options', 'head'],
-        },
-        { type: 'http', direction: 'out', name: 'res' },
-      ],
-    }, null, 2),
-  );
-
   // routePatterns injetados como JSON literal — permite extrair path params nomeados.
   const routePatternsJson = JSON.stringify(fn.routePatterns ?? []);
 
-  const adapter = `'use strict';
-const { handler } = require('../handler');
+  const serverJs = `'use strict';
+const http = require('http');
+const { handler } = require('./handler');
 const routePatterns = ${routePatternsJson};
 
 function matchRoute(pathname) {
@@ -226,117 +192,158 @@ function matchRoute(pathname) {
   return null;
 }
 
-module.exports = async function (context, req) {
-  const rawUrl = req.originalUrl || '/';
-  let pathname, queryString;
-  try {
-    const u = new URL(rawUrl);
-    pathname = u.pathname;
-    queryString = u.search ? u.search.slice(1) : '';
-  } catch (_) {
-    const qIdx = rawUrl.indexOf('?');
-    pathname = qIdx >= 0 ? rawUrl.slice(0, qIdx) : rawUrl;
-    queryString = qIdx >= 0 ? rawUrl.slice(qIdx + 1) : '';
-  }
+const server = http.createServer(function (req, res) {
+  const chunks = [];
+  req.on('data', function (chunk) { chunks.push(chunk); });
+  req.on('end', async function () {
+    const bodyBuf = Buffer.concat(chunks);
+    const rawUrl = req.url || '/';
+    let pathname, queryString;
+    try {
+      const u = new URL(rawUrl, 'http://localhost');
+      pathname = u.pathname;
+      queryString = u.search ? u.search.slice(1) : '';
+    } catch (_) {
+      const qIdx = rawUrl.indexOf('?');
+      pathname = qIdx >= 0 ? rawUrl.slice(0, qIdx) : rawUrl;
+      queryString = qIdx >= 0 ? rawUrl.slice(qIdx + 1) : '';
+    }
 
-  // Event Grid blob trigger: validação e BlobCreated → Lambda Records format.
-  const aegEventType = req.headers && req.headers['aeg-event-type'];
-  if (aegEventType || pathname === '/events' || pathname.endsWith('/events')) {
-    const rawBody = req.rawBody;
-    const bodyStr = rawBody === undefined || rawBody === null ? '[]' : (typeof rawBody === 'string' ? rawBody : String(rawBody));
-    let egEvents;
-    try { egEvents = JSON.parse(bodyStr || '[]'); } catch (_) { egEvents = []; }
-    if (!Array.isArray(egEvents)) egEvents = [egEvents];
-    if (egEvents.length > 0 && (egEvents[0].eventType === 'Microsoft.EventGrid.SubscriptionValidationEvent' || egEvents[0].eventType === 'Microsoft.EventGrid.SubscriptionValidation')) {
-      const validationCode = egEvents[0].data && egEvents[0].data.validationCode;
-      const validationUrl = egEvents[0].data && egEvents[0].data.validationUrl;
-      context.res = { status: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ validationResponse: validationCode }) };
-      if (validationUrl) {
-        try { require('https').get(validationUrl, function(r) { r.resume(); }); } catch (_) {}
+    // Event Grid blob trigger: validação e BlobCreated → Lambda Records format.
+    const aegEventType = req.headers && req.headers['aeg-event-type'];
+    if (aegEventType || pathname === '/events' || pathname.endsWith('/events')) {
+      const bodyStr = bodyBuf.length > 0 ? bodyBuf.toString() : '[]';
+      let egEvents;
+      try { egEvents = JSON.parse(bodyStr || '[]'); } catch (_) { egEvents = []; }
+      if (!Array.isArray(egEvents)) egEvents = [egEvents];
+      if (egEvents.length > 0 && (egEvents[0].eventType === 'Microsoft.EventGrid.SubscriptionValidationEvent' || egEvents[0].eventType === 'Microsoft.EventGrid.SubscriptionValidation')) {
+        const validationCode = egEvents[0].data && egEvents[0].data.validationCode;
+        const validationUrl = egEvents[0].data && egEvents[0].data.validationUrl;
+        const respBody = JSON.stringify({ validationResponse: validationCode });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(respBody);
+        if (validationUrl) {
+          try { require('https').get(validationUrl, function(r) { r.resume(); }); } catch (_) {}
+        }
+        return;
+      }
+      const blobRecords = egEvents
+        .filter(function(e) { return e.eventType === 'Microsoft.Storage.BlobCreated'; })
+        .map(function(e) {
+          const subject = e.subject || '';
+          const blobIdx = subject.indexOf('/blobs/');
+          const key = blobIdx >= 0 ? subject.slice(blobIdx + 7) : '';
+          const contIdx = subject.indexOf('/containers/');
+          const contEnd = subject.indexOf('/', contIdx + 12);
+          const container = contIdx >= 0 ? subject.slice(contIdx + 12, contEnd >= 0 ? contEnd : undefined) : '';
+          return { eventSource: 'aws:s3', s3: { bucket: { name: container }, object: { key: decodeURIComponent(key) } } };
+        });
+      if (blobRecords.length > 0) {
+        try {
+          await handler({ Records: blobRecords }, {});
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end('{}');
+        } catch (egErr) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: String(egErr) }));
+        }
+      } else {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end('{}');
       }
       return;
     }
-    const blobRecords = egEvents
-      .filter(function(e) { return e.eventType === 'Microsoft.Storage.BlobCreated'; })
-      .map(function(e) {
-        const subject = e.subject || '';
-        const blobIdx = subject.indexOf('/blobs/');
-        const key = blobIdx >= 0 ? subject.slice(blobIdx + 7) : '';
-        const contIdx = subject.indexOf('/containers/');
-        const contEnd = subject.indexOf('/', contIdx + 12);
-        const container = contIdx >= 0 ? subject.slice(contIdx + 12, contEnd >= 0 ? contEnd : undefined) : '';
-        return { eventSource: 'aws:s3', s3: { bucket: { name: container }, object: { key: decodeURIComponent(key) } } };
-      });
-    if (blobRecords.length > 0) {
-      try {
-        await handler({ Records: blobRecords }, {});
-        context.res = { status: 200, headers: { 'Content-Type': 'application/json' }, body: '{}' };
-      } catch (egErr) {
-        context.res = { status: 500, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ error: String(egErr) }) };
+
+    const queryStringParameters = {};
+    if (queryString) {
+      for (const part of queryString.split('&')) {
+        if (!part) continue;
+        const eqIdx = part.indexOf('=');
+        const k = eqIdx >= 0 ? part.slice(0, eqIdx) : part;
+        const v = eqIdx >= 0 ? part.slice(eqIdx + 1) : '';
+        queryStringParameters[decodeURIComponent(k)] = decodeURIComponent(v);
       }
-    } else {
-      context.res = { status: 200, headers: { 'Content-Type': 'application/json' }, body: '{}' };
     }
-    return;
-  }
 
-  const queryStringParameters = {};
-  if (queryString) {
-    for (const part of queryString.split('&')) {
-      if (!part) continue;
-      const eqIdx = part.indexOf('=');
-      const k = eqIdx >= 0 ? part.slice(0, eqIdx) : part;
-      const v = eqIdx >= 0 ? part.slice(eqIdx + 1) : '';
-      queryStringParameters[decodeURIComponent(k)] = decodeURIComponent(v);
+    const headers = {};
+    for (const [k, v] of Object.entries(req.headers || {})) {
+      headers[k] = Array.isArray(v) ? v.join(',') : String(v);
     }
-  }
+    const titleCase = function(s) { return s.replace(/(?:^|-)([a-z])/g, function(_, c) { return c.toUpperCase(); }); };
+    for (const k of Object.keys(headers)) { const tc = titleCase(k); if (tc !== k) headers[tc] = headers[k]; }
 
-  const headers = {};
-  for (const [k, v] of Object.entries(req.headers || {})) {
-    headers[k] = Array.isArray(v) ? v.join(',') : String(v);
-  }
-  const titleCase = (s) => s.replace(/(?:^|-)([a-z])/g, (_, c) => c.toUpperCase());
-  for (const k of Object.keys(headers)) { const tc = titleCase(k); if (tc !== k) headers[tc] = headers[k]; }
+    const segments = pathname.split('/').filter(Boolean);
+    const namedParams = routePatterns.length > 0 ? matchRoute(pathname) : null;
+    const pathParameters = segments.length >= 2
+      ? { id: decodeURIComponent(segments[1]), proxy: segments.slice(1).join('/'), ...(namedParams || {}) }
+      : (namedParams && Object.keys(namedParams).length > 0 ? namedParams : null);
 
-  const segments = pathname.split('/').filter(Boolean);
-  const namedParams = routePatterns.length > 0 ? matchRoute(pathname) : null;
-  const pathParameters = segments.length >= 2
-    ? { id: decodeURIComponent(segments[1]), proxy: segments.slice(1).join('/'), ...(namedParams || {}) }
-    : (namedParams && Object.keys(namedParams).length > 0 ? namedParams : null);
+    const bodyStr2 = bodyBuf.length > 0 ? bodyBuf.toString() : null;
 
-  const rawBodyVal = req.rawBody;
-  const bodyStr2 = rawBodyVal === undefined || rawBodyVal === null ? null : (typeof rawBodyVal === 'string' ? rawBodyVal : String(rawBodyVal));
-
-  const event = {
-    httpMethod: req.method || 'GET',
-    path: pathname,
-    pathParameters,
-    queryStringParameters,
-    headers,
-    body: bodyStr2,
-    isBase64Encoded: false,
-  };
-
-  try {
-    const result = await handler(event, {});
-    context.res = {
-      status: result.statusCode || 200,
-      headers: result.headers || { 'Content-Type': 'application/json' },
-      body: result.body || '',
+    const event = {
+      httpMethod: req.method || 'GET',
+      path: pathname,
+      pathParameters,
+      queryStringParameters,
+      headers,
+      body: bodyStr2,
+      isBase64Encoded: false,
     };
-  } catch (err) {
-    context.res = {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ error: String(err) }),
-    };
-  }
-};
+
+    try {
+      const result = await handler(event, {});
+      res.writeHead(result.statusCode || 200, result.headers || { 'Content-Type': 'application/json' });
+      res.end(result.body || '');
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: String(err) }));
+    }
+  });
+});
+
+server.listen(3000, function () {
+  console.log('[iacmp] Container App server listening on port 3000');
+});
 `;
 
-  fs.writeFileSync(path.join(triggerDir, 'index.js'), adapter);
+  fs.writeFileSync(path.join(buildDir, 'server.js'), serverJs);
+
+  fs.writeFileSync(
+    path.join(buildDir, 'Dockerfile'),
+    'FROM node:20-alpine\nWORKDIR /app\nCOPY . .\nEXPOSE 3000\nCMD ["node", "server.js"]\n',
+  );
 
   return buildDir;
+}
+
+// ── ACR bootstrap helpers ─────────────────────────────────────────────────────
+
+function getSubscriptionId(): string {
+  return execFileSync('az', ['account', 'show', '--query', 'id', '--output', 'tsv'], { stdio: 'pipe' }).toString().trim();
+}
+
+function acrBootstrapName(subscriptionId: string): string {
+  const sub6 = subscriptionId.replace(/-/g, '').slice(0, 6).toLowerCase();
+  return `iacmpacr${sub6}${sub6}`;
+}
+
+function ensureAcr(acrName: string, resourceGroup: string): void {
+  try {
+    execFileSync('az', ['acr', 'show', '--name', acrName, '--resource-group', resourceGroup, '--output', 'none'], { stdio: 'pipe' });
+  } catch {
+    process.stdout.write(`[iacmp] Criando ACR "${acrName}"...\n`);
+    execFileSync('az', ['acr', 'create', '--name', acrName, '--resource-group', resourceGroup, '--sku', 'Basic', '--admin-enabled', 'true'], { stdio: 'inherit' });
+  }
+}
+
+function getAcrCredentials(acrName: string): { server: string; username: string; password: string } {
+  const credsRaw = execFileSync('az', ['acr', 'credential', 'show', '--name', acrName, '--output', 'json'], { stdio: 'pipe' }).toString();
+  const creds = JSON.parse(credsRaw) as { username: string; passwords: Array<{ value: string }> };
+  return {
+    server: `${acrName}.azurecr.io`,
+    username: creds.username,
+    password: creds.passwords[0].value,
+  };
 }
 
 export const azureExecutor: DeployExecutor = {
@@ -347,20 +354,54 @@ export const azureExecutor: DeployExecutor = {
     const resourceGroup = requireResourceGroup(ctx);
     const commands: NativeCommand[] = [];
 
-    // ── Empacotamento de código para Function.Lambda (zip deploy) ─────────────
+    // ── Empacotamento de código e Docker build para Function.Lambda (Container App) ─
     const metaPath = ctx.templatePath.replace('.bicep', '.iacmp-meta.json');
     const extraParams: string[] = [];
 
-    let functions: AzureFunctionMeta[] = [];
-    const buildDirsByConstructId = new Map<string, string>();
-
     if (!ctx.dryRun && fs.existsSync(metaPath)) {
       const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as { functions: AzureFunctionMeta[] };
-      functions = meta.functions ?? [];
-      // Pré-compila bundles antes do ARM deploy para falhar cedo se o fonte não existe.
-      for (const fn of functions) {
-        const buildDir = buildFunctionBundle(ctx.cwd, fn, ctx.templatePath);
-        if (buildDir) buildDirsByConstructId.set(fn.constructId, buildDir);
+      const functions: AzureFunctionMeta[] = meta.functions ?? [];
+
+      if (functions.length > 0) {
+        // 1. Constrói bundles (esbuild → handler.js + server.js + Dockerfile)
+        const buildDirsByConstructId = new Map<string, string>();
+        for (const fn of functions) {
+          const buildDir = buildFunctionBundle(ctx.cwd, fn, ctx.templatePath);
+          if (buildDir) buildDirsByConstructId.set(fn.constructId, buildDir);
+        }
+
+        // 2. Bootstrap ACR (cria se não existe, habilita admin)
+        const subId = getSubscriptionId();
+        const acrName = acrBootstrapName(subId);
+        ensureAcr(acrName, resourceGroup);
+        const acrCreds = getAcrCredentials(acrName);
+
+        // 3. Docker login
+        process.stdout.write(`[iacmp] Docker login em ${acrCreds.server}...\n`);
+        execFileSync('docker', ['login', acrCreds.server, '--username', acrCreds.username, '--password-stdin'], {
+          input: acrCreds.password,
+          stdio: ['pipe', 'inherit', 'inherit'],
+        });
+
+        // 4. Docker build + push por função
+        for (const fn of functions) {
+          const buildDir = buildDirsByConstructId.get(fn.constructId);
+          if (!buildDir) continue;
+          const imageName = `${acrCreds.server}/${fn.containerAppName}:latest`;
+          process.stdout.write(`[iacmp] Construindo imagem Docker para ${fn.constructId}: ${imageName}\n`);
+          execFileSync('docker', ['build', '--platform', 'linux/amd64', '-t', imageName, '.'], {
+            cwd: buildDir,
+            stdio: 'inherit',
+          });
+          process.stdout.write(`[iacmp] Enviando imagem ${imageName}...\n`);
+          execFileSync('docker', ['push', imageName], { stdio: 'inherit' });
+          extraParams.push(`${fn.imageParamName}=${imageName}`);
+        }
+
+        // 5. ACR params para o Bicep (acrPassword é @secure → vai pro arquivo temp)
+        extraParams.push(`acrServer=${acrCreds.server}`);
+        extraParams.push(`acrUser=${acrCreds.username}`);
+        extraParams.push(`acrPassword=${acrCreds.password}`);
       }
     }
 
@@ -509,45 +550,6 @@ export const azureExecutor: DeployExecutor = {
         args.push('--parameters', ...paramValues);
       }
       commands.push({ bin: 'az', args, displayArgs, preRun: () => waitForStackTerminal(ctx.stackName, resourceGroup), onError: () => recoverFromAzCliCrash(ctx.stackName, resourceGroup) });
-    }
-
-    // ── Zip deploy pós-ARM para cada Function App ─────────────────────────────
-    // Executado APÓS o az stack group create — lê os outputs para obter o nome
-    // real do Function App (gerado com uniqueString no Bicep) e faz config-zip.
-    if (!ctx.dryRun && functions.length > 0) {
-      const stackName = ctx.stackName;
-      commands.push({
-        bin: 'node',
-        args: ['-e', ''],
-        preRun: () => {
-          const outputs = getAzureStackOutputs(stackName, resourceGroup);
-          const outputsByLower = new Map(Object.entries(outputs).map(([k, v]) => [k.toLowerCase(), v]));
-          for (const fn of functions) {
-            const outputKey = `${fn.constructId.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}functionappname`;
-            const fnAppName = outputsByLower.get(outputKey);
-            if (!fnAppName) {
-              process.stdout.write(`[iacmp] Output "${outputKey}" não encontrado. Pulando zip deploy para ${fn.constructId}.\n`);
-              continue;
-            }
-            const buildDir = buildDirsByConstructId.get(fn.constructId);
-            if (!buildDir) {
-              process.stdout.write(`[iacmp] Bundle não encontrado para ${fn.constructId}. Pulando zip deploy.\n`);
-              continue;
-            }
-            const zipPath = `${buildDir}.zip`;
-            process.stdout.write(`[iacmp] Compactando ${fn.constructId} → ${zipPath}\n`);
-            execFileSync('zip', ['-r', zipPath, '.'], { cwd: buildDir, stdio: 'pipe' });
-            process.stdout.write(`[iacmp] Deployando código de ${fn.constructId} → ${fnAppName}\n`);
-            execFileSync('az', [
-              'functionapp', 'deployment', 'source', 'config-zip',
-              '--resource-group', resourceGroup,
-              '--name', fnAppName,
-              '--src', zipPath,
-            ], { stdio: 'inherit' });
-            try { fs.unlinkSync(zipPath); } catch { /* ignore */ }
-          }
-        },
-      });
     }
 
     return commands;

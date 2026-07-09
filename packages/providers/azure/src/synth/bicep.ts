@@ -96,7 +96,8 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): void 
 // ── Function metadata for packaging ──────────────────────────────────────────
 export interface AzureFunctionMeta {
   constructId: string;
-  functionAppName: string;
+  containerAppName: string;
+  imageParamName: string;
   handler: string;
   code: string;
   runtime: string;
@@ -126,9 +127,11 @@ export function extractAzureFunctionMeta(stack: Stack, allStacks?: Stack[]): Azu
     .filter(c => c.type === 'Function.Lambda')
     .map(c => {
       const props = c.props as Record<string, unknown>;
+      const sym = toSym(c.id);
       return {
         constructId: c.id,
-        functionAppName: c.id.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 40),
+        containerAppName: c.id.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 32),
+        imageParamName: `${sym}Image`,
         handler: (props.handler as string) ?? 'dist/handler.handler',
         code: (props.code as string) ?? 'dist/',
         runtime: (props.runtime as string) ?? 'nodejs20',
@@ -169,23 +172,8 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
     subnetsByVpc.get(vnetId)!.push({ id: c.id, cidr: p.cidr as string, public: (p.public as boolean) ?? false });
   }
 
-  const hasLambda = stack.constructs.some(c => c.type === 'Function.Lambda');
-  const sharedFunctionPlanSym: string | null = hasLambda ? 'sharedFunctionPlan' : null;
-  if (sharedFunctionPlanSym) {
-    resources.push({
-      sym: sharedFunctionPlanSym,
-      type: 'Microsoft.Web/serverfarms',
-      apiVersion: '2022-03-01',
-      name: expr(`'${stack.name}-plan'`),
-      location: 'location',
-      kind: 'functionapp',
-      sku: { name: 'B1', tier: 'Basic' },
-      tags: { Stack: stack.name },
-      properties: { reserved: true },
-    });
-  }
-
-  const hasContainerApp = stack.constructs.some(c => c.type === 'Compute.Container');
+  // Fn.Lambda no Azure → Container App (evita Microsoft.Web/serverFarms com quota VM)
+  const hasContainerApp = stack.constructs.some(c => c.type === 'Compute.Container' || c.type === 'Function.Lambda');
   let sharedContainerEnvSym: string | null = null;
   if (hasContainerApp) {
     sharedContainerEnvSym = 'sharedContainerEnv';
@@ -210,7 +198,7 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
     crossParams,
     functionImageParams,
     sharedContainerEnvSym,
-    sharedFunctionPlanSym,
+    sharedFunctionPlanSym: null,
     cdnBucketRefs,
     subnetsByVpc,
     accountTier,
@@ -292,6 +280,26 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
     r.properties = resolveValue(r.properties, idx, crossParams) as Record<string, unknown>;
     if (r.name !== undefined) r.name = resolveValue(r.name, idx, crossParams);
     if (r.tags) r.tags = resolveValue(r.tags, idx, crossParams) as Record<string, string>;
+  }
+
+  // Guard: detecta ref() concatenado com string (ex: ref('X','Arn') + '/*' → '[object Object]/*')
+  const serialized = JSON.stringify(resources);
+  const badPaths: string[] = [];
+  if (serialized.includes('[object Object]')) {
+    const scan = (node: unknown, path: string): void => {
+      if (typeof node === 'string' && node.includes('[object Object]')) badPaths.push(path);
+      else if (Array.isArray(node)) node.forEach((v, i) => scan(v, `${path}[${i}]`));
+      else if (node && typeof node === 'object') Object.entries(node as Record<string, unknown>).forEach(([k, v]) => scan(v, `${path}.${k}`));
+    };
+    resources.forEach((r, i) => scan(r, `resources[${i}]`));
+  }
+  if (badPaths.length > 0) {
+    throw new Error(
+      `"[object Object]" detectado no template Bicep em: ${badPaths.join(', ')}\n\n` +
+      `Causa: ref(...) foi concatenado com string no código da stack (ex: ref('MeuBucket','Arn') + '/*').\n` +
+      `NÃO concatene refs — use apenas ref() diretamente nos campos que aceitam referência.\n` +
+      `No Azure, policies de storage usam RBAC e não precisam de ARN com '/*'.`
+    );
   }
 
   const params: Array<{ name: string; type: string; default?: unknown; secure?: boolean }> = [
