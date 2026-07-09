@@ -78,4 +78,12 @@ export interface DeployExecutor {
    * inteiro como um state único, sem mapear 1:1 pra uma stack do projeto).
    */
   describeStatus?(stackName: string, ctx: { region?: string; resourceGroup?: string; projectId?: string }): StackStatus;
+  /**
+   * Consulta o status atual de uma stack durante o deploy e retorna uma string
+   * para exibição em tempo real no terminal (ex: "CREATE_IN_PROGRESS → motivo").
+   * Retorna null quando não há atualização a exibir (stack não existe ainda,
+   * erro transiente, etc.). Chamado pelo polling loop em exec.ts a cada 5s.
+   * Opcional: executores sem suporte simplesmente não implementam o método.
+   */
+  pollStatus?(stackName: string, ctx: DeployContext): Promise<string | null>;
 }

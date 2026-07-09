@@ -319,6 +319,24 @@ export const awsExecutor: DeployExecutor = {
   describeStatus(stackName: string, ctx: { region: string }): StackStatus {
     return describeStackStatus(stackName, ctx.region);
   },
+
+  async pollStatus(stackName: string, ctx: { region: string }): Promise<string | null> {
+    try {
+      const out = execFileSync('aws', [
+        'cloudformation', 'describe-stacks',
+        '--stack-name', stackName,
+        '--region', ctx.region,
+        '--query', 'Stacks[0].[StackStatus,StackStatusReason]',
+        '--output', 'json',
+      ], { stdio: 'pipe' }).toString();
+      const result = JSON.parse(out) as [string, string | null];
+      const [status, reason] = result;
+      if (!status) return null;
+      return reason ? `${status} → ${reason}` : status;
+    } catch {
+      return null;
+    }
+  },
 };
 
 export function describeStackStatus(stackName: string, region: string): StackStatus {

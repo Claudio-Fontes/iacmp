@@ -128,7 +128,7 @@ export default class Destroy extends Command {
         printPlan(commands);
       } else {
         try {
-          runCommands(commands);
+          await runCommands(commands);
         } catch (err) {
           this.error(errMessage(err));
         }
@@ -185,7 +185,7 @@ export default class Destroy extends Command {
         printPlan(commands);
       } else {
         try {
-          runCommands(commands);
+          await runCommands(commands);
         } catch (err) {
           this.error(errMessage(err));
         }

@@ -567,6 +567,22 @@ export const azureExecutor: DeployExecutor = {
     if (!ctx.resourceGroup) return { deployed: false };
     return describeStackStatus(stackName, ctx.resourceGroup);
   },
+
+  async pollStatus(stackName: string, ctx: { resourceGroup?: string }): Promise<string | null> {
+    if (!ctx.resourceGroup) return null;
+    try {
+      const out = execFileSync('az', [
+        'stack', 'group', 'show',
+        '--name', stackName,
+        '--resource-group', ctx.resourceGroup,
+        '--query', 'provisioningState',
+        '--output', 'tsv',
+      ], { stdio: 'pipe' }).toString().trim();
+      return out || null;
+    } catch {
+      return null;
+    }
+  },
 };
 
 export function describeStackStatus(stackName: string, resourceGroup: string): StackStatus {

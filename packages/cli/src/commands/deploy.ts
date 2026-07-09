@@ -166,7 +166,7 @@ export default class Deploy extends Command {
         printPlan(commands);
       } else {
         try {
-          runCommands(commands);
+          await runCommands(commands);
         } catch (err) {
           this.error(errMessage(err));
         }
@@ -226,7 +226,7 @@ export default class Deploy extends Command {
         printPlan(commands);
       } else {
         try {
-          runCommands(commands);
+          await runCommands(commands, { executor, ctx });
         } catch (err) {
           this.error(errMessage(err));
         }
@@ -279,7 +279,7 @@ export default class Deploy extends Command {
           this.error(errMessage(err));
         }
         try {
-          runCommands(commands2);
+          await runCommands(commands2, { executor, ctx: ctx2 });
         } catch (err) {
           this.error(errMessage(err));
         }

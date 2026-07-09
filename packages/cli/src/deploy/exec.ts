@@ -1,6 +1,6 @@
-import { execFileSync } from 'child_process';
+import { execFileSync, spawn } from 'child_process';
 import chalk from 'chalk';
-import { NativeCommand } from './types';
+import { DeployContext, DeployExecutor, NativeCommand } from './types';
 
 /**
  * Formata um comando para exibição em --dry-run (e em mensagens de erro).
@@ -21,28 +21,103 @@ export function printPlan(commands: NativeCommand[]): void {
 }
 
 /**
+ * Executa um único comando com polling paralelo de status. Usa `spawn` em vez
+ * de `execFileSync` para não bloquear o event loop durante o intervalo de polling.
+ * O status é renderizado em-place via `\r` — sobrescrito pelo próximo write
+ * do processo filho ou pelo próximo ciclo de polling.
+ */
+async function runWithPolling(
+  cmd: NativeCommand,
+  executor: Pick<DeployExecutor, 'pollStatus'>,
+  stackName: string,
+  ctx: DeployContext,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const child = spawn(cmd.bin, cmd.args, { cwd: cmd.cwd, stdio: 'inherit' });
+
+    let pollActive = true;
+    const timer = setInterval(() => {
+      if (!pollActive) return;
+      executor.pollStatus!(stackName, ctx)
+        .then((status) => {
+          if (status && pollActive) {
+            process.stdout.write(`\r${chalk.dim(`[${stackName}]`)} ${status}   `);
+          }
+        })
+        .catch(() => { /* polling silencioso — erro não propaga */ });
+    }, 5000);
+
+    const finish = (err?: Error) => {
+      pollActive = false;
+      clearInterval(timer);
+      process.stdout.write('\r\x1b[K'); // limpa linha de status residual
+      cmd.cleanup?.();
+      if (err) reject(err);
+      else resolve();
+    };
+
+    const handleError = (execErr: Error) => {
+      if (cmd.onError) {
+        try {
+          cmd.onError(execErr);
+          finish();
+        } catch (e) {
+          finish(e as Error);
+        }
+      } else {
+        finish(new Error(
+          `Falha ao executar "${formatCommand(cmd)}" — veja a saída acima. ` +
+          `Se for um problema de autenticação, configure a credencial da CLI (${cmd.bin}) e tente novamente, ou rode: iacmp doctor`,
+        ));
+      }
+    };
+
+    child.on('error', handleError);
+
+    child.on('close', (code) => {
+      if (code === 0 || code === null) {
+        finish();
+      } else {
+        handleError(new Error(`${cmd.bin} terminou com código ${code}`));
+      }
+    });
+  });
+}
+
+/**
  * Executa cada comando na ordem, com stdio herdado — o usuário vê em tempo
  * real a saída (e qualquer erro de autenticação) do aws/az/gcloud/terraform.
- * stdio:'inherit' significa que não há stderr capturado para inspecionar
- * aqui; a mensagem de erro aponta para a saída já impressa + `iacmp doctor`.
+ *
+ * Quando `opts.executor` implementa `pollStatus`, lança um polling paralelo
+ * a cada 5s que renderiza o status da stack em-place no terminal (linha única
+ * com `\r`). Se `pollStatus` não existe, comportamento idêntico ao anterior
+ * (backward-compatible: execFileSync síncrono).
  */
-export function runCommands(commands: NativeCommand[]): void {
+export async function runCommands(
+  commands: NativeCommand[],
+  opts?: { executor?: DeployExecutor; stackName?: string; ctx?: DeployContext },
+): Promise<void> {
   for (const cmd of commands) {
     cmd.preRun?.();
-    try {
-      execFileSync(cmd.bin, cmd.args, { cwd: cmd.cwd, stdio: 'inherit' });
-    } catch (e) {
-      if (cmd.onError) {
-        // onError pode suprimir o erro (não lança) ou re-lançar com mensagem melhor.
-        cmd.onError(e as Error);
-      } else {
-        throw new Error(
-          `Falha ao executar "${formatCommand(cmd)}" — veja a saída acima. ` +
-          `Se for um problema de autenticação, configure a credencial da CLI (${cmd.bin}) e tente novamente, ou rode: iacmp doctor`
-        );
+    if (opts?.executor?.pollStatus && opts.ctx) {
+      const stackName = opts.stackName ?? opts.ctx.stackName;
+      await runWithPolling(cmd, opts.executor, stackName, opts.ctx);
+    } else {
+      try {
+        execFileSync(cmd.bin, cmd.args, { cwd: cmd.cwd, stdio: 'inherit' });
+      } catch (e) {
+        if (cmd.onError) {
+          // onError pode suprimir o erro (não lança) ou re-lançar com mensagem melhor.
+          cmd.onError(e as Error);
+        } else {
+          throw new Error(
+            `Falha ao executar "${formatCommand(cmd)}" — veja a saída acima. ` +
+            `Se for um problema de autenticação, configure a credencial da CLI (${cmd.bin}) e tente novamente, ou rode: iacmp doctor`
+          );
+        }
+      } finally {
+        cmd.cleanup?.();
       }
-    } finally {
-      cmd.cleanup?.();
     }
   }
 }
