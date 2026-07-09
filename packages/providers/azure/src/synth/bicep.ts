@@ -179,7 +179,7 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
       name: expr(`'${stack.name}-plan'`),
       location: 'location',
       kind: 'functionapp',
-      sku: { name: 'Y1', tier: 'Dynamic' },
+      sku: { name: 'B1', tier: 'Basic' },
       tags: { Stack: stack.name },
       properties: { reserved: true },
     });
