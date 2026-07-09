@@ -2,16 +2,19 @@
 
 ## Modelo de distribuição
 
-O `iacmp` é distribuído como **dois pacotes públicos**:
+O `iacmp` é distribuído como **três pacotes públicos**:
 
-| Pacote | Papel | Conteúdo |
+| Pacote | Repo | Papel |
 |---|---|---|
-| `@iacmp/core` | SDK público que os stacks do usuário importam (`import { Stack } from '@iacmp/core'`) | publicado normalmente |
-| `iacmp` (CLI) | binário `npm i -g iacmp` | **bundla** `@iacmp/ai`, `@iacmp/provider-*`, `@iacmp/dashboard`, `@iacmp/registry` e `@iacmp/plugin-sdk` (via tsup); depende de `@iacmp/core` |
+| `@iacmp/core` | monorepo | SDK público que os stacks do usuário importam (`import { Stack } from '@iacmp/core'`) |
+| `iacmp` (CLI) | monorepo | binário `npm i -g iacmp`; **bundla** `@iacmp/ai`, `@iacmp/provider-*`, `@iacmp/dashboard`, `@iacmp/registry` e `@iacmp/plugin-sdk` (via tsup); depende de `@iacmp/core` |
+| `@iacmp/mcp` | `~/Projetos/iacmp-mcp` | servidor MCP para LLMs; instalação opcional `npm i -g @iacmp/mcp` |
 
-Por que `@iacmp/core` **não** é bundlado: o `iacmp init` referencia o pacote (`"@iacmp/core": "^x.y.z"`) e os stacks `.ts` do usuário importam dele — então core precisa existir on-disk como módulo resolvível. Os demais packages são internos do CLI e são inlinados no bundle.
+Por que `@iacmp/core` **não** é bundlado: o `iacmp init` referencia o pacote (`"@iacmp/core": "^x.y.z"`) e os stacks `.ts` do usuário importam dele — então core precisa existir on-disk como módulo resolvível. Os demais packages internos ao CLI são inlinados no bundle.
 
-> **Ordem importa:** publique `@iacmp/core` **antes** do `iacmp`. O CLI declara `@iacmp/core` como dependência de registry; se core não estiver publicado, `npm i -g iacmp` falha.
+O `@iacmp/mcp` está em repositório separado (`~/Projetos/iacmp-mcp`), tem versionamento próprio (começa em `0.1.0`) e **não** depende de `@iacmp/core`.
+
+> **Ordem importa:** publique `@iacmp/core` antes de `iacmp`, e ambos antes de `@iacmp/mcp` (mesmo sem dependência técnica, o MCP é o último por ser opcional e independente).
 
 ## Pré-requisitos
 
@@ -37,13 +40,20 @@ npm publish            # publishConfig.access:public já está no package.json
 # 2) Depois o CLI (o prepack roda tsup + oclif manifest)
 cd ../cli
 npm publish --access public
+
+# 3) Por último o MCP (repo separado)
+cd ~/Projetos/iacmp-mcp
+npm run build
+npm publish --access public
 ```
 
-## Status atual (verificado)
+## Status atual (verificado 2026-07-09)
 
-- `npm view iacmp` e `npm view @iacmp/core` retornam 404 — nenhum dos dois nomes foi publicado ainda; ambos estão livres no registry.
-- `npm pack --dry-run` em `packages/core` e `packages/cli` confirma que os tarballs já saem corretos (LICENSE, dist/, registry.json, oclif.manifest.json presentes; nenhum caminho absoluto vazado).
-- Sintoma real de não estar publicado: projetos gerados por `iacmp init` (ex: `nv-vs-iac4`) falham no `npm install` com `404 Not Found - @iacmp/core` e, em consequência, comandos como `iacmp diagram`/`iacmp synth` falham com `Cannot find package '@iacmp/core'` por falta de `node_modules`. Contorno local sem publicar: `npm link` em `packages/core` e depois `npm link @iacmp/core` no projeto do usuário — resolve só na máquina onde o monorepo existe, não substitui o publish real.
+| Pacote | Versão publicada |
+|---|---|
+| `@iacmp/core` | 2.2.2 |
+| `iacmp` | 2.2.2 |
+| `@iacmp/mcp` | 0.1.0 |
 
 ## Testar após a publicação
 
@@ -52,14 +62,19 @@ npm install -g iacmp
 iacmp --version
 iacmp doctor
 iacmp init demo && cd demo && iacmp synth
+
+# MCP (opcional)
+npm install -g @iacmp/mcp
+iacmp-mcp --version
 ```
 
 ## Publicar uma nova versão
 
 1. Bump de `version` em `packages/core/package.json` e `packages/cli/package.json` (mantenha o range `@iacmp/core` do CLI compatível)
-2. Atualize `docs/changelog.md`
-3. `npm run build && npm test`
-4. Republique core e depois o CLI (mesma ordem acima)
+2. Se houver mudanças no MCP, bump de `version` em `~/Projetos/iacmp-mcp/package.json` também
+3. Atualize `docs/changelog.md`
+4. `npm run build && npm test`
+5. Republique na ordem: core → CLI → MCP
 
 ## Notas
 
