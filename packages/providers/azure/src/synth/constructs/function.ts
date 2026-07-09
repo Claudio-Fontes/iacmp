@@ -9,50 +9,91 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
 
   switch (construct.type) {
     case 'Function.Lambda': {
-      // Azure: Fn.Lambda → Container App (evita Microsoft.Web/serverFarms que exige quota VM)
+      // Azure: Fn.Lambda → Azure Function App (FC1/FlexConsumption, identity-based storage)
       const environment = (props.environment as Record<string, string>) ?? {};
-      const imageParamName = `${sym}Image`;
-      functionImageParams.add(imageParamName);
 
-      const envVars = Object.entries(environment).map(([k, v]) => {
+      const appSettings: Array<{ name: string; value: unknown }> = [
+        { name: 'FUNCTIONS_EXTENSION_VERSION', value: '~4' },
+      ];
+
+      if (ctx.sharedFunctionStorageSym) {
+        appSettings.push({
+          name: 'AzureWebJobsStorage__accountName',
+          value: expr(`${ctx.sharedFunctionStorageSym}.name`),
+        });
+      }
+
+      for (const [k, v] of Object.entries(environment)) {
         const value = resolveValue(v, ctx.idx, crossParams);
         if (value === undefined || value === null) {
           throw new Error(`Fn.Lambda "${construct.id}": env var "${k}" resolveu para undefined. No código da STACK, o valor de environment deve ser uma string literal ou ref('X','Attr') — nunca process.env.${k} (isso é runtime, não existe no synth).`);
         }
-        return { name: k, value };
-      });
+        appSettings.push({ name: k, value });
+      }
+
+      const fnAppName = `${construct.id.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 20)}`;
 
       resources.push({
         sym,
-        type: 'Microsoft.App/containerApps',
-        apiVersion: '2023-05-01',
-        name: construct.id.toLowerCase().replace(/[^a-z0-9-]/g, '-'),
+        type: 'Microsoft.Web/sites',
+        apiVersion: '2023-12-01',
+        name: expr(`'${fnAppName}-\${uniqueString(resourceGroup().id)}'`),
         location: 'location',
+        kind: 'functionapp,linux',
         tags: tag(construct.id),
         identity: { type: 'SystemAssigned' },
         properties: {
-          managedEnvironmentId: expr(`empty(sharedCaeId) ? sharedContainerEnv.id : sharedCaeId`),
-          configuration: {
-            ingress: { external: true, targetPort: 3000 },
-            registries: expr(`empty(acrServer) ? [] : [{\n    server: acrServer\n    username: acrUser\n    passwordSecretRef: 'acr-pwd'\n  }]`),
-            secrets: expr(`empty(acrPassword) ? [] : [{\n    name: 'acr-pwd'\n    value: acrPassword\n  }]`),
+          serverFarmId: ctx.sharedFunctionPlanSym ? expr(`${ctx.sharedFunctionPlanSym}.id`) : '',
+          functionAppConfig: {
+            deployment: {
+              storage: {
+                type: 'blobContainer',
+                value: ctx.sharedFunctionStorageSym
+                  ? expr(`'\${${ctx.sharedFunctionStorageSym}.properties.primaryEndpoints.blob}deployments'`)
+                  : '',
+                authentication: { type: 'SystemAssignedIdentity' },
+              },
+            },
+            scaleAndConcurrency: {
+              maximumInstanceCount: 100,
+              instanceMemoryMB: 2048,
+            },
+            runtime: {
+              name: 'node',
+              version: '22',
+            },
           },
-          template: {
-            containers: [{
-              name: construct.id.toLowerCase().replace(/[^a-z0-9-]/g, '-'),
-              image: expr(imageParamName),
-              resources: { cpu: expr("json('0.25')"), memory: '0.5Gi' },
-              env: envVars,
-              probes: [{ type: 'Startup', tcpSocket: { port: 3000 }, periodSeconds: 5, failureThreshold: 30 }],
-            }],
-            scale: { minReplicas: 0, maxReplicas: 10 },
-          },
+          siteConfig: { appSettings },
+          httpsOnly: true,
         },
+        dependsOn: [
+          ...(ctx.sharedFunctionPlanSym ? [ctx.sharedFunctionPlanSym] : []),
+          ...(ctx.sharedFunctionStorageSym ? [ctx.sharedFunctionStorageSym] : []),
+          ...(ctx.sharedFnDeployContainerSym ? [ctx.sharedFnDeployContainerSym] : []),
+        ],
       });
 
+      if (ctx.sharedFunctionStorageSym) {
+        const roleSym = `${sym}StorageRole`;
+        resources.push({
+          sym: roleSym,
+          type: 'Microsoft.Authorization/roleAssignments',
+          apiVersion: '2022-04-01',
+          scope: ctx.sharedFunctionStorageSym,
+          name: expr(`guid(${ctx.sharedFunctionStorageSym}.id, ${sym}.id, 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')`),
+          properties: {
+            roleDefinitionId: expr(`subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')`),
+            principalId: expr(`${sym}.identity.principalId`),
+            principalType: 'ServicePrincipal',
+          },
+        });
+      }
+
+      const outputKey = `${construct.id.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}functionappname`;
+      outputs.push({ name: outputKey, type: 'string', value: `${sym}.name` });
       outputs.push({ name: `${construct.id}Id`, type: 'string', value: `${sym}.id` });
       outputs.push({ name: `${construct.id}PrincipalId`, type: 'string', value: `${sym}.identity.principalId` });
-      outputs.push({ name: crossParamName(construct.id, 'Fqdn'), type: 'string', value: `${sym}.properties.configuration.ingress.fqdn` });
+      outputs.push({ name: crossParamName(construct.id, 'Fqdn'), type: 'string', value: `${sym}.properties.defaultHostName` });
       break;
     }
 
@@ -115,7 +156,7 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
         if (lambdaConst) {
           const lambdaSym = toSym(lambdaId);
           if (lambdaConst.type === 'Function.Lambda') {
-            backendUrl = expr(`'https://\${${lambdaSym}.properties.configuration.ingress.fqdn}'`);
+            backendUrl = expr(`'https://\${${lambdaSym}.properties.defaultHostName}/api'`);
           } else {
             backendUrl = expr(`'https://\${${lambdaSym}.properties.configuration.ingress.fqdn}'`);
           }
@@ -218,7 +259,7 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
         if (authConst) {
           const authFnSym = toSym(authorizerLambdaId);
           if (authConst.type === 'Function.Lambda') {
-            authUrl = expr(`'https://\${${authFnSym}.properties.configuration.ingress.fqdn}'`);
+            authUrl = expr(`'https://\${${authFnSym}.properties.defaultHostName}'`);
           } else {
             authUrl = expr(`'https://\${${authFnSym}.properties.configuration.ingress.fqdn}'`);
           }
@@ -262,7 +303,7 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
           if (targetConst) {
             const lSym = toSym(targetLambdaId);
             if (targetConst.type === 'Function.Lambda') {
-              targetUrl = expr(`'https://\${${lSym}.properties.configuration.ingress.fqdn}/invoke'`);
+              targetUrl = expr(`'https://\${${lSym}.properties.defaultHostName}/api/invoke'`);
             } else {
               targetUrl = expr(`'https://\${${lSym}.properties.configuration.ingress.fqdn}/invoke'`);
             }

@@ -148,14 +148,24 @@ function createContextualProvider(base, projectContext, responseLang) {
   };
 }
 
-// Cria um provider de revisão com temperatura 0 para reduzir viés de confirmação.
-// O modelo revisa a própria saída — temperatura baixa force avaliação mais crítica.
+// Cria um provider de revisão. Se IACMP_MODEL_REVIEW estiver definido, usa esse
+// modelo (ex: gpt-4.1 para revisão mais rápida enquanto gpt-5 gera). Caso
+// contrário, usa o mesmo modelo da geração com temperatura 0.
 function createReviewProvider(base, projectContext, responseLang) {
+  const reviewModel = process.env.IACMP_MODEL_REVIEW;
   let reviewBase = base;
-  if (base.name === 'anthropic' && process.env.ANTHROPIC_API_KEY) {
-    reviewBase = new AnthropicProvider(process.env.ANTHROPIC_API_KEY, process.env.IACMP_MODEL, 0);
-  } else if (base.name === 'openai' && process.env.OPENAI_API_KEY) {
-    reviewBase = new OpenAIProvider(process.env.OPENAI_API_KEY, process.env.IACMP_MODEL, 0);
+  if (reviewModel) {
+    if (base.name === 'openai' && process.env.OPENAI_API_KEY) {
+      reviewBase = new OpenAIProvider(process.env.OPENAI_API_KEY, reviewModel, 0);
+    } else if (base.name === 'anthropic' && process.env.ANTHROPIC_API_KEY) {
+      reviewBase = new AnthropicProvider(process.env.ANTHROPIC_API_KEY, reviewModel, 0);
+    }
+  } else {
+    if (base.name === 'anthropic' && process.env.ANTHROPIC_API_KEY) {
+      reviewBase = new AnthropicProvider(process.env.ANTHROPIC_API_KEY, process.env.IACMP_MODEL, 0);
+    } else if (base.name === 'openai' && process.env.OPENAI_API_KEY) {
+      reviewBase = new OpenAIProvider(process.env.OPENAI_API_KEY, process.env.IACMP_MODEL, 0);
+    }
   }
   return createContextualProvider(reviewBase, projectContext, responseLang);
 }
@@ -187,12 +197,24 @@ async function runGeneration(provider, session, lastPrompt, projectContext, aiPr
   }
 
   if (!raw) {
+    const genStart = Date.now();
+    let genFirstChunk = false;
     process.stderr.write(chalk.dim(t.generating));
+    const genTimer = setInterval(() => {
+      if (!genFirstChunk) {
+        const secs = Math.floor((Date.now() - genStart) / 1000);
+        process.stderr.write(chalk.dim(`\r  Aguardando modelo... (${secs}s) `));
+      }
+    }, 1000);
     const chunks = [];
     let accumulated = '';
     const announced = new Set();
     try {
       await provider.stream(session.getMessages(), chunk => {
+        if (!genFirstChunk) {
+          genFirstChunk = true;
+          process.stderr.write(chalk.dim('\r' + t.generating + '          \n'));
+        }
         chunks.push(chunk);
         accumulated += chunk;
         const pathRegex = /"path"\s*:\s*"([^"]+)"/g;
@@ -205,10 +227,12 @@ async function runGeneration(provider, session, lastPrompt, projectContext, aiPr
         }
       });
     } catch (err) {
-      process.stderr.write(chalk.red(t.errorPrefix + err.message + '\n'));
+      clearInterval(genTimer);
+      process.stderr.write(chalk.red('\n' + t.errorPrefix + err.message + '\n'));
       process.stderr.write(chalk.dim(t.messageNotSaved));
       return;
     }
+    clearInterval(genTimer);
     raw = chunks.join('');
     session.addAssistantMessage(raw);
   }

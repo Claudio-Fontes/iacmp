@@ -68,12 +68,13 @@ async function obtainRawResponse(
 async function applySemanticReview(
   provider: AIProvider,
   session: ChatSession,
-  parsed: AIGeneratedResponse
+  parsed: AIGeneratedResponse,
+  reviewProvider?: AIProvider
 ): Promise<AIGeneratedResponse> {
   const spinner = ora({ text: 'Auto-revisão da geração...', spinner: 'dots', discardStdin: false }).start();
   session.addUserMessage(REVIEW_PROMPT(parsed.files.length));
   try {
-    const reviewRaw = await streamRaw(provider, session);
+    const reviewRaw = await streamRaw(reviewProvider ?? provider, session);
     session.addAssistantMessage(reviewRaw);
     try {
       const reviewed = extractResponse(reviewRaw);
@@ -103,7 +104,8 @@ async function fixInitialTypeErrors(
   session: ChatSession,
   cwd: string,
   iacProvider: string,
-  parsed: AIGeneratedResponse
+  parsed: AIGeneratedResponse,
+  reviewProvider?: AIProvider
 ): Promise<AIGeneratedResponse> {
   const tsFiles = parsed.files.filter(f => f.path.endsWith('.ts'));
   if (tsFiles.length === 0) return parsed;
@@ -115,7 +117,7 @@ async function fixInitialTypeErrors(
   const originalFileCount = parsed.files.length;
   session.addUserMessage(buildTsErrorCorrection(result.errors, iacProvider, parsed.files, originalFileCount));
   try {
-    const retryRaw = await streamRaw(provider, session);
+    const retryRaw = await streamRaw(reviewProvider ?? provider, session);
     spinner.succeed('Código corrigido');
     session.addAssistantMessage(retryRaw);
     try {
@@ -142,7 +144,8 @@ async function runSynthCorrectionLoop(
   cwd: string,
   iacProvider: string,
   initial: AIGeneratedResponse,
-  previouslyWritten: string[]
+  previouslyWritten: string[],
+  reviewProvider?: AIProvider
 ): Promise<AIGeneratedResponse> {
   let parsed = initial;
   let written = previouslyWritten;
@@ -184,7 +187,7 @@ async function runSynthCorrectionLoop(
     session.addUserMessage(correctionMsg);
     const retrySpinner = ora({ text: 'Aguardando correção da IA...', spinner: 'dots', discardStdin: false }).start();
     try {
-      const retryRaw = await streamRaw(provider, session);
+      const retryRaw = await streamRaw(reviewProvider ?? provider, session);
       retrySpinner.succeed('Arquivos corrigidos pela IA');
       session.addAssistantMessage(retryRaw);
       try {
@@ -217,7 +220,8 @@ export async function runGeneration(
   dryRun: boolean,
   iacProvider: string,
   ask: AskFn,
-  lastUserPrompt: string
+  lastUserPrompt: string,
+  reviewProvider?: AIProvider
 ): Promise<AIGeneratedResponse | null> {
   // Captura os artefatos de sessões ANTERIORES antes de chamar a IA — a primeira
   // escrita usa isso para remover stacks órfãs que não fazem parte desta geração.
@@ -246,10 +250,10 @@ export async function runGeneration(
 
   // Auto-revisão semântica — pula no cache (já revisado) e sem arquivos (conversacional).
   if (!fromCache && parsed.files.length > 0) {
-    parsed = await applySemanticReview(provider, session, parsed);
+    parsed = await applySemanticReview(provider, session, parsed, reviewProvider);
   }
 
-  parsed = await fixInitialTypeErrors(provider, session, cwd, iacProvider, parsed);
+  parsed = await fixInitialTypeErrors(provider, session, cwd, iacProvider, parsed, reviewProvider);
 
   printExplanation(parsed.explanation);
   printWarnings(parsed.warnings);
@@ -262,7 +266,7 @@ export async function runGeneration(
   printNextSteps(parsed.nextSteps);
 
   if (!dryRun && parsed.files.length > 0) {
-    parsed = await runSynthCorrectionLoop(provider, session, cwd, iacProvider, parsed, previouslyWritten);
+    parsed = await runSynthCorrectionLoop(provider, session, cwd, iacProvider, parsed, previouslyWritten, reviewProvider);
   }
 
   return parsed;

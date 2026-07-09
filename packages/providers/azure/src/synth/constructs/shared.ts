@@ -151,6 +151,7 @@ export interface BicepResource {
   sku?: Record<string, unknown>;
   tags?: Record<string, string>;
   parent?: string;
+  scope?: string;
   identity?: Record<string, unknown>;
   properties: Record<string, unknown>;
   dependsOn?: string[];
@@ -173,6 +174,8 @@ export interface SynthContext {
   functionImageParams: Set<string>;
   sharedContainerEnvSym: string | null;
   sharedFunctionPlanSym: string | null;
+  sharedFunctionStorageSym: string | null;
+  sharedFnDeployContainerSym: string | null;
   cdnBucketRefs: Set<string>;
   subnetsByVpc: Map<string, Array<{ id: string; cidr: string; public: boolean }>>;
   accountTier: 'free' | 'standard';

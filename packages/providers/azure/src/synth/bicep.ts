@@ -39,6 +39,7 @@ function renderBicep(
 
   for (const r of resources) {
     const fields: Array<[string, unknown]> = [];
+    if (r.scope) fields.push(['scope', expr(r.scope)]);
     if (r.parent) fields.push(['parent', expr(r.parent)]);
     if (r.name !== undefined) fields.push(['name', r.name]);
     if (r.location) fields.push(['location', expr(r.location)]);
@@ -96,8 +97,7 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: SynthContext): void 
 // ── Function metadata for packaging ──────────────────────────────────────────
 export interface AzureFunctionMeta {
   constructId: string;
-  containerAppName: string;
-  imageParamName: string;
+  functionAppName: string;
   handler: string;
   code: string;
   runtime: string;
@@ -127,11 +127,9 @@ export function extractAzureFunctionMeta(stack: Stack, allStacks?: Stack[]): Azu
     .filter(c => c.type === 'Function.Lambda')
     .map(c => {
       const props = c.props as Record<string, unknown>;
-      const sym = toSym(c.id);
       return {
         constructId: c.id,
-        containerAppName: c.id.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 32),
-        imageParamName: `${sym}Image`,
+        functionAppName: c.id.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 20),
         handler: (props.handler as string) ?? 'dist/handler.handler',
         code: (props.code as string) ?? 'dist/',
         runtime: (props.runtime as string) ?? 'nodejs20',
@@ -172,8 +170,7 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
     subnetsByVpc.get(vnetId)!.push({ id: c.id, cidr: p.cidr as string, public: (p.public as boolean) ?? false });
   }
 
-  // Fn.Lambda no Azure → Container App (evita Microsoft.Web/serverFarms com quota VM)
-  const hasContainerApp = stack.constructs.some(c => c.type === 'Compute.Container' || c.type === 'Function.Lambda');
+  const hasContainerApp = stack.constructs.some(c => c.type === 'Compute.Container');
   let sharedContainerEnvSym: string | null = null;
   if (hasContainerApp) {
     sharedContainerEnvSym = 'sharedContainerEnv';
@@ -190,6 +187,60 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
     outputs.push({ name: 'sharedCaeId', type: 'string', value: `empty(sharedCaeId) ? ${sharedContainerEnvSym}.id : sharedCaeId` });
   }
 
+  const hasLambda = stack.constructs.some(c => c.type === 'Function.Lambda');
+  const sharedFunctionStorageSym: string | null = hasLambda ? 'sharedFnStorage' : null;
+  const sharedFunctionPlanSym: string | null = hasLambda ? 'sharedFunctionPlan' : null;
+  if (sharedFunctionStorageSym) {
+    resources.push({
+      sym: sharedFunctionStorageSym,
+      type: 'Microsoft.Storage/storageAccounts',
+      apiVersion: '2023-01-01',
+      name: expr(`'fn\${uniqueString(resourceGroup().id)}'`),
+      location: 'location',
+      sku: { name: 'Standard_LRS' },
+      kind: 'StorageV2',
+      tags: { Stack: stack.name },
+      properties: { minimumTlsVersion: 'TLS1_2', allowBlobPublicAccess: false },
+    });
+  }
+  if (sharedFunctionPlanSym) {
+    resources.push({
+      sym: sharedFunctionPlanSym,
+      type: 'Microsoft.Web/serverfarms',
+      apiVersion: '2023-12-01',
+      name: expr(`'${stack.name}-plan'`),
+      location: 'location',
+      kind: 'functionapp',
+      sku: { name: 'FC1', tier: 'FlexConsumption' },
+      tags: { Stack: stack.name },
+      properties: { reserved: true },
+    });
+  }
+
+  const sharedFnBlobServiceSym: string | null = hasLambda ? 'sharedFnStorageBlobSvc' : null;
+  const sharedFnDeployContainerSym: string | null = hasLambda ? 'sharedFnDeployContainer' : null;
+
+  if (sharedFnBlobServiceSym) {
+    resources.push({
+      sym: sharedFnBlobServiceSym,
+      type: 'Microsoft.Storage/storageAccounts/blobServices',
+      apiVersion: '2023-01-01',
+      parent: sharedFunctionStorageSym!,
+      name: 'default',
+      properties: {},
+    });
+  }
+  if (sharedFnDeployContainerSym) {
+    resources.push({
+      sym: sharedFnDeployContainerSym,
+      type: 'Microsoft.Storage/storageAccounts/blobServices/containers',
+      apiVersion: '2023-01-01',
+      parent: sharedFnBlobServiceSym!,
+      name: 'deployments',
+      properties: {},
+    });
+  }
+
   const ctx: SynthContext = {
     idx,
     resources,
@@ -198,7 +249,9 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
     crossParams,
     functionImageParams,
     sharedContainerEnvSym,
-    sharedFunctionPlanSym: null,
+    sharedFunctionPlanSym,
+    sharedFunctionStorageSym,
+    sharedFnDeployContainerSym,
     cdnBucketRefs,
     subnetsByVpc,
     accountTier,

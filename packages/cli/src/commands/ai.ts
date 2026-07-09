@@ -38,8 +38,8 @@ async function retrieveGenerationContext(cwd: string, prompt: string, systemProm
   }
 }
 
-function resolveAIProvider(): AIProvider {
-  const model = process.env['IACMP_MODEL'];
+function resolveAIProvider(modelOverride?: string): AIProvider {
+  const model = modelOverride ?? process.env['IACMP_MODEL'];
   const preferred = process.env['IACMP_PROVIDER_AI']?.toLowerCase();
 
   if (preferred === 'openai' && process.env['OPENAI_API_KEY']) {
@@ -63,6 +63,12 @@ function resolveAIProvider(): AIProvider {
   throw new Error(
     'Configure ANTHROPIC_API_KEY ou OPENAI_API_KEY no .env do projeto'
   );
+}
+
+function resolveReviewProvider(): AIProvider | undefined {
+  const reviewModel = process.env['IACMP_MODEL_REVIEW'];
+  if (!reviewModel) return undefined;
+  return resolveAIProvider(reviewModel);
 }
 
 function resolveIaCProvider(flags: { provider?: string }, cwd: string): string {
@@ -171,8 +177,10 @@ export default class AI extends Command {
     }
 
     let aiProvider: AIProvider;
+    let reviewAiProvider: AIProvider | undefined;
     try {
       aiProvider = resolveAIProvider();
+      reviewAiProvider = resolveReviewProvider();
     } catch (err) {
       this.error((err as Error).message);
     }
@@ -204,6 +212,9 @@ export default class AI extends Command {
       kbSpinner.stop();
     }
     const provider = createContextualProvider(aiProvider, projectContext, iacProvider);
+    const reviewProvider = reviewAiProvider
+      ? createContextualProvider(reviewAiProvider, projectContext, iacProvider)
+      : undefined;
     // Quando provider=azure, o prompt pode mencionar SDKs AWS explicitamente (ex: o
     // prompt 04 diz "@aws-sdk/client-s3"). O GPT-4o tende a seguir a instrução do
     // usuário literalmente mesmo com override no system prompt. Sufixo garante que a
@@ -213,7 +224,7 @@ export default class AI extends Command {
       : args.prompt!;
     session.addUserMessage(finalPrompt);
     try {
-      await runGeneration(provider, session, cwd, dryRun, iacProvider, ask, finalPrompt);
+      await runGeneration(provider, session, cwd, dryRun, iacProvider, ask, finalPrompt, reviewProvider);
     } finally {
       close();
     }

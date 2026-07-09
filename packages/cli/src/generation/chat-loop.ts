@@ -11,11 +11,25 @@ import { AIProvider, ChatSession } from '@iacmp/ai';
 // DEPOIS do spinner. Só acontece com stdin TTY, por isso não aparece em testes.
 export async function streamInitial(provider: AIProvider, session: ChatSession): Promise<string | null> {
   const spinner = ora({ text: 'Gerando...', spinner: 'dots', discardStdin: false }).start();
+  const start = Date.now();
+  let firstChunk = false;
+  const announced = new Set<string>();
+
+  const timer = setInterval(() => {
+    if (!firstChunk) {
+      const secs = Math.floor((Date.now() - start) / 1000);
+      spinner.text = `Aguardando modelo... (${secs}s)`;
+    }
+  }, 1000);
+
   const chunks: string[] = [];
   let accumulated = '';
-  const announced = new Set<string>();
   try {
     await provider.stream(session.getMessages(), chunk => {
+      if (!firstChunk) {
+        firstChunk = true;
+        spinner.text = 'Gerando...';
+      }
       chunks.push(chunk);
       accumulated += chunk;
       const pathRegex = /"path"\s*:\s*"([^"]+)"/g;
@@ -28,9 +42,11 @@ export async function streamInitial(provider: AIProvider, session: ChatSession):
       }
     });
   } catch (err) {
+    clearInterval(timer);
     spinner.fail('Erro ao chamar a IA: ' + (err as Error).message);
     return null;
   }
+  clearInterval(timer);
   spinner.succeed('Resposta recebida');
   return chunks.join('');
 }

@@ -15,6 +15,10 @@ export class OpenAIProvider implements AIProvider {
     this.temperature = temperature;
   }
 
+  private usesCompletionTokens(): boolean {
+    return /^(gpt-5|o1|o3|o4)/.test(this.model);
+  }
+
   async chat(messages: AIMessage[]): Promise<AIResponse> {
     const openaiMessages = messages.map(m => ({
       role: m.role as 'user' | 'assistant' | 'system',
@@ -25,12 +29,12 @@ export class OpenAIProvider implements AIProvider {
       openaiMessages.unshift({ role: 'system', content: SYSTEM_PROMPT });
     }
 
-    const response = await withRetry(() => this.client.chat.completions.create({
-      model: this.model,
-      max_tokens: 12000,
-      temperature: this.temperature,
-      messages: openaiMessages,
-    }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const params: any = { model: this.model, temperature: this.temperature, messages: openaiMessages };
+    if (this.usesCompletionTokens()) params.max_completion_tokens = 12000;
+    else params.max_tokens = 12000;
+
+    const response = await withRetry(() => this.client.chat.completions.create(params));
 
     return {
       content: response.choices[0]?.message?.content ?? '',
@@ -63,13 +67,13 @@ export class OpenAIProvider implements AIProvider {
           ? [...openaiMessages, { role: 'assistant' as const, content: accumulated }, { role: 'user' as const, content: 'Continue exatamente de onde parou, sem repetir o que já foi gerado.' }]
           : openaiMessages;
 
-        const stream = await this.client.chat.completions.create({
-          model: this.model,
-          max_tokens: 12000,
-          temperature: this.temperature,
-          messages: msgs,
-          stream: true,
-        });
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const streamParams: any = { model: this.model, temperature: this.temperature, messages: msgs, stream: true };
+        if (this.usesCompletionTokens()) streamParams.max_completion_tokens = 12000;
+        else streamParams.max_tokens = 12000;
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const stream = await this.client.chat.completions.create(streamParams) as any;
 
         for await (const chunk of stream) {
           const delta = chunk.choices[0]?.delta?.content;
