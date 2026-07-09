@@ -70,9 +70,30 @@ function checkIacmp(): Check {
   }
 }
 
+function awsCliHint(): string {
+  switch (process.platform) {
+    case 'darwin':
+      return 'Instale com: brew install awscli (ou rode: iacmp doctor --fix)';
+    case 'linux':
+      return 'Instale com: sudo apt-get install awscli — ou baixe em https://aws.amazon.com/cli/';
+    case 'win32':
+      return 'Instale com: winget install -e --id Amazon.AWSCLI (ou choco install awscli) — ou baixe em https://aws.amazon.com/cli/';
+    default:
+      return 'Instale o AWS CLI: https://aws.amazon.com/cli/';
+  }
+}
+
 function checkAwsCli(): Check {
   const out = tryExec('aws --version');
-  if (!out) return { label: 'AWS CLI', ok: false, required: false, hint: 'Instale com: brew install awscli' };
+  if (!out) {
+    return {
+      label: 'AWS CLI',
+      ok: false,
+      required: false,
+      hint: awsCliHint(),
+      fix: fixViaPackageManager({ brew: 'awscli', aptGet: 'awscli', winget: 'Amazon.AWSCLI', choco: 'awscli' }),
+    };
+  }
   const version = out.split('/')[1]?.split(' ')[0] ?? out;
   return { label: 'AWS CLI', ok: true, required: false, value: version };
 }
@@ -122,6 +143,19 @@ function fixViaPackageManager(opts: {
   return undefined;
 }
 
+function azureCliHint(): string {
+  switch (process.platform) {
+    case 'darwin':
+      return 'Necessário para --provider azure — instale com: brew install azure-cli (ou rode: iacmp doctor --fix)';
+    case 'linux':
+      return 'Necessário para --provider azure — instale com: sudo apt-get install azure-cli (ou rode: iacmp doctor --fix)';
+    case 'win32':
+      return 'Necessário para --provider azure — instale com: winget install -e --id Microsoft.AzureCLI (ou rode: iacmp doctor --fix)';
+    default:
+      return 'Necessário para --provider azure — instale em: https://learn.microsoft.com/cli/azure/install-azure-cli';
+  }
+}
+
 function checkAzureCli(): Check {
   const out = tryExec('az --version');
   if (out) {
@@ -132,9 +166,22 @@ function checkAzureCli(): Check {
     label: 'Azure CLI',
     ok: false,
     required: false,
-    hint: 'Necessário para iacmp deploy/destroy --provider azure — rode: iacmp doctor --fix',
+    hint: azureCliHint(),
     fix: fixViaPackageManager({ brew: 'azure-cli', aptGet: 'azure-cli', winget: 'Microsoft.AzureCLI' }),
   };
+}
+
+function gcloudHint(): string {
+  switch (process.platform) {
+    case 'darwin':
+      return 'Necessário para --provider gcp — instale com: brew install --cask google-cloud-sdk (ou rode: iacmp doctor --fix)';
+    case 'linux':
+      return 'Necessário para --provider gcp — instale seguindo: https://cloud.google.com/sdk/docs/install';
+    case 'win32':
+      return 'Necessário para --provider gcp — instale com: winget install -e --id Google.CloudSDK (ou rode: iacmp doctor --fix)';
+    default:
+      return 'Necessário para --provider gcp — instale em: https://cloud.google.com/sdk/docs/install';
+  }
 }
 
 function checkGcloudCli(): Check {
@@ -147,9 +194,22 @@ function checkGcloudCli(): Check {
     label: 'gcloud CLI',
     ok: false,
     required: false,
-    hint: 'Necessário para iacmp deploy/destroy --provider gcp — rode: iacmp doctor --fix (mac) ou instale manualmente em https://cloud.google.com/sdk/docs/install',
-    fix: fixViaPackageManager({ brewCask: 'google-cloud-sdk' }),
+    hint: gcloudHint(),
+    fix: fixViaPackageManager({ brewCask: 'google-cloud-sdk', winget: 'Google.CloudSDK' }),
   };
+}
+
+function terraformHint(): string {
+  switch (process.platform) {
+    case 'darwin':
+      return 'Necessário para --provider terraform — instale com: brew install terraform (ou rode: iacmp doctor --fix)';
+    case 'linux':
+      return 'Necessário para --provider terraform — instale com: sudo apt-get install terraform (ou rode: iacmp doctor --fix)';
+    case 'win32':
+      return 'Necessário para --provider terraform — instale com: winget install -e --id Hashicorp.Terraform (ou choco install terraform) — ou rode: iacmp doctor --fix';
+    default:
+      return 'Necessário para --provider terraform — instale em: https://developer.hashicorp.com/terraform/install';
+  }
 }
 
 function checkTerraformCli(): Check {
@@ -162,8 +222,8 @@ function checkTerraformCli(): Check {
     label: 'Terraform CLI',
     ok: false,
     required: false,
-    hint: 'Necessário para iacmp deploy/destroy --provider terraform — rode: iacmp doctor --fix',
-    fix: fixViaPackageManager({ brew: 'terraform', aptGet: 'terraform', winget: 'Hashicorp.Terraform' }),
+    hint: terraformHint(),
+    fix: fixViaPackageManager({ brew: 'terraform', aptGet: 'terraform', winget: 'Hashicorp.Terraform', choco: 'terraform' }),
   };
 }
 
