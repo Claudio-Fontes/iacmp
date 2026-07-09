@@ -173,8 +173,8 @@ export function classifySynthError(output: string, files: GeneratedFile[], attem
     );
   }
   if (/env vars com atributo errado em ref\(\)/.test(output)) {
-    const fixes = [...output.matchAll(/Lambda "([^"]+)": environment\.(\w+) usa ref\('([^']+)', '(\w+)'\) mas deveria ser ref\('([^']+)', '(\w+)'\)/g)]
-      .map(m => `  ANTES: ${m[2]}: ref('${m[3]}', '${m[4]}')\n  DEPOIS: ${m[2]}: ref('${m[5]}', '${m[6]}')`);
+    const fixes = [...output.matchAll(/Lambda "([^"]+)": environment\.(\w+) usa ref\('([^']+)', '(\w+)'\) mas o sufixo "\w+" exige atributo '(\w+)'\./g)]
+      .map(m => `  ANTES: ${m[2]}: ref('${m[3]}', '${m[4]}')\n  DEPOIS: ${m[2]}: ref('${m[3]}', '${m[5]}')`);
     const fixBlock = fixes.length > 0 ? fixes.join('\n') : '  (veja os pares apontados acima)';
     corrections.push(
       `[PROBLEMA: atributo errado em ref()]\n` +

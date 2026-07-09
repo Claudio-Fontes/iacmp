@@ -88,7 +88,6 @@ export async function rewriteAndReconcile(
   cwd: string,
   previouslyWritten: string[]
 ): Promise<string[]> {
-  applyConfig(parsed, cwd);
   const written = await writeGeneratedFiles(parsed.files, cwd, false, async () => 'y');
   if (written.length === 0) return previouslyWritten;
   const orphans = removeOrphanedGeneratedFiles(previouslyWritten, parsed.files, cwd);

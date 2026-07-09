@@ -47,7 +47,10 @@ async function runWithPolling(
         .catch(() => { /* polling silencioso — erro não propaga */ });
     }, 5000);
 
+    let finished = false;
     const finish = (err?: Error) => {
+      if (finished) return;
+      finished = true;
       pollActive = false;
       clearInterval(timer);
       process.stdout.write('\r\x1b[K'); // limpa linha de status residual
@@ -74,9 +77,11 @@ async function runWithPolling(
 
     child.on('error', handleError);
 
-    child.on('close', (code) => {
-      if (code === 0 || code === null) {
+    child.on('close', (code, signal) => {
+      if (code === 0) {
         finish();
+      } else if (code === null) {
+        handleError(new Error(`Process terminated by signal: ${signal ?? 'unknown'}`));
       } else {
         handleError(new Error(`${cmd.bin} terminou com código ${code}`));
       }

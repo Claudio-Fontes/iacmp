@@ -18,6 +18,7 @@ import {
   collectExistingGeneratedFiles,
   persistInitial,
   rewriteAndReconcile,
+  applyConfig,
   AskFn,
 } from './file-persister';
 import { validateWithAutoInstall } from './synth-validator';
@@ -170,6 +171,7 @@ async function runSynthCorrectionLoop(
         correctionMsg = azureSdkMsg;
       } else if (tsResult.valid) {
         spinner.succeed('Synth validado');
+        applyConfig(parsed, cwd);
         synthOk = true;
         break;
       } else {
