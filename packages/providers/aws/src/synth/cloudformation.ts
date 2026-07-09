@@ -199,8 +199,11 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
   // Coleta TODOS os erros de handlers antes de lançar — mesma lógica dos constructs.
   const handlerErrors: string[] = [];
   try { validateHandlerEnvVarAccess(stack.constructs, ctx); } catch (e) { handlerErrors.push((e as Error).message); }
-  try { validateCreateHandlerUUID(); } catch (e) { handlerErrors.push((e as Error).message); }
-  try { validateUpdateHandlerExpression(); } catch (e) { handlerErrors.push((e as Error).message); }
+  const hasLambda = stack.constructs.some(c => c.type === 'Function.Lambda');
+  if (hasLambda) {
+    try { validateCreateHandlerUUID(); } catch (e) { handlerErrors.push((e as Error).message); }
+    try { validateUpdateHandlerExpression(); } catch (e) { handlerErrors.push((e as Error).message); }
+  }
   if (handlerErrors.length > 0) throw new Error(handlerErrors.join('\n\n'));
 
   for (const construct of stack.constructs) {

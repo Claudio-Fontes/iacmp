@@ -386,14 +386,14 @@ export function validateEnvVarRefs(
       }
     }
   }
+  const allErrors: string[] = [];
   if (stringErrors.length > 0) {
-    throw new Error(
-      `env vars com ID lógico em vez de ref() detectadas:\n- ${stringErrors.join('\n- ')}`,
-    );
+    allErrors.push(`env vars com ID lógico em vez de ref() detectadas:\n- ${stringErrors.join('\n- ')}`);
   }
   if (attrErrors.length > 0) {
-    throw new Error(
-      `env vars com atributo errado em ref() detectadas:\n- ${attrErrors.join('\n- ')}`,
-    );
+    allErrors.push(`env vars com atributo errado em ref() detectadas:\n- ${attrErrors.join('\n- ')}`);
+  }
+  if (allErrors.length > 0) {
+    throw new Error(allErrors.join('\n\n'));
   }
 }
