@@ -13,7 +13,7 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
       const fnBaseName = construct.id.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 40);
       const saPrefix = safeStorageName(construct.id + 'fn').slice(0, 11);
       const saSym = `${sym}Sa`;
-      const planSym = `${sym}Plan`;
+      const planSym = ctx.sharedFunctionPlanSym ?? `${sym}Plan`;
 
       // Storage Account para AzureWebJobsStorage (name = prefix 11 chars + uniqueString 13 chars = 24 chars)
       resources.push({
@@ -30,19 +30,6 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
           supportsHttpsTrafficOnly: true,
           minimumTlsVersion: 'TLS1_2',
         },
-      });
-
-      // App Service Plan (Consumption)
-      resources.push({
-        sym: planSym,
-        type: 'Microsoft.Web/serverfarms',
-        apiVersion: '2022-03-01',
-        name: `${fnBaseName}-plan`,
-        location: 'location',
-        kind: 'functionapp',
-        sku: { name: 'Y1', tier: 'Dynamic' },
-        tags: tag(construct.id),
-        properties: { reserved: true },
       });
 
       const envVars = Object.entries(environment).map(([k, v]) => {

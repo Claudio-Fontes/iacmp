@@ -169,6 +169,22 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
     subnetsByVpc.get(vnetId)!.push({ id: c.id, cidr: p.cidr as string, public: (p.public as boolean) ?? false });
   }
 
+  const hasLambda = stack.constructs.some(c => c.type === 'Function.Lambda');
+  const sharedFunctionPlanSym: string | null = hasLambda ? 'sharedFunctionPlan' : null;
+  if (sharedFunctionPlanSym) {
+    resources.push({
+      sym: sharedFunctionPlanSym,
+      type: 'Microsoft.Web/serverfarms',
+      apiVersion: '2022-03-01',
+      name: expr(`'${stack.name}-plan'`),
+      location: 'location',
+      kind: 'functionapp',
+      sku: { name: 'Y1', tier: 'Dynamic' },
+      tags: { Stack: stack.name },
+      properties: { reserved: true },
+    });
+  }
+
   const hasContainerApp = stack.constructs.some(c => c.type === 'Compute.Container');
   let sharedContainerEnvSym: string | null = null;
   if (hasContainerApp) {
@@ -194,6 +210,7 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
     crossParams,
     functionImageParams,
     sharedContainerEnvSym,
+    sharedFunctionPlanSym,
     cdnBucketRefs,
     subnetsByVpc,
     accountTier,

@@ -172,6 +172,7 @@ export interface SynthContext {
   crossParams: Map<string, string>;
   functionImageParams: Set<string>;
   sharedContainerEnvSym: string | null;
+  sharedFunctionPlanSym: string | null;
   cdnBucketRefs: Set<string>;
   subnetsByVpc: Map<string, Array<{ id: string; cidr: string; public: boolean }>>;
   accountTier: 'free' | 'standard';
