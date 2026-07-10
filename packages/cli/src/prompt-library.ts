@@ -202,7 +202,7 @@ Adicione em nextSteps os comandos para criar o ECR e fazer push da imagem antes 
 - Lambda "DataProcessorFn" acionada por eventos S3 (ObjectCreated), timeout 300s, memory 512MB
 - DynamoDB "ProcessedDataTable" onde os dados processados são salvos (partitionKey: recordId, sortKey: source)
 - S3 Bucket "ProcessedBucket" onde os arquivos processados são arquivados
-- Policy IAM para a Lambda com s3:GetObject no RawDataBucket, s3:PutObject no ProcessedBucket e dynamodb:PutItem/BatchWriteItem
+- Policy IAM para a Lambda com s3:GetObject e s3:DeleteObject no RawDataBucket, s3:PutObject no ProcessedBucket e dynamodb:PutItem/BatchWriteItem
 
 Gere o handler TypeScript que: lê o arquivo do S3, parseia como JSON (array de objetos), salva cada item no DynamoDB com batchWrite e move o arquivo original para o ProcessedBucket.`,
   },
