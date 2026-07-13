@@ -94,16 +94,14 @@ export function ensureProjectInitialized(cwd: string, options: BootstrapOptions 
     // projeto baixe uma versão defasada do npm e o synth rejeite engines/recursos
     // que o CLI atual já suporta. Em produção (npm -g), resolve o core publicado.
     const coreSpec = resolveCoreInstallSpec();
-    // typescript fixado em ~5.5 (igual o `iacmp init`): o projeto pinar seu build
-    // tool é prática normal e estável. A TS mais nova (6.x) trata a deprecation
-    // de moduleResolution:node10 como ERRO e muda a resolução de @types, quebrando
-    // o `tsc` dos handlers. O synth (ts-node) detecta dinamicamente a versão via
-    // ts-compat — independente deste pin.
-    execSync(`npm install ${coreSpec} ts-node typescript@~5.5.0 @types/node`, {
+    // tsx como runtime de TypeScript (suporta TS5–7+, sem registrar ts-node).
+    // typescript sem pin — o tsconfig gerado usa moduleResolution:bundler que é
+    // válido para qualquer versão suportada. @types/node necessário com bundler.
+    execSync(`npm install ${coreSpec} tsx typescript @types/node`, {
       cwd,
       stdio: 'pipe',
     });
-    created.push(`deps: @iacmp/core${coreSpec.startsWith('@') ? '' : ' (local)'}, ts-node, typescript@~5.5, @types/node`);
+    created.push(`deps: @iacmp/core${coreSpec.startsWith('@') ? '' : ' (local)'}, tsx, typescript, @types/node`);
   }
 
   return { bootstrapped: true, created };
@@ -142,8 +140,9 @@ function tsconfigContent(): string {
       compilerOptions: {
         target: 'ES2022',
         module: 'CommonJS',
-        moduleResolution: 'node',
+        moduleResolution: 'bundler',
         lib: ['es2022'],
+        types: ['node'],
         // Leniente de propósito: os handlers em src/ são gerados pela IA e
         // importam libs (pg, ioredis, aws-sdk...) que nem sempre têm @types
         // instalados. Strict aqui bloquearia o build por "implicit any" mesmo

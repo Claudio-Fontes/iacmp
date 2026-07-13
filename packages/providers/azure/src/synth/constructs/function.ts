@@ -29,9 +29,52 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
           throw new Error(`Fn.Lambda "${construct.id}": env var "${k}" resolveu para undefined. No código da STACK, o valor de environment deve ser uma string literal ou ref('X','Attr') — nunca process.env.${k} (isso é runtime, não existe no synth).`);
         }
         appSettings.push({ name: k, value });
+
+        // Azure: quando a Lambda referencia Database.DynamoDB pelo atributo Name,
+        // injeta automaticamente a ConnectionString do Cosmos DB Table API como
+        // {ENV_KEY}_CONNECTION_STRING. Em AWS, IAM cuida da auth — em Azure é preciso.
+        // Usa globalIdx para detectar o tipo mesmo que o construct esteja em outra stack.
+        if (isRef(v)) {
+          const ref = v as Ref;
+          const c = ctx.globalIdx.get(ref.constructId) ?? ctx.idx.get(ref.constructId);
+          if (c?.type === 'Database.DynamoDB' && ref.attribute === 'Name') {
+            const connKey = `${k}_CONNECTION_STRING`;
+            // O valor é sempre um crossParam — o construct pode estar em outra stack
+            const connVal = resolveRef({ ...ref, attribute: 'ConnectionString' } as Ref, ctx.idx, crossParams);
+            appSettings.push({ name: connKey, value: connVal });
+          }
+        }
       }
 
       const fnAppName = `${construct.id.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 20)}`;
+
+      // FC1 (Flex Consumption) aceita apenas 1 Function App por plano — cada Function cria o seu
+      const planSym = `${sym}Plan`;
+      resources.push({
+        sym: planSym,
+        type: 'Microsoft.Web/serverfarms',
+        apiVersion: '2023-12-01',
+        name: expr(`'${fnAppName}-plan-\${uniqueString(resourceGroup().id)}'`),
+        location: 'location',
+        kind: 'functionapp',
+        sku: { name: 'FC1', tier: 'FlexConsumption' },
+        tags: tag(construct.id),
+        properties: { reserved: true },
+      });
+
+      // Cada Function App tem seu próprio container de deploy para evitar colisão de released-package.zip
+      const fnContainerSym = `${sym}DeployContainer`;
+      const fnContainerName = `deploy-${fnAppName}`.slice(0, 63);
+      if (ctx.sharedFnBlobServiceSym) {
+        resources.push({
+          sym: fnContainerSym,
+          type: 'Microsoft.Storage/storageAccounts/blobServices/containers',
+          apiVersion: '2023-01-01',
+          parent: ctx.sharedFnBlobServiceSym,
+          name: fnContainerName,
+          properties: {},
+        });
+      }
 
       resources.push({
         sym,
@@ -43,13 +86,13 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
         tags: tag(construct.id),
         identity: { type: 'SystemAssigned' },
         properties: {
-          serverFarmId: ctx.sharedFunctionPlanSym ? expr(`${ctx.sharedFunctionPlanSym}.id`) : '',
+          serverFarmId: expr(`${planSym}.id`),
           functionAppConfig: {
             deployment: {
               storage: {
                 type: 'blobContainer',
                 value: ctx.sharedFunctionStorageSym
-                  ? expr(`'\${${ctx.sharedFunctionStorageSym}.properties.primaryEndpoints.blob}deployments'`)
+                  ? expr(`'\${${ctx.sharedFunctionStorageSym}.properties.primaryEndpoints.blob}${fnContainerName}'`)
                   : '',
                 authentication: { type: 'SystemAssignedIdentity' },
               },
@@ -66,11 +109,9 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
           siteConfig: { appSettings },
           httpsOnly: true,
         },
-        dependsOn: [
-          ...(ctx.sharedFunctionPlanSym ? [ctx.sharedFunctionPlanSym] : []),
-          ...(ctx.sharedFunctionStorageSym ? [ctx.sharedFunctionStorageSym] : []),
-          ...(ctx.sharedFnDeployContainerSym ? [ctx.sharedFnDeployContainerSym] : []),
-        ],
+        ...(ctx.sharedFnBlobServiceSym
+          ? { dependsOn: [fnContainerSym] }
+          : {}),
       });
 
       if (ctx.sharedFunctionStorageSym) {
@@ -156,14 +197,14 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
         if (lambdaConst) {
           const lambdaSym = toSym(lambdaId);
           if (lambdaConst.type === 'Function.Lambda') {
-            backendUrl = expr(`'https://\${${lambdaSym}.properties.defaultHostName}/api'`);
+            backendUrl = expr(`'https://\${${lambdaSym}.properties.defaultHostName}/api/HttpTrigger'`);
           } else {
             backendUrl = expr(`'https://\${${lambdaSym}.properties.configuration.ingress.fqdn}'`);
           }
         } else {
           const fqdnParam = crossParamName(lambdaId, 'Fqdn');
           crossParams.set(fqdnParam, 'string');
-          backendUrl = expr(`'https://\${${fqdnParam}}'`);
+          backendUrl = expr(`'https://\${${fqdnParam}}/api/HttpTrigger'`);
         }
         resources.push({
           sym: `${sym}Backend${lambdaId.replace(/[^a-zA-Z0-9]/g, '')}`,

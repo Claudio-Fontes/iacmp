@@ -142,6 +142,23 @@ function buildFunctionBundle(
     throw new Error('esbuild não encontrado. Rode `npm install` no iacmp.');
   }
 
+  // __dirname em runtime é dist/commands/ (tsup bundla cada command ali)
+  // o shim fica em dist/deploy/ — tentamos os dois e usamos o que existe
+  const shimCandidates = [
+    path.resolve(__dirname, 'azure-dynamo-shim.js'),
+    path.resolve(__dirname, '../deploy/azure-dynamo-shim.js'),
+    path.resolve(__dirname, 'deploy/azure-dynamo-shim.js'),
+  ];
+  const shimPath = shimCandidates.find(p => fs.existsSync(p)) ?? shimCandidates[0];
+  let dataTablesNodeModulePaths: string[] = [];
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const dtPkgPath = require.resolve('@azure/data-tables/package.json') as string;
+    dataTablesNodeModulePaths = [path.resolve(path.dirname(dtPkgPath), '..', '..', 'node_modules')];
+  } catch {
+    // pacote não encontrado — esbuild vai falhar se o shim referenciar @azure/data-tables
+  }
+
   esbuild.buildSync({
     entryPoints: [srcEntry],
     outfile: path.join(buildDir, 'handler.js'),
@@ -150,6 +167,11 @@ function buildFunctionBundle(
     target: 'node20',
     format: 'cjs',
     external: [],
+    alias: {
+      '@aws-sdk/client-dynamodb': shimPath,
+      '@aws-sdk/lib-dynamodb': shimPath,
+    },
+    nodePaths: dataTablesNodeModulePaths,
     banner: { js: `const __iacmp_meta_url = require('url').pathToFileURL(__filename).href;` },
     define: { 'import.meta.url': '__iacmp_meta_url' },
     logLevel: 'silent',
@@ -213,6 +235,12 @@ module.exports = async function(context, req) {
     const qIdx = rawUrl.indexOf('?');
     pathname = qIdx >= 0 ? rawUrl.slice(0, qIdx) : rawUrl;
     queryString = qIdx >= 0 ? rawUrl.slice(qIdx + 1) : '';
+  }
+
+  // Azure Functions passa o pathname com o prefixo /api/HttpTrigger — remove para
+  // que os route patterns e o pathParameters.id correspondam ao path real da API.
+  if (pathname.startsWith('/api/HttpTrigger')) {
+    pathname = pathname.slice('/api/HttpTrigger'.length) || '/';
   }
 
   // Event Grid blob trigger

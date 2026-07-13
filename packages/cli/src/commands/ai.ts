@@ -16,9 +16,11 @@ import {
   retrieve,
   formatRetrievedContext,
   searchKnowledgeBase,
+  enrichPrompt,
 } from '@iacmp/ai';
 import { ensureProjectInitialized } from '../bootstrap';
 import { runGeneration, AskFn } from '../generation';
+import { loadEnv } from '../env-loader';
 
 // Recupera conhecimento (docs de construct + padrões de plataforma) relevante
 // ao pedido e o formata para injeção no contexto da geração. Usa só BM25
@@ -137,6 +139,7 @@ export default class AI extends Command {
   async run(): Promise<void> {
     const { args, flags } = await this.parse(AI);
     const cwd = process.cwd();
+    loadEnv(cwd);
     const dryRun = flags['dry-run'];
     const iacProvider = resolveIaCProvider({ provider: flags.provider }, cwd);
 
@@ -215,16 +218,25 @@ export default class AI extends Command {
     const reviewProvider = reviewAiProvider
       ? createContextualProvider(reviewAiProvider, projectContext, iacProvider)
       : undefined;
+    // Enriquecimento de prompt: faz análise rápida e, se o prompt for ambíguo em
+    // pontos que mudam a arquitetura (tipo de banco, auth, lifecycle S3), faz até
+    // 2 perguntas ao usuário antes de gerar. IAM, runtime e TLS são injetados
+    // silenciosamente sem perguntar. Pula em stdin não-interativo (pipe/CI).
+    const userPrompt = args.prompt!;
+    const enrichedUserPrompt = process.stdin.isTTY
+      ? await enrichPrompt(aiProvider, userPrompt, iacProvider, ask)
+      : userPrompt;
+
     // Quando provider=azure, o prompt pode mencionar SDKs AWS explicitamente (ex: o
     // prompt 04 diz "@aws-sdk/client-s3"). O GPT-4o tende a seguir a instrução do
     // usuário literalmente mesmo com override no system prompt. Sufixo garante que a
     // tradução Azure seja aplicada antes de enviar à IA.
-    const finalPrompt = iacProvider === 'azure' && /\@aws-sdk\/|aws-sdk|s3-request-presigner|DynamoDBClient|ScanCommand|PutCommand|GetCommand|DeleteCommand/.test(args.prompt ?? '')
-      ? `${args.prompt}\n\n[AZURE OVERRIDE: Este prompt menciona SDKs AWS. NUNCA gere @aws-sdk/* neste projeto Azure. Substituições obrigatórias: S3/presigned-URL → Storage.Bucket + @azure/storage-blob + BlobServiceClient.fromConnectionString + SAS (generateBlobSASQueryParameters); DynamoDB → Database.DynamoDB + @azure/data-tables. Gere TODOS os handlers com SDKs Azure.]`
-      : args.prompt!;
+    const finalPrompt = iacProvider === 'azure' && /\@aws-sdk\/|aws-sdk|s3-request-presigner|DynamoDBClient|ScanCommand|PutCommand|GetCommand|DeleteCommand/.test(userPrompt)
+      ? `${enrichedUserPrompt}\n\n[AZURE OVERRIDE: Este prompt menciona SDKs AWS. NUNCA gere @aws-sdk/* neste projeto Azure. Substituições obrigatórias: S3/presigned-URL → Storage.Bucket + @azure/storage-blob + BlobServiceClient.fromConnectionString + SAS (generateBlobSASQueryParameters); DynamoDB → Database.DynamoDB + @azure/data-tables. Gere TODOS os handlers com SDKs Azure.]`
+      : enrichedUserPrompt;
     session.addUserMessage(finalPrompt);
     try {
-      await runGeneration(provider, session, cwd, dryRun, iacProvider, ask, finalPrompt, reviewProvider);
+      await runGeneration(provider, session, cwd, dryRun, iacProvider, ask, enrichedUserPrompt, reviewProvider);
     } finally {
       close();
     }

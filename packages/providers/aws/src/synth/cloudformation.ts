@@ -141,6 +141,38 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
       }
     }
   }
+  // Custom.Resource com AWS::Lambda::EventSourceMapping — detecta o vínculo
+  // Lambda→SQS/Kinesis para que a role da Lambda receba as permissões necessárias
+  // (AWSLambdaSQSQueueExecutionRole / KinesisExecutionRole). O modelo às vezes usa
+  // Custom.Resource em vez de Fn.Lambda.eventSources; sem este passo o deploy
+  // falha com "role does not have permissions to call ReceiveMessage on SQS".
+  for (const s of universe) {
+    for (const c of s.constructs) {
+      if (c.type !== 'Custom.Resource') continue;
+      const cfn = (c.props as Record<string, unknown>).cloudformation as Record<string, unknown> | undefined;
+      if (cfn?.type !== 'AWS::Lambda::EventSourceMapping') continue;
+      const props = cfn.properties as Record<string, unknown> | undefined;
+      if (!props) continue;
+      // Extrai lambdaId de FunctionName: { Ref: 'LambdaId' }
+      const fn = props.FunctionName as Record<string, unknown> | undefined;
+      const lambdaId = typeof fn?.Ref === 'string' ? fn.Ref : undefined;
+      if (!lambdaId || registry.get(lambdaId)?.type !== 'Function.Lambda') continue;
+      // Determina tipo da fila: Ref object iacmp:ref ou { 'Fn::ImportValue': 'X.Y' }
+      const esa = props.EventSourceArn as Record<string, unknown> | undefined;
+      let sourceConstructId: string | undefined;
+      if (isRef(esa as unknown)) {
+        sourceConstructId = (esa as { constructId: string }).constructId;
+      } else if (typeof esa?.['Fn::ImportValue'] === 'string') {
+        const raw = esa['Fn::ImportValue'] as string;
+        const dot = raw.lastIndexOf('.');
+        if (dot > 0) sourceConstructId = raw.slice(0, dot);
+      }
+      const sourceType = sourceConstructId ? registry.get(sourceConstructId)?.type : undefined;
+      if (sourceType === 'Messaging.Queue') sqsEventSourceLambdas.add(lambdaId);
+      if (sourceType === 'Messaging.Stream') kinesisEventSourceLambdas.add(lambdaId);
+    }
+  }
+
   // Coleta TODOS os erros de constructs antes de lançar — o modelo vê tudo de uma
   // vez e corrige em uma rodada, em vez de corrigir um erro por tentativa.
   const constructErrors: string[] = [];

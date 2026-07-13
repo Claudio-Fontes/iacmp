@@ -1,4 +1,4 @@
-import { Stack, BaseConstruct, CONSTRUCT_TYPES } from '@iacmp/core';
+import { Stack, BaseConstruct, CONSTRUCT_TYPES, isRef, Ref } from '@iacmp/core';
 import { DiagramModel, DiagramStack, DiagramNode, DiagramRelationship } from './model';
 
 const TYPE_META: Record<string, { emoji: string; technology: string }> = Object.fromEntries(
@@ -299,8 +299,15 @@ function inferCrossStackRelationships(
   for (const srcStack of builtStacks) {
     for (const srcNode of srcStack.nodes) {
       if (!ENV_CAPABLE_TYPES.has(srcNode.constructType)) continue;
-      const env = srcNode.props?.environment as Record<string, string> | undefined;
+      const env = srcNode.props?.environment as Record<string, unknown> | undefined;
       if (!env || Object.keys(env).length === 0) continue;
+
+      // Conjunto de constructIds explicitamente referenciados via ref() nos valores de env.
+      // Quando existem refs, usamos matching preciso em vez de tipo genérico cross-stack.
+      const directRefIds = new Set<string>();
+      for (const v of Object.values(env)) {
+        if (isRef(v as unknown)) directRefIds.add((v as Ref).constructId);
+      }
 
       for (const hint of ENV_HINTS) {
         const matched = Object.keys(env).some(k => hint.pattern.test(k));
@@ -310,17 +317,34 @@ function inferCrossStackRelationships(
           for (const tgtNode of tgtStack.nodes) {
             if (tgtNode.constructType !== hint.targetType) continue;
             if (tgtNode.id === srcNode.id) continue;
-            // Intra-stack: a heurística por TIPO é ruidosa (linkaria a todos os
-            // recursos do tipo). Só inferimos quando o VALOR de alguma env var
-            // referencia esse recurso específico. Cross-stack mantém o match por
-            // tipo (env value costuma ser um ARN/endpoint resolvido em deploy).
-            if (tgtStack === srcStack && !envReferencesTarget(env, tgtNode.label)) continue;
+            if (tgtStack === srcStack && !envReferencesTarget(env as Record<string, string>, tgtNode.label)) continue;
+            // Cross-stack: quando o env usa ref(), restringe ao constructId referenciado.
+            // Evita linkar a TODOS os recursos do tipo (ex: todas as filas) quando só
+            // uma é de fato referenciada.
+            if (tgtStack !== srcStack && directRefIds.size > 0 && !directRefIds.has(tgtNode.label)) continue;
             relationships.push({
               sourceId: srcNode.id,
               targetId: tgtNode.id,
               label: hint.label,
               inferred: true,
             });
+          }
+        }
+      }
+    }
+  }
+
+  // Events.EventBridge → Lambda via rules[].targetLambdaId
+  for (const srcStack of builtStacks) {
+    for (const srcNode of srcStack.nodes) {
+      if (srcNode.constructType !== 'Events.EventBridge') continue;
+      const rules = (srcNode.props?.rules as Array<{ targetLambdaId?: string }>) ?? [];
+      for (const rule of rules) {
+        if (!rule.targetLambdaId) continue;
+        for (const tgtStack of builtStacks) {
+          const tgtNode = tgtStack.nodes.find(n => n.label === rule.targetLambdaId);
+          if (tgtNode) {
+            relationships.push({ sourceId: srcNode.id, targetId: tgtNode.id, label: 'triggers', inferred: false });
           }
         }
       }

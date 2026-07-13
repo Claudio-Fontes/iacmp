@@ -139,9 +139,12 @@ export function extractAzureFunctionMeta(stack: Stack, allStacks?: Stack[]): Azu
 }
 
 // ── Main export ───────────────────────────────────────────────────────────────
-export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standard' }): string {
+export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standard'; allStacks?: Stack[] }): string {
   const accountTier = opts?.accountTier ?? 'standard';
   const idx = new Map<string, BaseConstruct>(stack.constructs.map(c => [c.id, c]));
+  // globalIdx: lookup de tipo em qualquer stack (nunca usado para resolver valor de ref)
+  const allConstructs = (opts?.allStacks ?? [stack]).flatMap(s => s.constructs);
+  const globalIdx = new Map<string, BaseConstruct>(allConstructs.map(c => [c.id, c]));
   const resources: BicepResource[] = [];
   const outputs: BicepOutput[] = [];
   const needsAdminPassword = { value: false };
@@ -189,7 +192,7 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
 
   const hasLambda = stack.constructs.some(c => c.type === 'Function.Lambda');
   const sharedFunctionStorageSym: string | null = hasLambda ? 'sharedFnStorage' : null;
-  const sharedFunctionPlanSym: string | null = hasLambda ? 'sharedFunctionPlan' : null;
+  const sharedFunctionPlanSym: string | null = null; // FC1 suporta apenas 1 Function por plano — cada Function cria o seu
   if (sharedFunctionStorageSym) {
     resources.push({
       sym: sharedFunctionStorageSym,
@@ -203,22 +206,9 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
       properties: { minimumTlsVersion: 'TLS1_2', allowBlobPublicAccess: false },
     });
   }
-  if (sharedFunctionPlanSym) {
-    resources.push({
-      sym: sharedFunctionPlanSym,
-      type: 'Microsoft.Web/serverfarms',
-      apiVersion: '2023-12-01',
-      name: expr(`'${stack.name}-plan'`),
-      location: 'location',
-      kind: 'functionapp',
-      sku: { name: 'FC1', tier: 'FlexConsumption' },
-      tags: { Stack: stack.name },
-      properties: { reserved: true },
-    });
-  }
 
   const sharedFnBlobServiceSym: string | null = hasLambda ? 'sharedFnStorageBlobSvc' : null;
-  const sharedFnDeployContainerSym: string | null = hasLambda ? 'sharedFnDeployContainer' : null;
+  const sharedFnDeployContainerSym: string | null = null; // cada Function cria seu próprio container
 
   if (sharedFnBlobServiceSym) {
     resources.push({
@@ -230,19 +220,10 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
       properties: {},
     });
   }
-  if (sharedFnDeployContainerSym) {
-    resources.push({
-      sym: sharedFnDeployContainerSym,
-      type: 'Microsoft.Storage/storageAccounts/blobServices/containers',
-      apiVersion: '2023-01-01',
-      parent: sharedFnBlobServiceSym!,
-      name: 'deployments',
-      properties: {},
-    });
-  }
 
   const ctx: SynthContext = {
     idx,
+    globalIdx,
     resources,
     outputs,
     needsAdminPassword,
@@ -251,6 +232,7 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
     sharedContainerEnvSym,
     sharedFunctionPlanSym,
     sharedFunctionStorageSym,
+    sharedFnBlobServiceSym,
     sharedFnDeployContainerSym,
     cdnBucketRefs,
     subnetsByVpc,

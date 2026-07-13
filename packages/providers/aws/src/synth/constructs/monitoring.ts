@@ -1,7 +1,33 @@
-import { BaseConstruct } from '@iacmp/core';
+import { BaseConstruct, isRef, type Ref } from '@iacmp/core';
 import type { CloudFormationResource, SynthContext } from '../types';
-import { alarmActionsBlock } from '../resolvers';
+import { alarmActionsBlock, resolveRef } from '../resolvers';
 import { resourceRef } from '../graph';
+
+function resolveCustomProps(value: unknown, ctx: SynthContext): unknown {
+  if (value === null || value === undefined || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map(v => resolveCustomProps(v, ctx));
+  const obj = value as Record<string, unknown>;
+  // ref() object (produzido pelo ref() do @iacmp/core nos props do Custom.Resource)
+  if (isRef(obj as unknown)) {
+    try { return resolveRef(obj as unknown as Ref, ctx); } catch { return obj; }
+  }
+  // { 'Fn::ImportValue': 'ConstructId.Attribute' } — atalho de dot-notation
+  if ('Fn::ImportValue' in obj && typeof obj['Fn::ImportValue'] === 'string') {
+    const raw = obj['Fn::ImportValue'] as string;
+    const dot = raw.lastIndexOf('.');
+    if (dot > 0) {
+      const constructId = raw.slice(0, dot);
+      const attribute = raw.slice(dot + 1);
+      if (ctx.registry.has(constructId)) {
+        try {
+          return resolveRef({ kind: 'iacmp:ref', constructId, attribute } as Ref, ctx);
+        } catch { /* não resolvível — passa adiante sem alterar */ }
+      }
+    }
+    return obj;
+  }
+  return Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, resolveCustomProps(v, ctx)]));
+}
 
 export function synthMonitoring(
   construct: BaseConstruct,
@@ -92,7 +118,8 @@ export function synthMonitoring(
     case 'Custom.Resource': {
       const cfn = props.cloudformation as { type: string; properties: Record<string, unknown> } | undefined;
       if (!cfn) return [];
-      return [[logicalId, { Type: cfn.type, Properties: cfn.properties }]];
+      const resolved = resolveCustomProps(cfn.properties, ctx) as Record<string, unknown>;
+      return [[logicalId, { Type: cfn.type, Properties: resolved }]];
     }
 
     default: return null;

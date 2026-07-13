@@ -18,6 +18,7 @@ export { writeGeneratedFiles } from './tools/file-writer';
 export { deleteFiles, removeOrphanedGeneratedFiles } from './tools/file-deleter';
 export { renderAndConfirm, FileDiff, AskFn } from './tools/diff-renderer';
 export { runSynth, runSynthCapture } from './tools/synth-runner';
+export { enrichPrompt } from './tools/prompt-enricher';
 export {
   safeJoin,
   isWithin,

@@ -279,7 +279,7 @@ function packageJson(projectName: string, coreRef: string): string {
     },
     devDependencies: {
       '@types/node': '^22',
-      'ts-node': '^10',
+      'tsx': '*',
       typescript: '~5.5.0',
     },
   }, null, 2) + '\n';
@@ -290,8 +290,9 @@ function tsConfig(hasAppCode: boolean): string {
     compilerOptions: {
       target: 'ES2022',
       module: 'CommonJS',
-      moduleResolution: 'node',
+      moduleResolution: 'bundler',
       lib: ['es2022'],
+      types: ['node'],
       strict: true,
       noImplicitAny: true,
       strictNullChecks: true,

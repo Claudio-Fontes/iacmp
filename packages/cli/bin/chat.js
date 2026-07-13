@@ -6,12 +6,10 @@ const path = require('path');
 const fs = require('fs');
 const cp = require('child_process');
 
-// Carrega .env do projeto (sobrescreve env do shell — projeto tem prioridade)
-(function loadEnv() {
-  const cwd = process.env.IACMP_CWD || process.cwd();
-  const envPath = path.resolve(cwd, '.env');
-  if (!fs.existsSync(envPath)) return;
-  const lines = fs.readFileSync(envPath, 'utf8').split('\n');
+// Carrega um arquivo no formato key=value para process.env
+function loadEnvFile(filePath) {
+  if (!fs.existsSync(filePath)) return;
+  const lines = fs.readFileSync(filePath, 'utf8').split('\n');
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith('#')) continue;
@@ -21,6 +19,16 @@ const cp = require('child_process');
     const val = trimmed.slice(eq + 1).trim();
     if (key) process.env[key] = val;
   }
+}
+
+// Ordem de prioridade (menor → maior):
+// 1. ~/.iacmp/config — configuração global do usuário (API keys, preferências)
+// 2. .env do projeto — sobrescreve o global (override por projeto)
+(function loadEnv() {
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  loadEnvFile(path.join(home, '.iacmp', 'config'));
+  const cwd = process.env.IACMP_CWD || process.cwd();
+  loadEnvFile(path.resolve(cwd, '.env'));
 })();
 
 // Resolve @iacmp/* — suporta: global install, monorepo (workspace), link local
@@ -58,11 +66,37 @@ const {
   loadSession, saveSession, clearSession, getCached, setCache, clearCache, invalidateIndexCache,
   resolveLanguage, SUPPORTED_LANGUAGES, MESSAGES,
   startRecording, transcribeAudio, checkVoicePrerequisites,
+  enrichPrompt,
 } = require('@iacmp/ai');
 
 const cwd = process.env.IACMP_CWD || process.cwd();
 const iacProvider = process.env.IACMP_PROVIDER || 'aws';
 const dryRun = process.env.IACMP_DRYRUN === '1';
+
+function extractConstructSignatures(files) {
+  const sigs = new Set();
+  for (const f of files.filter(f => f.path.startsWith('stacks/'))) {
+    if (/eventNotifications\s*:/.test(f.content)) sigs.add('__eventNotifications__');
+    if (/eventSources\s*:/.test(f.content)) sigs.add('__eventSources__');
+    if (/\bref\s*\(/.test(f.content)) sigs.add('__ref__');
+  }
+  return sigs;
+}
+
+function buildIntegrityWarning(removed, fileCount) {
+  const constructs = removed.filter(s => !s.startsWith('__'));
+  const connections = removed.filter(s => s.startsWith('__'));
+  const lines = ['AVISO CRÍTICO: a correção anterior REMOVEU elementos que estavam na geração original.'];
+  if (constructs.length > 0) lines.push(`Constructs removidos: ${constructs.join(', ')}`);
+  if (connections.includes('__eventNotifications__')) lines.push('Conexão eventNotifications (trigger S3→SNS/Lambda) foi removida');
+  if (connections.includes('__eventSources__')) lines.push('Conexão eventSources foi removida');
+  if (connections.includes('__ref__')) lines.push('Referências cross-stack ref() foram substituídas por strings hardcoded');
+  lines.push('');
+  lines.push('OBRIGATÓRIO: restaure TODOS os elementos listados acima.');
+  lines.push('NÃO remova constructs ou conexões para resolver erros de synth — corrija o erro mantendo a arquitetura completa.');
+  lines.push(`Retorne o JSON com todos os ${fileCount} arquivo(s) e os elementos restaurados.`);
+  return lines.join('\n');
+}
 
 let currentLang = resolveLanguage(process.env.IACMP_LANG);
 
@@ -87,11 +121,29 @@ const PASTE_WINDOW_MS = 40;
 let _pendingLines = [];
 let _pasteTimer = null;
 
+const CHAT_COMMANDS = new Set(['/sair', '/quit', '/limpar', '/voz']);
+
 function _flushPending() {
   _pasteTimer = null;
   if (_pendingLines.length === 0) return;
-  const combined = _pendingLines.join('\n').trim();
+  // Filtra linhas que são comandos standalone (ex: /sair colado junto ao prompt via pipe)
+  // para evitar que vaze para o contexto do modelo.
+  const commandLines = _pendingLines.filter(l => {
+    const t = l.trim();
+    return CHAT_COMMANDS.has(t) || t === '' || t.startsWith('/lang ');
+  });
+  const contentLines = _pendingLines.filter(l => {
+    const t = l.trim();
+    return !CHAT_COMMANDS.has(t) && !t.startsWith('/lang ');
+  });
   _pendingLines = [];
+  // Enfileira comandos primeiro (vão ser processados em turns futuros), depois conteúdo
+  for (const cmd of commandLines) {
+    const t = cmd.trim();
+    if (!t) continue;
+    _lineQueue.push(t);
+  }
+  const combined = contentLines.join('\n').trim();
   if (!combined) return;
   if (_lineWaiters.length > 0) {
     _lineWaiters.shift()(combined);
@@ -229,6 +281,10 @@ async function runGeneration(provider, session, lastPrompt, projectContext, aiPr
     } catch (err) {
       clearInterval(genTimer);
       process.stderr.write(chalk.red('\n' + t.errorPrefix + err.message + '\n'));
+      if (/429|quota|rate.?limit|529|503|overload/i.test(err.message)) {
+        process.stderr.write(chalk.dim('  Sessão mantida — seu pedido está preservado. Pressione Enter para tentar novamente.\n'));
+        return 'retry';
+      }
       process.stderr.write(chalk.dim(t.messageNotSaved));
       return;
     }
@@ -401,10 +457,39 @@ async function runGeneration(provider, session, lastPrompt, projectContext, aiPr
   if (!dryRun && parsed.files.length > 0) {
     const MAX_SYNTH_RETRIES = 5;
     let synthOk = false;
+    const silentAsk = async () => 'y';
+    const initialSigs = extractConstructSignatures(parsed.files);
     for (let attempt = 1; attempt <= MAX_SYNTH_RETRIES; attempt++) {
       process.stderr.write(chalk.dim(`  → Validando synth (${attempt}/${MAX_SYNTH_RETRIES})...\n`));
       const { success, output } = runSynthCapture(cwd, iacProvider);
       if (success) {
+        const currentSigs = extractConstructSignatures(parsed.files);
+        const removed = [...initialSigs].filter(s => !currentSigs.has(s));
+        if (removed.length > 0 && attempt < MAX_SYNTH_RETRIES) {
+          process.stderr.write(chalk.yellow(`  ✗ Synth passou mas a correção removeu constructs — restaurando...\n`));
+          session.addUserMessage(buildIntegrityWarning(removed, parsed.files.length));
+          const retryChunks = [];
+          try {
+            await provider.stream(session.getMessages(), chunk => retryChunks.push(chunk));
+            const retryRaw = retryChunks.join('');
+            session.addAssistantMessage(retryRaw);
+            try {
+              const retryParsed = extractResponse(retryRaw);
+              parsed = retryParsed;
+              parsed.files = parsed.files.filter(f => !PROTECTED_FILES.has(f.path.split('/').pop()));
+              const written2 = await writeGeneratedFiles(parsed.files, cwd, false, silentAsk, currentLang);
+              if (written2.length > 0) {
+                const orphans = removeOrphanedGeneratedFiles(previouslyWritten, parsed.files, cwd);
+                if (orphans.length > 0) process.stderr.write(chalk.dim(`  ✗ removidos ${orphans.length} órfão(s): ${orphans.join(', ')}\n`));
+                previouslyWritten = written2;
+              }
+              invalidateIndexCache(cwd);
+            } catch { /* mantém parsed anterior */ }
+          } catch (err) {
+            process.stderr.write(chalk.red(`  ✗ Erro no retry: ${err.message}\n`));
+          }
+          continue;
+        }
         process.stderr.write(chalk.green('  ✓ Synth validado\n'));
         synthOk = true;
         break;
@@ -441,11 +526,12 @@ async function runGeneration(provider, session, lastPrompt, projectContext, aiPr
         try {
           const retryParsed = extractResponse(retryRaw);
           parsed = retryParsed;
+          parsed.files = parsed.files.filter(f => !PROTECTED_FILES.has(f.path.split('/').pop()));
           // Cada regeneração SUBSTITUI o conjunto anterior. Escreve a nova geração
           // e, SÓ se ela foi de fato aplicada, remove as stacks/handlers órfãos da
           // tentativa anterior — senão o synth (que carrega TODAS as .ts de
           // stacks/) segue vendo constructs duplicados e não converge.
-          const written = await writeGeneratedFiles(parsed.files, cwd, false, ask, currentLang);
+          const written = await writeGeneratedFiles(parsed.files, cwd, false, silentAsk, currentLang);
           if (written.length > 0) {
             const orphans = removeOrphanedGeneratedFiles(previouslyWritten, parsed.files, cwd);
             if (orphans.length > 0) {
@@ -505,17 +591,24 @@ async function handleVoiceCommand() {
 
 function autoInitProject() {
   const iacmpConfig = path.join(cwd, 'iacmp.json');
-  if (fs.existsSync(iacmpConfig)) return;
+  const hasConfig = fs.existsSync(iacmpConfig);
+  const hasCore = fs.existsSync(path.join(cwd, 'node_modules', '@iacmp', 'core'));
+
+  if (hasConfig && hasCore) return;
 
   const projectName = path.basename(cwd).toLowerCase().replace(/[^a-z0-9-]/g, '-');
+  const created = [];
 
-  fs.writeFileSync(iacmpConfig, JSON.stringify({
-    name: projectName,
-    provider: 'aws',
-    region: 'us-east-1',
-    resourceGroup: `${projectName}-rg`,
-    azureRegion: 'eastus',
-  }, null, 2) + '\n', 'utf-8');
+  if (!hasConfig) {
+    fs.writeFileSync(iacmpConfig, JSON.stringify({
+      name: projectName,
+      provider: iacProvider,
+      region: 'us-east-1',
+      resourceGroup: `${projectName}-rg`,
+      azureRegion: 'eastus2',
+    }, null, 2) + '\n', 'utf-8');
+    created.push('iacmp.json');
+  }
 
   const tsconfigPath = path.join(cwd, 'tsconfig.json');
   if (!fs.existsSync(tsconfigPath)) {
@@ -523,9 +616,9 @@ function autoInitProject() {
       compilerOptions: {
         target: 'ES2022',
         module: 'CommonJS',
-        moduleResolution: 'node',
-        ignoreDeprecations: '5.0',
+        moduleResolution: 'bundler',
         lib: ['es2022'],
+        types: ['node'],
         strict: false,
         skipLibCheck: true,
         outDir: 'dist',
@@ -534,6 +627,7 @@ function autoInitProject() {
       include: ['src/**/*'],
       exclude: ['node_modules', 'dist'],
     }, null, 2) + '\n', 'utf-8');
+    created.push('tsconfig.json');
   }
 
   const pkgPath = path.join(cwd, 'package.json');
@@ -544,15 +638,31 @@ function autoInitProject() {
       private: true,
       scripts: { build: 'tsc', synth: 'iacmp synth', deploy: 'iacmp deploy' },
       dependencies: {},
-      devDependencies: {
-        typescript: '^5',
-        'ts-node': '^10',
-        '@iacmp/core': '*',
-      },
+      devDependencies: { typescript: '*', tsx: '*', '@iacmp/core': '*' },
     }, null, 2) + '\n', 'utf-8');
+    created.push('package.json');
   }
 
-  console.log(chalk.dim(`  Projeto inicializado: ${iacmpConfig}\n`));
+  if (!hasCore) {
+    process.stdout.write(chalk.dim('  Instalando dependências (tsx, @iacmp/core)...\n'));
+    try {
+      // Resolve @iacmp/core local do monorepo se disponível
+      let coreSpec = '@iacmp/core';
+      try {
+        const corePkg = require.resolve('@iacmp/core/package.json');
+        const coreDir = path.dirname(corePkg);
+        coreSpec = coreDir;
+      } catch {}
+      cp.execSync(`npm install ${coreSpec} tsx typescript @types/node`, { cwd, stdio: 'pipe' });
+      created.push('deps: tsx, typescript, @iacmp/core');
+    } catch (err) {
+      process.stdout.write(chalk.yellow(`  Aviso: npm install falhou — ${err.message}\n`));
+    }
+  }
+
+  if (created.length > 0) {
+    console.log(chalk.dim(`  Projeto inicializado: ${created.join(', ')}\n`));
+  }
 }
 
 async function main() {
@@ -597,6 +707,9 @@ async function main() {
   }
 
   let lastContextHash = '';
+  let _pendingRetry = false;
+  let _pendingEnrichedInput = null;
+  let _pendingContext = null;
 
   while (true) {
     let input = await ask(chalk.bold(MESSAGES[currentLang].chat.prompt));
@@ -665,17 +778,47 @@ async function main() {
 
     const isFirstMessage = session.getMessages().length === 0;
     const stacksSection = hasStacks ? extractStacksSection(freshContext) : '';
-    const userMessageContent = (stacksSection && (isFirstMessage || contextChanged))
-      ? `${input}\n\n[Estado atual do projeto]\n${stacksSection}`
+
+    // Retry de erro retriável (429/503): sessão já tem a mensagem original do usuário.
+    // Não adiciona nova mensagem — só re-executa a geração com o contexto anterior.
+    if (_pendingRetry) {
+      _pendingRetry = false;
+      process.stderr.write(chalk.dim('  → retentando com o pedido anterior...\n'));
+      const responseLang2 = voiceLanguageForThisTurn || currentLang;
+      const provider2 = createContextualProvider(aiProvider, _pendingContext, responseLang2);
+      const responded2 = await runGeneration(provider2, session, _pendingEnrichedInput, _pendingContext, aiProvider, responseLang2);
+      if (responded2 === 'retry') {
+        _pendingRetry = true;
+      } else if (responded2) {
+        saveSession(cwd, session.getMessages());
+      } else {
+        session.removeLast();
+      }
+      console.log('');
+      continue;
+    }
+
+    // Enriquecimento de prompt: analisa lacunas que mudariam a arquitetura e faz
+    // até 2 perguntas antes de gerar. IAM/runtime/TLS = injetados silenciosamente.
+    const enrichedInput = process.stdin.isTTY
+      ? await enrichPrompt(aiProvider, input, iacProvider, ask)
       : input;
+
+    const userMessageContent = (stacksSection && (isFirstMessage || contextChanged))
+      ? `${enrichedInput}\n\n[Estado atual do projeto]\n${stacksSection}`
+      : enrichedInput;
 
     session.addUserMessage(userMessageContent);
 
     const responseLang = voiceLanguageForThisTurn || currentLang;
     const provider = createContextualProvider(aiProvider, freshContext, responseLang);
 
-    const responded = await runGeneration(provider, session, input, freshContext, aiProvider, responseLang);
-    if (responded) {
+    const responded = await runGeneration(provider, session, enrichedInput, freshContext, aiProvider, responseLang);
+    if (responded === 'retry') {
+      _pendingRetry = true;
+      _pendingEnrichedInput = enrichedInput;
+      _pendingContext = freshContext;
+    } else if (responded) {
       saveSession(cwd, session.getMessages());
     } else {
       // Erro na geração — remove a mensagem do usuário para não deixar sessão malformada

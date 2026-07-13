@@ -18,18 +18,14 @@ export function readConfig(cwd: string): AuditConfig {
   };
 }
 
-function resolveTsNode(projectDir: string): string | null {
-  const dirs: string[] = [];
+function resolveTsx(projectDir: string): string | null {
   let dir = projectDir;
   for (let i = 0; i < 5; i++) {
-    dirs.push(dir);
+    const p = path.join(dir, 'node_modules', 'tsx');
+    if (fs.existsSync(p)) return p;
     const parent = path.dirname(dir);
     if (parent === dir) break;
     dir = parent;
-  }
-  for (const d of dirs) {
-    const tsNodePath = path.join(d, 'node_modules', 'ts-node');
-    if (fs.existsSync(tsNodePath)) return tsNodePath;
   }
   return null;
 }
@@ -55,14 +51,11 @@ export function loadStacks(cwd: string): Array<{ name: string; stack: Stack }> {
   const stackFiles = findStackFiles(stacksDir);
   if (stackFiles.length === 0) throw new Error('Nenhuma stack encontrada em stacks/');
 
-  const tsNodePath = resolveTsNode(cwd);
-  if (tsNodePath) {
+  const tsxPath = resolveTsx(cwd);
+  if (tsxPath) {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    require(tsNodePath).register({
-      transpileOnly: true,
-      skipProject: true,
-      compilerOptions: tsCompilerOptions(cwd),
-    });
+    const tsxApiPath = require.resolve('tsx/cjs/api', { paths: [cwd] });
+    require(tsxApiPath).register();
   }
 
   const result: Array<{ name: string; stack: Stack }> = [];

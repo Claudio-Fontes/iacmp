@@ -1,5 +1,7 @@
 import chalk from 'chalk';
 import ora from 'ora';
+import * as fs from 'fs';
+import * as path from 'path';
 import {
   AIProvider,
   ChatSession,
@@ -22,6 +24,7 @@ import {
   AskFn,
 } from './file-persister';
 import { validateWithAutoInstall } from './synth-validator';
+import { generatePostmanCollection } from './postman';
 import {
   REVIEW_PROMPT,
   buildAzureSdkCorrection,
@@ -135,6 +138,31 @@ async function fixInitialTypeErrors(
   return parsed;
 }
 
+function extractConstructSignatures(files: AIGeneratedResponse['files']): Set<string> {
+  const sigs = new Set<string>();
+  for (const f of files.filter(f => f.path.startsWith('stacks/'))) {
+    if (/eventNotifications\s*:/.test(f.content)) sigs.add('__eventNotifications__');
+    if (/eventSources\s*:/.test(f.content)) sigs.add('__eventSources__');
+    if (/\bref\s*\(/.test(f.content)) sigs.add('__ref__');
+  }
+  return sigs;
+}
+
+function buildIntegrityWarning(removed: string[], fileCount: number): string {
+  const constructs = removed.filter(s => !s.startsWith('__'));
+  const connections = removed.filter(s => s.startsWith('__'));
+  const lines: string[] = ['AVISO CRÍTICO: a correção anterior REMOVEU elementos que estavam na geração original.'];
+  if (constructs.length > 0) lines.push(`Constructs removidos: ${constructs.join(', ')}`);
+  if (connections.includes('__eventNotifications__')) lines.push('Conexão eventNotifications (trigger S3→SNS/Lambda) foi removida');
+  if (connections.includes('__eventSources__')) lines.push('Conexão eventSources foi removida');
+  if (connections.includes('__ref__')) lines.push('Referências cross-stack ref() foram substituídas por strings hardcoded');
+  lines.push('');
+  lines.push('OBRIGATÓRIO: restaure TODOS os elementos listados acima.');
+  lines.push('NÃO remova constructs ou conexões para resolver erros de synth — corrija o erro mantendo a arquitetura completa.');
+  lines.push(`Retorne o JSON com todos os ${fileCount} arquivo(s) e os elementos restaurados.`);
+  return lines.join('\n');
+}
+
 // Loop de auto-correção via `iacmp synth`: valida, classifica o erro, pede a
 // correção à IA, reescreve os arquivos e reconcilia órfãos — até passar ou
 // esgotar as tentativas. Reescreve `parsed` a cada rodada aplicada.
@@ -150,6 +178,7 @@ async function runSynthCorrectionLoop(
   let parsed = initial;
   let written = previouslyWritten;
   let synthOk = false;
+  const initialSignatures = extractConstructSignatures(initial.files);
 
   for (let attempt = 1; attempt <= MAX_SYNTH_RETRIES; attempt++) {
     const spinner = ora({ text: `Validando com iacmp synth (tentativa ${attempt}/${MAX_SYNTH_RETRIES})...`, spinner: 'dots', discardStdin: false }).start();
@@ -173,10 +202,17 @@ async function runSynthCorrectionLoop(
         spinner.fail('Azure: handlers com SDK errado — corrigindo...');
         correctionMsg = azureSdkMsg;
       } else if (tsResult.valid) {
-        spinner.succeed('Synth validado');
-        applyConfig(parsed, cwd);
-        synthOk = true;
-        break;
+        const currentSigs = extractConstructSignatures(parsed.files);
+        const removed = [...initialSignatures].filter(s => !currentSigs.has(s));
+        if (removed.length > 0 && attempt < MAX_SYNTH_RETRIES) {
+          spinner.warn('Synth passou mas a correção removeu constructs — restaurando...');
+          correctionMsg = buildIntegrityWarning(removed, parsed.files.length);
+        } else {
+          spinner.succeed('Synth validado');
+          applyConfig(parsed, cwd);
+          synthOk = true;
+          break;
+        }
       } else {
         spinner.fail('Handler com erro de TypeScript — corrigindo automaticamente...');
         correctionMsg = buildHandlerTsCorrection(tsResult.errors, parsed.files.length);
@@ -264,6 +300,21 @@ export async function runGeneration(
   }
 
   printNextSteps(parsed.nextSteps);
+
+  // Se a IA gerou docs/postman.json, substitui pelo gerador determinístico
+  // (lê rotas das stacks — garante formato válido independente do modelo).
+  const hasPostman = previouslyWritten.some(f => path.basename(f) === 'postman.json');
+  if (!dryRun && hasPostman) {
+    try {
+      const postmanPath = path.join(cwd, 'docs', 'postman.json');
+      const generated = generatePostmanCollection(cwd);
+      fs.mkdirSync(path.dirname(postmanPath), { recursive: true });
+      fs.writeFileSync(postmanPath, generated, 'utf-8');
+      console.log(chalk.green('  ✔ docs/postman.json gerado a partir das rotas das stacks'));
+    } catch (err) {
+      console.log(chalk.yellow(`  ⚠ Postman: ${(err as Error).message}`));
+    }
+  }
 
   if (!dryRun && parsed.files.length > 0) {
     parsed = await runSynthCorrectionLoop(provider, session, cwd, iacProvider, parsed, previouslyWritten, reviewProvider);

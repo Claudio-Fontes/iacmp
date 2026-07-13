@@ -99,17 +99,14 @@ export default class Synth extends Command {
 
       let stackModule: Record<string, unknown>;
       try {
-        // .ts: registra ts-node se disponível no projeto do usuário e carrega diretamente
+        // .ts: registra tsx se disponível no projeto do usuário e carrega diretamente
         if (file.endsWith('.ts')) {
-          const tsNodePath = this.resolveTsNode(cwd);
-          if (tsNodePath) {
-            require(tsNodePath).register({
-              transpileOnly: true,
-              skipProject: true,
-              compilerOptions: tsCompilerOptions(cwd),
-            });
+          const tsxPath = this.resolveModule(cwd, 'tsx');
+          if (tsxPath) {
+            const tsxApiPath = require.resolve('tsx/cjs/api', { paths: [cwd] });
+            require(tsxApiPath).register();
           } else {
-            this.warn(`ts-node não encontrado em ${cwd}/node_modules. Rode: npm install`);
+            this.warn(`tsx não encontrado em ${cwd}/node_modules. Rode: npm install tsx`);
             continue;
           }
         }
@@ -549,10 +546,6 @@ export default class Synth extends Command {
       }
     }
     return params;
-  }
-
-  private resolveTsNode(projectDir: string): string | null {
-    return this.resolveModule(projectDir, 'ts-node');
   }
 
   // Busca um módulo em node_modules do projeto e de diretórios pai (monorepo).

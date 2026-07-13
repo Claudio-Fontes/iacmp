@@ -167,6 +167,7 @@ export interface BicepOutput {
 // ── Synth context ─────────────────────────────────────────────────────────────
 export interface SynthContext {
   idx: Map<string, BaseConstruct>;
+  globalIdx: Map<string, BaseConstruct>; // todos os constructs de todas as stacks (lookup de tipo apenas)
   resources: BicepResource[];
   outputs: BicepOutput[];
   needsAdminPassword: { value: boolean };
@@ -175,6 +176,7 @@ export interface SynthContext {
   sharedContainerEnvSym: string | null;
   sharedFunctionPlanSym: string | null;
   sharedFunctionStorageSym: string | null;
+  sharedFnBlobServiceSym: string | null;
   sharedFnDeployContainerSym: string | null;
   cdnBucketRefs: Set<string>;
   subnetsByVpc: Map<string, Array<{ id: string; cidr: string; public: boolean }>>;

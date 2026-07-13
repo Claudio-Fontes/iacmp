@@ -4,13 +4,10 @@ import * as path from 'path';
 /**
  * Compatibilidade com a versão do TypeScript do projeto do usuário.
  *
- * O iacmp carrega/valida os arquivos .ts do usuário em três pontos (synth via
- * ts-node, audit via ts-node, validação de geração via tsc). Todos usam
- * `moduleResolution: 'node'` (node10), que emite uma deprecation a partir do
- * TS 5.x e vira ERRO FATAL de compilação se `ignoreDeprecations` não casar com
- * a major instalada (TS 5.x exige '5.0'; TS 6.x exige '6.0'). Em vez de fixar
- * uma versão de TypeScript, detectamos a que o projeto tem e adaptamos as
- * opções — o iacmp funciona com qualquer TS >= 5 sem forçar pin.
+ * O iacmp valida os arquivos .ts do usuário via tsc (synth, audit, geração).
+ * TS5/6: moduleResolution 'node' com ignoreDeprecations.
+ * TS7+: 'node'/'node10' foram removidos — usa 'bundler' + types:['node'].
+ * Detecta a versão instalada e adapta — funciona com qualquer TS >= 5.
  */
 
 /** Sobe a árvore de diretórios procurando node_modules/<moduleName>. */
@@ -46,18 +43,25 @@ export function detectTypeScriptMajor(projectDir: string): number | null {
  * validador). Único lugar que conhece o acoplamento iacmp ↔ versão do TS.
  */
 export function tsCompilerOptions(projectDir: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
+  const major = detectTypeScriptMajor(projectDir);
   const opts: Record<string, unknown> = {
     target: 'ES2022',
     module: 'commonjs',
-    moduleResolution: 'node',
     esModuleInterop: true,
     strict: false,
     skipLibCheck: true,
   };
-  const major = detectTypeScriptMajor(projectDir);
-  // ignoreDeprecations existe a partir do TS 5.0 e o valor deve casar com a major.
-  if (major !== null && major >= 5) {
-    opts.ignoreDeprecations = `${major}.0`;
+  if (major !== null && major >= 7) {
+    // TS7 removeu moduleResolution 'node'/'node10' — usa 'bundler' que é válido
+    // para CommonJS + module bundlers e não requer ignoreDeprecations.
+    opts.moduleResolution = 'bundler';
+    opts.types = ['node'];
+  } else {
+    opts.moduleResolution = 'node';
+    // ignoreDeprecations existe a partir do TS 5.0; valor deve casar com a major.
+    if (major !== null && major >= 5) {
+      opts.ignoreDeprecations = `${major}.0`;
+    }
   }
   return { ...opts, ...extra };
 }
