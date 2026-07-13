@@ -1,4 +1,4 @@
-import { BaseConstruct } from '@iacmp/core';
+import { BaseConstruct, isRef } from '@iacmp/core';
 import { expr, tag, toSym, crossParamName, SynthContext } from './shared';
 
 export function synthesizeNetwork(construct: BaseConstruct, ctx: SynthContext): void {
@@ -206,7 +206,8 @@ export function synthesizeNetwork(construct: BaseConstruct, ctx: SynthContext): 
       const routeSym = `${sym}Route`;
 
       const originsEarly = (props.origins as Array<Record<string, unknown>>) ?? [];
-      const bucketRefEarly = originsEarly[0]?.bucketRef as string | undefined;
+      const bucketRefRawEarly = originsEarly[0]?.bucketRef;
+      const bucketRefEarly = isRef(bucketRefRawEarly) ? bucketRefRawEarly.constructId : bucketRefRawEarly as string | undefined;
       if (accountTier === 'free') {
         console.warn(`[azure] Network.CDN "${construct.id}": accountTier=free — Front Door indisponível em Free Trial; servindo direto do Storage público (sem CDN).`);
         if (bucketRefEarly) {
@@ -252,7 +253,8 @@ export function synthesizeNetwork(construct: BaseConstruct, ctx: SynthContext): 
       });
 
       const origins = (props.origins as Array<Record<string, unknown>>) ?? [];
-      const bucketRefId = origins[0]?.bucketRef as string | undefined;
+      const bucketRefRaw = origins[0]?.bucketRef;
+      const bucketRefId = isRef(bucketRefRaw) ? bucketRefRaw.constructId : bucketRefRaw as string | undefined;
       let hostNameExpr: unknown;
       let originPath: string | undefined;
 
