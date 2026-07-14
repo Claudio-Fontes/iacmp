@@ -69,7 +69,7 @@ export function synthesizeDatabase(construct: BaseConstruct, ctx: SynthContext):
         type: 'Microsoft.DocumentDB/databaseAccounts/mongodbDatabases',
         apiVersion: '2023-04-15',
         parent: sym,
-        name: `'${dbName}'`,
+        name: dbName,
         properties: { resource: { id: dbName }, options: {} },
       });
       resources.push({
@@ -77,7 +77,7 @@ export function synthesizeDatabase(construct: BaseConstruct, ctx: SynthContext):
         type: 'Microsoft.DocumentDB/databaseAccounts/mongodbDatabases/collections',
         apiVersion: '2023-04-15',
         parent: dbSym,
-        name: `'documents'`,
+        name: 'documents',
         properties: { resource: { id: 'documents' }, options: {} },
       });
       outputs.push({ name: crossParamName(construct.id, 'Endpoint'), type: 'string', value: `${sym}.properties.documentEndpoint` });
