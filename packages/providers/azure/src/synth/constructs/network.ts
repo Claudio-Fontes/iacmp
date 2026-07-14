@@ -150,10 +150,11 @@ export function synthesizeNetwork(construct: BaseConstruct, ctx: SynthContext): 
     }
 
     case 'Network.LoadBalancer': {
-      const hasContainerInStack = Array.from(ctx.idx.values()).some(c => c.type === 'Compute.Container');
-      if (hasContainerInStack) {
+      const allConstructs = ctx.globalIdx ? Array.from(ctx.globalIdx.values()) : Array.from(ctx.idx.values());
+      const hasContainerAnywhere = allConstructs.some(c => c.type === 'Compute.Container');
+      if (hasContainerAnywhere) {
         console.warn(
-          `[azure] Network.LoadBalancer "${construct.id}": no-op — stack contém Compute.Container ` +
+          `[azure] Network.LoadBalancer "${construct.id}": no-op — projeto contém Compute.Container ` +
           `cujo ingress externo (Container Apps) já provê load balancing HTTP público. ` +
           `Referencie o endpoint via output <ContainerId>Fqdn.`,
         );
