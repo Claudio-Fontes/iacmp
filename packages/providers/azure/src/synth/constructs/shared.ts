@@ -91,12 +91,14 @@ export function resolveRef(r: Ref, idx: Map<string, BaseConstruct>, crossParams:
     const nsSym = `${sym}Ns`;
     return expr(`listKeys(resourceId('Microsoft.ServiceBus/namespaces/authorizationRules', ${nsSym}.name, 'RootManageSharedAccessKey'), '2022-10-01-preview').primaryConnectionString`);
   }
+  if ((c.type === 'Messaging.Queue' || c.type === 'Messaging.Topic') && /^(Arn|id|QueueArn|TopicArn|QueueUrl)$/i.test(r.attribute)) {
+    return expr(`${sym}Ns.id`);
+  }
   if (c.type === 'Cache.Redis' && r.attribute === 'ConnectionString') {
-    const dbSym = `${sym}Db`;
-    return expr(`'rediss://:$\{${dbSym}.listKeys().primaryKey}@$\{${sym}.properties.hostName}:10000'`);
+    return expr(`'rediss://:$\{${sym}.listKeys().primaryKey}@$\{${sym}.properties.hostName}:6380'`);
   }
   if (c.type === 'Cache.Redis' && r.attribute === 'Port') {
-    return '10000';
+    return '6380';
   }
   if (c.type === 'Storage.Bucket' && r.attribute === 'ConnectionString') {
     return expr(`'DefaultEndpointsProtocol=https;AccountName=\${${sym}.name};AccountKey=\${${sym}.listKeys().keys[0].value};EndpointSuffix=core.windows.net'`);

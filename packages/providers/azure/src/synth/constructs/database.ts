@@ -80,7 +80,6 @@ export function synthesizeDatabase(construct: BaseConstruct, ctx: SynthContext):
         name: `'documents'`,
         properties: { resource: { id: 'documents' }, options: {} },
       });
-      outputs.push({ name: `${construct.id}Endpoint`, type: 'string', value: `${sym}.properties.documentEndpoint` });
       outputs.push({ name: crossParamName(construct.id, 'Endpoint'), type: 'string', value: `${sym}.properties.documentEndpoint` });
       outputs.push({ name: crossParamName(construct.id, 'ConnectionString'), type: 'string', value: `${sym}.listConnectionStrings().connectionStrings[0].connectionString` });
       break;

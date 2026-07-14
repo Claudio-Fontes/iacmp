@@ -256,7 +256,10 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
             parent: opSym,
             name: 'policy',
             properties: { value: opXml, format: 'xml' },
-            ...(usesJwt && apimNamedValueSym ? { dependsOn: [apimNamedValueSym] } : {}),
+            dependsOn: [
+              `${sym}Backend${lambdaId.replace(/[^a-zA-Z0-9]/g, '')}`,
+              ...(usesJwt && apimNamedValueSym ? [apimNamedValueSym] : []),
+            ],
           });
         }
       }

@@ -15,14 +15,12 @@ export function synthesizeCache(construct: BaseConstruct, ctx: SynthContext): vo
 
   switch (construct.type) {
     case 'Cache.Redis': {
-      const dbSym = `${sym}Db`;
-      const reName = expr(`'${construct.id.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 40) || 're'}-\${uniqueString(resourceGroup().id)}'`);
-      resources.push({ sym, type: 'Microsoft.Cache/redisEnterprise', apiVersion: '2024-10-01', name: reName, location: 'location', tags: tag(construct.id), sku: { name: 'Balanced_B0' }, properties: {} });
-      resources.push({ sym: dbSym, type: 'Microsoft.Cache/redisEnterprise/databases', apiVersion: '2024-10-01', parent: sym, name: 'default', properties: { clientProtocol: 'Encrypted', port: 10000, clusteringPolicy: 'EnterpriseCluster', evictionPolicy: 'VolatileLRU', modules: [], persistence: { aofEnabled: false } } });
+      const cacheName = expr(`'${construct.id.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 40) || 'cache'}-\${uniqueString(resourceGroup().id)}'`);
+      resources.push({ sym, type: 'Microsoft.Cache/redis', apiVersion: '2023-08-01', name: cacheName, location: 'location', tags: tag(construct.id), sku: { name: 'Standard', family: 'C', capacity: 1 }, properties: { enableNonSslPort: false, minimumTlsVersion: '1.2', redisConfiguration: {} } });
       outputs.push({ name: crossParamName(construct.id, 'Endpoint'), type: 'string', value: `${sym}.properties.hostName` });
-      outputs.push({ name: crossParamName(construct.id, 'Port'), type: 'string', value: `'10000'` });
+      outputs.push({ name: crossParamName(construct.id, 'Port'), type: 'string', value: `'6380'` });
       outputs.push({ name: crossParamName(construct.id, 'Host'), type: 'string', value: `${sym}.properties.hostName` });
-      outputs.push({ name: crossParamName(construct.id, 'ConnectionString'), type: 'string', value: `'rediss://:$\{${dbSym}.listKeys().primaryKey}@$\{${sym}.properties.hostName}:10000'` });
+      outputs.push({ name: crossParamName(construct.id, 'ConnectionString'), type: 'string', value: `'rediss://:$\{${sym}.listKeys().primaryKey}@$\{${sym}.properties.hostName}:6380'` });
       break;
     }
 
