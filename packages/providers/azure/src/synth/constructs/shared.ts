@@ -172,7 +172,7 @@ export interface SynthContext {
   outputs: BicepOutput[];
   needsAdminPassword: { value: boolean };
   crossParams: Map<string, string>;
-  functionImageParams: Set<string>;
+  functionImageParams: Map<string, string>;
   sharedContainerEnvSym: string | null;
   sharedFunctionPlanSym: string | null;
   sharedFunctionStorageSym: string | null;

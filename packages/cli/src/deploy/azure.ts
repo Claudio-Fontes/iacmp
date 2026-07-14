@@ -127,6 +127,10 @@ function buildFunctionBundle(
     path.join(cwd, 'src', `${stem}.js`),
     path.join(cwd, 'src', stem, 'index.ts'),
     path.join(cwd, 'src', stem, 'index.js'),
+    path.join(cwd, `${stem}.ts`),
+    path.join(cwd, `${stem}.js`),
+    path.join(cwd, stem, 'index.ts'),
+    path.join(cwd, stem, 'index.js'),
   ].find(p => fs.existsSync(p));
 
   if (!srcEntry) return null;

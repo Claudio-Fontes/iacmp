@@ -131,7 +131,7 @@ export function synthesizeCompute(construct: BaseConstruct, ctx: SynthContext): 
 
     case 'Compute.Container': {
       const imageParamName = `${sym}Image`;
-      functionImageParams.add(imageParamName);
+      functionImageParams.set(imageParamName, (props.image as string) || 'node:20-alpine');
 
       const environment = (props.environment as Record<string, string | unknown>) ?? {};
       const envVars = Object.entries(environment).map(([k, v]) => {

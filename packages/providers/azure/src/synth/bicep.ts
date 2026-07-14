@@ -149,7 +149,7 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
   const outputs: BicepOutput[] = [];
   const needsAdminPassword = { value: false };
   const crossParams = new Map<string, string>();
-  const functionImageParams = new Set<string>();
+  const functionImageParams = new Map<string, string>();
   const cdnBucketRefs = new Set<string>();
   const lambdaWithEventGridTrigger = new Set<string>();
   for (const c of stack.constructs) {
@@ -344,8 +344,8 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
     params.push({ name: 'adminPassword', type: 'string', secure: true });
     crossParams.delete('adminPassword');
   }
-  for (const name of functionImageParams) {
-    params.push({ name, type: 'string', default: 'node:20-alpine' });
+  for (const [name, defaultImage] of functionImageParams) {
+    params.push({ name, type: 'string', default: defaultImage || 'node:20-alpine' });
   }
   if (hasContainerApp) {
     params.push({ name: 'acrServer', type: 'string', default: '' });
