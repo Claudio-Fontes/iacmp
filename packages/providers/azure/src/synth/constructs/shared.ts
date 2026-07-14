@@ -101,7 +101,7 @@ export function resolveRef(r: Ref, idx: Map<string, BaseConstruct>, crossParams:
   if (c.type === 'Storage.Bucket' && r.attribute === 'ConnectionString') {
     return expr(`'DefaultEndpointsProtocol=https;AccountName=\${${sym}.name};AccountKey=\${${sym}.listKeys().keys[0].value};EndpointSuffix=core.windows.net'`);
   }
-  if (c.type === 'Secret.Vault' && r.attribute === 'SecretValue') {
+  if (c.type === 'Secret.Vault' && /^(SecretValue|SecretArn|SecretString|Arn)$/i.test(r.attribute)) {
     crossParams.set('adminPassword', 'secureString');
     return expr('adminPassword');
   }
