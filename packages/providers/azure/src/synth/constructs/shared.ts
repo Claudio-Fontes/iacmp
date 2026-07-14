@@ -69,7 +69,7 @@ export function crossParamName(constructId: string, attribute: string): string {
 export function resolveRef(r: Ref, idx: Map<string, BaseConstruct>, crossParams: Map<string, string>): string {
   const c = idx.get(r.constructId);
   if (!c) {
-    if (/^(password|secretvalue)$/i.test(r.attribute)) {
+    if (/^(password|secretvalue|secretarn|secretstring)$/i.test(r.attribute)) {
       crossParams.set('adminPassword', 'secureString');
       return expr('adminPassword');
     }
