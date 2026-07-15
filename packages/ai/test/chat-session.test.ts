@@ -101,6 +101,51 @@ describe('ChatSession — clear', () => {
   });
 });
 
+describe('ChatSession — compactAssistantHistory (poda do loop de correção)', () => {
+  const bigGen = (v: string) => `{"explanation":"${v}","files":[{"path":"a.ts","content":"${'x'.repeat(500)}"}]}`;
+
+  test('substitui gerações antigas por stub, mantém a última intacta', () => {
+    const s = new ChatSession();
+    s.addUserMessage('cria lambda');
+    s.addAssistantMessage(bigGen('v1'));
+    s.addUserMessage('corrija A');
+    s.addAssistantMessage(bigGen('v2'));
+    s.addUserMessage('corrija B');
+    s.addAssistantMessage(bigGen('v3'));
+    s.compactAssistantHistory(1);
+    const msgs = s.getMessages();
+    // v1 e v2 viram stub; v3 (última) intacta
+    expect(msgs[1].content).toContain('_omitido');
+    expect(msgs[3].content).toContain('_omitido');
+    expect(msgs[5].content).toBe(bigGen('v3'));
+    // o prompt original (user) nunca é tocado
+    expect(msgs[0]).toEqual({ role: 'user', content: 'cria lambda' });
+  });
+
+  test('reduz o tamanho estimado do contexto', () => {
+    const s = new ChatSession();
+    s.addUserMessage('prompt');
+    s.addAssistantMessage(bigGen('v1'));
+    s.addUserMessage('corrija');
+    s.addAssistantMessage(bigGen('v2'));
+    const before = s.estimateTokens();
+    s.compactAssistantHistory(1);
+    expect(s.estimateTokens()).toBeLessThan(before);
+  });
+
+  test('idempotente — compactar duas vezes não muda nada', () => {
+    const s = new ChatSession();
+    s.addUserMessage('p');
+    s.addAssistantMessage(bigGen('v1'));
+    s.addUserMessage('c');
+    s.addAssistantMessage(bigGen('v2'));
+    s.compactAssistantHistory(1);
+    const snapshot = JSON.stringify(s.getMessages());
+    s.compactAssistantHistory(1);
+    expect(JSON.stringify(s.getMessages())).toBe(snapshot);
+  });
+});
+
 describe('ChatSession — cenários do fluxo do chat', () => {
   test('simula: geração bem-sucedida salva user+assistant', () => {
     const s = new ChatSession();

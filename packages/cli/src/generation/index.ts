@@ -141,6 +141,13 @@ async function fixInitialTypeErrors(
 function extractConstructSignatures(files: AIGeneratedResponse['files']): Set<string> {
   const sigs = new Set<string>();
   for (const f of files.filter(f => f.path.startsWith('stacks/'))) {
+    // IDs REAIS de constructs: `new Namespace.Type(stack, 'Id', {...})`. Antes o
+    // guard só rastreava as 3 conexões abaixo e NUNCA um construct — então uma
+    // retry que apagava uma stack inteira (a Lambda, a tabela) para o synth passar
+    // não era detectada. Rastrear os IDs ativa o guard para o caso principal.
+    for (const m of f.content.matchAll(/new\s+[A-Z]\w*\.\w+\s*\(\s*\w+\s*,\s*['"]([^'"]+)['"]/g)) {
+      sigs.add(m[1]);
+    }
     if (/eventNotifications\s*:/.test(f.content)) sigs.add('__eventNotifications__');
     if (/eventSources\s*:/.test(f.content)) sigs.add('__eventSources__');
     if (/\bref\s*\(/.test(f.content)) sigs.add('__ref__');
@@ -220,6 +227,9 @@ async function runSynthCorrectionLoop(
     }
 
     if (attempt === MAX_SYNTH_RETRIES || !correctionMsg) break;
+    // Poda as gerações anteriores (JSON completo) para o modelo não ancorar em
+    // versões erradas e para não estourar o contexto — mantém só a mais recente.
+    session.compactAssistantHistory(1);
     session.addUserMessage(correctionMsg);
     const retrySpinner = ora({ text: 'Aguardando correção da IA...', spinner: 'dots', discardStdin: false }).start();
     try {
