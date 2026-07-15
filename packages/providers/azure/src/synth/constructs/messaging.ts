@@ -1,5 +1,5 @@
 import { BaseConstruct } from '@iacmp/core';
-import { expr, tag, toSym, crossParamName, SynthContext } from './shared';
+import { expr, tag, toSym, crossParamName, outputName, SynthContext } from './shared';
 
 export function synthesizeMessaging(construct: BaseConstruct, ctx: SynthContext): void {
   const { resources, outputs } = ctx;
@@ -14,7 +14,7 @@ export function synthesizeMessaging(construct: BaseConstruct, ctx: SynthContext)
       const qSym = `${sym}Queue`;
       resources.push({ sym: nsSym, type: 'Microsoft.ServiceBus/namespaces', apiVersion: '2022-10-01-preview', name: nsName, location: 'location', tags: tag(construct.id), sku: { name: 'Standard', tier: 'Standard' }, properties: {} });
       resources.push({ sym: qSym, type: 'Microsoft.ServiceBus/namespaces/queues', apiVersion: '2022-10-01-preview', parent: nsSym, name: construct.id, properties: { lockDuration: `PT${(props.visibilityTimeoutSeconds as number) ?? 30}S`, maxSizeInMegabytes: 1024, requiresDuplicateDetection: false, requiresSession: false, defaultMessageTimeToLive: `P${Math.floor(((props.messageRetentionSeconds as number) ?? 345600) / 86400)}D`, deadLetteringOnMessageExpiration: false } });
-      outputs.push({ name: `${construct.id}Id`, type: 'string', value: `${nsSym}.id` });
+      outputs.push({ name: outputName(construct.id, 'Id'), type: 'string', value: `${nsSym}.id` });
       outputs.push({ name: crossParamName(construct.id, 'Url'), type: 'string', value: `'sb://\${${nsSym}.name}.servicebus.windows.net/'` });
       outputs.push({ name: crossParamName(construct.id, 'ConnectionString'), type: 'string', value: `listKeys(resourceId('Microsoft.ServiceBus/namespaces/authorizationRules', ${nsSym}.name, 'RootManageSharedAccessKey'), '2022-10-01-preview').primaryConnectionString` });
       break;
@@ -36,8 +36,8 @@ export function synthesizeMessaging(construct: BaseConstruct, ctx: SynthContext)
           partitionCount: (props.shardCount as number) ?? 2
         }
       });
-      outputs.push({ name: `${construct.id}Id`, type: 'string', value: `${sym}.id` });
-      outputs.push({ name: `${construct.id}Name`, type: 'string', value: `'${construct.id}'` });
+      outputs.push({ name: outputName(construct.id, 'Id'), type: 'string', value: `${sym}.id` });
+      outputs.push({ name: outputName(construct.id, 'Name'), type: 'string', value: `'${construct.id}'` });
       break;
     }
 
@@ -54,8 +54,8 @@ export function synthesizeMessaging(construct: BaseConstruct, ctx: SynthContext)
         const subProps: Record<string, unknown> = { lockDuration: 'PT30S', deadLetteringOnMessageExpiration: false };
         resources.push({ sym: `${sym}Sub${i}`, type: 'Microsoft.ServiceBus/namespaces/topics/subscriptions', apiVersion: '2022-10-01-preview', parent: topicSym, name: subName, properties: subProps });
       });
-      outputs.push({ name: `${construct.id}Id`, type: 'string', value: `${nsSym}.id` });
-      outputs.push({ name: `${construct.id}ConnectionString`, type: 'string', value: `listKeys(resourceId('Microsoft.ServiceBus/namespaces/authorizationRules', ${nsSym}.name, 'RootManageSharedAccessKey'), '2022-10-01-preview').primaryConnectionString` });
+      outputs.push({ name: outputName(construct.id, 'Id'), type: 'string', value: `${nsSym}.id` });
+      outputs.push({ name: outputName(construct.id, 'ConnectionString'), type: 'string', value: `listKeys(resourceId('Microsoft.ServiceBus/namespaces/authorizationRules', ${nsSym}.name, 'RootManageSharedAccessKey'), '2022-10-01-preview').primaryConnectionString` });
       break;
     }
   }

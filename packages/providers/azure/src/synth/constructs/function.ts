@@ -1,6 +1,6 @@
 import { BaseConstruct, isRef } from '@iacmp/core';
 import type { Ref } from '@iacmp/core';
-import { expr, tag, toSym, crossParamName, resolveValue, resolveRef, SynthContext } from './shared';
+import { expr, tag, toSym, crossParamName, outputName, resolveValue, resolveRef, SynthContext } from './shared';
 
 export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext): void {
   const { resources, outputs, crossParams, functionImageParams } = ctx;
@@ -132,8 +132,8 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
 
       const outputKey = `${construct.id.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}functionappname`;
       outputs.push({ name: outputKey, type: 'string', value: `${sym}.name` });
-      outputs.push({ name: `${construct.id}Id`, type: 'string', value: `${sym}.id` });
-      outputs.push({ name: `${construct.id}PrincipalId`, type: 'string', value: `${sym}.identity.principalId` });
+      outputs.push({ name: outputName(construct.id, 'Id'), type: 'string', value: `${sym}.id` });
+      outputs.push({ name: outputName(construct.id, 'PrincipalId'), type: 'string', value: `${sym}.identity.principalId` });
       outputs.push({ name: crossParamName(construct.id, 'Fqdn'), type: 'string', value: `${sym}.properties.defaultHostName` });
       break;
     }
@@ -315,7 +315,7 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
         resources.push({ sym: `${sym}AuthorizerBackend`, type: 'Microsoft.ApiManagement/service/backends', apiVersion: '2023-05-01-preview', parent: sym, name: 'authorizer-backend', properties: { description: `Function App authorizer backend (${authorizerLambdaId})`, url: authUrl, protocol: 'http' } });
       }
 
-      outputs.push({ name: `${construct.id}Url`, type: 'string', value: `${sym}.properties.gatewayUrl` });
+      outputs.push({ name: outputName(construct.id, 'Url'), type: 'string', value: `${sym}.properties.gatewayUrl` });
       break;
     }
 

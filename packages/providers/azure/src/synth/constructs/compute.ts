@@ -1,5 +1,5 @@
 import { BaseConstruct } from '@iacmp/core';
-import { expr, tag, toSym, resolveValue, crossParamName, SynthContext } from './shared';
+import { expr, tag, toSym, resolveValue, crossParamName, outputName, SynthContext } from './shared';
 
 const INSTANCE_TYPE_MAP: Record<string, string> = {
   small: 'Standard_B1s',
@@ -184,8 +184,8 @@ export function synthesizeCompute(construct: BaseConstruct, ctx: SynthContext): 
           },
         },
       });
-      outputs.push({ name: `${construct.id}Id`, type: 'string', value: `${sym}.id` });
-      outputs.push({ name: `${construct.id}PrincipalId`, type: 'string', value: `${sym}.identity.principalId` });
+      outputs.push({ name: outputName(construct.id, 'Id'), type: 'string', value: `${sym}.id` });
+      outputs.push({ name: outputName(construct.id, 'PrincipalId'), type: 'string', value: `${sym}.identity.principalId` });
       outputs.push({ name: crossParamName(construct.id, 'Fqdn'), type: 'string', value: `${sym}.properties.configuration.ingress.fqdn` });
       break;
     }

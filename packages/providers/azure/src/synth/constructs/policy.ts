@@ -1,5 +1,5 @@
 import { BaseConstruct, isRef } from '@iacmp/core';
-import { expr, tag, toSym, crossParamName, SynthContext } from './shared';
+import { expr, tag, toSym, crossParamName, outputName, SynthContext } from './shared';
 
 export function synthesizePolicy(construct: BaseConstruct, ctx: SynthContext): void {
   const { resources, outputs, crossParams } = ctx;
@@ -88,9 +88,9 @@ export function synthesizePolicy(construct: BaseConstruct, ctx: SynthContext): v
       resources.push({ sym, type: 'Microsoft.KeyVault/vaults', apiVersion: '2023-02-01', name: kvName, location: 'location', tags: tag(construct.id), properties: { sku: { family: 'A', name: 'standard' }, tenantId: expr('subscription().tenantId'), enableSoftDelete: false, enableRbacAuthorization: true, enabledForDeployment: false, accessPolicies: [] } });
       const kvSecretSym = `${sym}SecretValue`;
       resources.push({ sym: kvSecretSym, type: 'Microsoft.KeyVault/vaults/secrets', apiVersion: '2023-02-01', parent: sym, name: 'secret-value', properties: { value: expr(`base64(concat(uniqueString(resourceGroup().id, '${construct.id}', 'a'), uniqueString(resourceGroup().id, '${construct.id}', 'b'), uniqueString(resourceGroup().id, '${construct.id}', 'c')))`) } });
-      outputs.push({ name: `${construct.id}Id`, type: 'string', value: `${sym}.id` });
-      outputs.push({ name: `${construct.id}VaultUri`, type: 'string', value: `${sym}.properties.vaultUri` });
-      outputs.push({ name: `${construct.id}Name`, type: 'string', value: `${sym}.name` });
+      outputs.push({ name: outputName(construct.id, 'Id'), type: 'string', value: `${sym}.id` });
+      outputs.push({ name: outputName(construct.id, 'VaultUri'), type: 'string', value: `${sym}.properties.vaultUri` });
+      outputs.push({ name: outputName(construct.id, 'Name'), type: 'string', value: `${sym}.name` });
       break;
     }
 

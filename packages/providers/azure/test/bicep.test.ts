@@ -126,23 +126,23 @@ describe('AzureProvider (Bicep)', () => {
     expect(out).toContain("'Microsoft.Sql/servers@2023-02-01-preview'");
   });
 
-  test('Function.Lambda nodejs20 → Microsoft.App/containerApps (shared env, ACR params)', () => {
+  test('Function.Lambda nodejs20 → Azure Function App FC1 (Flex Consumption)', () => {
     const stack = new Stack('test');
     new Fn.Lambda(stack, 'Handler', { runtime: 'nodejs20', handler: 'index.handler', code: 'dist/' });
     const out = synth(stack);
-    // Um único ManagedEnvironment compartilhado por stack
-    expect(out.match(/'Microsoft\.App\/managedEnvironments@2023-05-01'/g)?.length).toBe(1);
-    expect(out).toContain("'Microsoft.App/containerApps@2023-05-01'");
-    // Imagem via parâmetro (não hardcoded)
-    expect(out).toContain('param handlerImage string');
-    expect(out).toContain('param acrServer string');
-    // Múltiplas Lambdas ainda usam o mesmo environment
+    // FC1 (Flex Consumption): Function App = Microsoft.Web/sites, NÃO Container App
+    expect(out).toContain("'Microsoft.Web/sites@2023-12-01'");
+    expect(out).toContain("'Microsoft.Web/serverfarms@2023-12-01'");
+    expect(out).toContain("name: 'FC1'");
+    expect(out).toContain("tier: 'FlexConsumption'");
+    expect(out).not.toContain("'Microsoft.App/containerApps@2023-05-01'");
+    // FC1 aceita 1 Function App por plano — cada Lambda cria o seu próprio plano
     const stack2 = new Stack('multi');
     new Fn.Lambda(stack2, 'Fn1', { runtime: 'nodejs20', handler: 'a.handler', code: '.' });
     new Fn.Lambda(stack2, 'Fn2', { runtime: 'nodejs20', handler: 'b.handler', code: '.' });
     const out2 = synth(stack2);
-    expect(out2.match(/'Microsoft\.App\/managedEnvironments@2023-05-01'/g)?.length).toBe(1);
-    expect(out2.match(/'Microsoft\.App\/containerApps@2023-05-01'/g)?.length).toBe(2);
+    expect(out2.match(/'Microsoft\.Web\/sites@2023-12-01'/g)?.length).toBe(2);
+    expect(out2.match(/'Microsoft\.Web\/serverfarms@2023-12-01'/g)?.length).toBe(2);
   });
 
   // ── Compute.Container → Container Apps (BCP055 fix) ──────────────────────────
@@ -222,13 +222,15 @@ describe('AzureProvider (Bicep)', () => {
     expect(out).toContain('.properties.configuration.ingress.fqdn');
   });
 
-  test('Compute.Container e Function.Lambda na mesma stack → 1 único ManagedEnvironment', () => {
+  test('Compute.Container e Function.Lambda na mesma stack → Container App + Function App FC1', () => {
     const stack = new Stack('mixed');
     new Compute.Container(stack, 'AppContainer', { image: 'myapp:latest' });
     new Fn.Lambda(stack, 'Handler', { runtime: 'nodejs20', handler: 'index.handler', code: '.' });
     const out = synth(stack);
+    // Container → 1 Container App + 1 managed environment; Lambda → 1 Function App FC1
     expect(out.match(/'Microsoft\.App\/managedEnvironments@2023-05-01'/g)?.length).toBe(1);
-    expect(out.match(/'Microsoft\.App\/containerApps@2023-05-01'/g)?.length).toBe(2);
+    expect(out.match(/'Microsoft\.App\/containerApps@2023-05-01'/g)?.length).toBe(1);
+    expect(out.match(/'Microsoft\.Web\/sites@2023-12-01'/g)?.length).toBe(1);
   });
 
   test('Compute.Container env var undefined → erro claro no synth', () => {
@@ -254,11 +256,15 @@ describe('AzureProvider (Bicep)', () => {
     expect(out).toContain("'Microsoft.ServiceBus/namespaces/topics@2022-10-01-preview'");
   });
 
-  test('Cache.Redis → Microsoft.Cache/redis', () => {
+  test('Cache.Redis → Microsoft.Cache/redis Standard C1 (não Enterprise)', () => {
     const stack = new Stack('test');
     new Cache.Redis(stack, 'MyRedis', { nodeType: 'small' });
     const out = synth(stack);
-    expect(out).toContain("'Microsoft.Cache/redis@2023-08-01'");
+    // Standard C1 @2023-04-01 — Enterprise Balanced_B0 falha com AllocationFailed em várias regiões
+    expect(out).toContain("'Microsoft.Cache/redis@2023-04-01'");
+    expect(out).not.toContain('redisEnterprise');
+    // porta TLS padrão do Azure Cache for Redis é 6380
+    expect(out).toContain("'6380'");
   });
 
   test('Secret.Vault → Microsoft.KeyVault/vaults com subscription().tenantId', () => {
@@ -505,20 +511,23 @@ describe('accountTier free → SKUs mais baratas (paridade de custo com AWS free
     expect(std).toContain("name: 'Standard_D2ds_v5'");
   });
 
-  test('Cache.Redis free → Basic C0 (não Standard C1)', () => {
+  test('Cache.Redis → Standard C1 (Enterprise Balanced_B0 falha com AllocationFailed)', () => {
     const stack = new Stack('c');
     new Cache.Redis(stack, 'AppCache', { nodeType: 'small' });
     const free = emitBicep(stack, { accountTier: 'free' });
-    expect(free).toMatch(/name: 'Basic'[\s\S]{0,40}capacity: 0/);
+    // deploy-validado p20az-r3: Standard C1 sobe; Enterprise Balanced_B0 não tem capacidade
+    expect(free).toMatch(/name: 'Standard'[\s\S]{0,40}capacity: 1/);
+    expect(free).not.toContain('redisEnterprise');
   });
 
-  test('Database.DynamoDB free → enableFreeTier: true', () => {
+  test('Database.DynamoDB → Cosmos Table API sem enableFreeTier (evita conflito de conta grátis)', () => {
     const stack = new Stack('t');
     new Database.DynamoDB(stack, 'ItemsTable', { partitionKey: 'id', partitionKeyType: 'S' } as any);
     const free = emitBicep(stack, { accountTier: 'free' });
-    expect(free).toContain('enableFreeTier: true');
-    const std = emitBicep(stack, { accountTier: 'standard' });
-    expect(std).toContain('enableFreeTier: false');
+    // deploy-validado p02az: Table API sobe sem enableFreeTier. O flag só permite 1
+    // conta grátis por subscription — omitir evita colisão em projetos com 2 Cosmos.
+    expect(free).toContain("'EnableTable'");
+    expect(free).not.toContain('enableFreeTier');
   });
 });
 
@@ -613,10 +622,10 @@ describe('Storage.Bucket eventNotifications → Event Grid trigger (p11 Azure, p
     // eventSubscription com filtro BlobCreated
     expect(bicep).toContain("'Microsoft.EventGrid/systemTopics/eventSubscriptions@2022-06-15'");
     expect(bicep).toContain("'Microsoft.Storage.BlobCreated'");
-    // webhook URL referencia o FQDN do Container App (mesmo stack — referência direta)
-    expect(bicep).toContain('dataProcessorFn.properties.configuration.ingress.fqdn');
+    // webhook URL referencia o hostname da Function App FC1 (mesmo stack — referência direta)
+    expect(bicep).toContain('dataProcessorFn.properties.defaultHostName');
     expect(bicep).toContain('/events');
-    // dependsOn garante Container App criado antes do eventSubscription (evita cold-start na validação)
+    // dependsOn garante a Function App criada antes do eventSubscription (evita cold-start na validação)
     expect(bicep).toContain('dependsOn');
     expect(bicep).toContain('dataProcessorFn');
   });
@@ -663,7 +672,40 @@ describe('Storage.Bucket eventNotifications → Event Grid trigger (p11 Azure, p
     expect(bicep.match(/'Microsoft\.EventGrid\/systemTopics@2022-06-15'/g)?.length).toBe(1);
     // 2 eventSubscriptions (uma por lambda)
     expect(bicep.match(/'Microsoft\.EventGrid\/systemTopics\/eventSubscriptions@2022-06-15'/g)?.length).toBe(2);
-    expect(bicep).toContain('fn1.properties.configuration.ingress.fqdn');
-    expect(bicep).toContain('fn2.properties.configuration.ingress.fqdn');
+    expect(bicep).toContain('fn1.properties.defaultHostName');
+    expect(bicep).toContain('fn2.properties.defaultHostName');
+  });
+});
+
+describe('Nomes de output cross-stack — identificadores Bicep válidos (item 4)', () => {
+  // Identificadores Bicep NÃO aceitam hífen. Um construct.id com hífen tem que
+  // gerar output SEM hífen (via outputName/crossParamName), senão o Bicep é
+  // inválido E o consumidor cross-stack pede um param que nunca bate.
+  test('Database.SQL com id hifenizado → output sem hífen', () => {
+    const stack = new Stack('db');
+    new Database.SQL(stack, 'app-db', { engine: 'postgres', size: 'small' } as any);
+    const out = emitBicep(stack, { accountTier: 'free' });
+    // nome do output é sanitizado (appdbEndpoint), não app-dbEndpoint
+    expect(out).toContain('output appdbEndpoint string');
+    expect(out).toContain('output appdbPort string');
+    expect(out).toContain('output appdbUsername string');
+    expect(out).not.toMatch(/output app-db\w+ string/);
+  });
+
+  test('produtor de output e consumidor cross-stack usam a mesma sanitização', () => {
+    // stack produtora: banco com hífen no id
+    const dbStack = new Stack('db');
+    new Database.SQL(dbStack, 'app-db', { engine: 'postgres', size: 'small' } as any);
+    // stack consumidora: Function referencia o banco em OUTRA stack
+    const apiStack = new Stack('api');
+    new Fn.Lambda(apiStack, 'ApiFn', {
+      runtime: 'nodejs20', handler: 'dist/api.handler', code: '.',
+      environment: { DB_HOST: ref('app-db', 'Endpoint') },
+    });
+    const producer = emitBicep(dbStack, { accountTier: 'free' });
+    const consumer = emitBicep(apiStack, { accountTier: 'free' });
+    // o output do produtor (appdbEndpoint) tem que existir como param no consumidor
+    expect(producer).toContain('output appdbEndpoint string');
+    expect(consumer).toContain('param appdbEndpoint string');
   });
 });

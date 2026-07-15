@@ -1,6 +1,6 @@
 import { BaseConstruct, isRef } from '@iacmp/core';
 import type { Ref } from '@iacmp/core';
-import { expr, tag, toSym, safeStorageName, crossParamName, SynthContext } from './shared';
+import { expr, tag, toSym, safeStorageName, crossParamName, outputName, SynthContext } from './shared';
 
 export function synthesizeStorage(construct: BaseConstruct, ctx: SynthContext): void {
   const { resources, outputs, crossParams } = ctx;
@@ -50,7 +50,7 @@ export function synthesizeStorage(construct: BaseConstruct, ctx: SynthContext): 
           properties: blobProps,
         });
       }
-      outputs.push({ name: `${construct.id}Id`, type: 'string', value: `${sym}.id` });
+      outputs.push({ name: outputName(construct.id, 'Id'), type: 'string', value: `${sym}.id` });
       outputs.push({ name: crossParamName(construct.id, 'Name'), type: 'string', value: `${sym}.name` });
       outputs.push({ name: crossParamName(construct.id, 'ConnectionString'), type: 'string', value: `'DefaultEndpointsProtocol=https;AccountName=\${${sym}.name};AccountKey=\${${sym}.listKeys().keys[0].value};EndpointSuffix=core.windows.net'` });
       const eventNotifications = (props.eventNotifications as Array<Record<string, unknown>>) ?? [];

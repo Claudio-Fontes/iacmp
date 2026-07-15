@@ -1,5 +1,5 @@
 import { BaseConstruct, isRef } from '@iacmp/core';
-import { expr, tag, toSym, crossParamName, SynthContext } from './shared';
+import { expr, tag, toSym, crossParamName, outputName, SynthContext } from './shared';
 
 export function synthesizeNetwork(construct: BaseConstruct, ctx: SynthContext): void {
   const { resources, outputs, accountTier, cdnBucketRefs } = ctx;
@@ -214,7 +214,7 @@ export function synthesizeNetwork(construct: BaseConstruct, ctx: SynthContext): 
         if (bucketRefEarly) {
           const bSym = toSym(bucketRefEarly);
           cdnBucketRefs.add(bucketRefEarly);
-          outputs.push({ name: `${construct.id}Url`, type: 'string', value: `'\${${bSym}.properties.primaryEndpoints.blob}web'` });
+          outputs.push({ name: outputName(construct.id, 'Url'), type: 'string', value: `'\${${bSym}.properties.primaryEndpoints.blob}web'` });
         }
         break;
       }
@@ -305,7 +305,7 @@ export function synthesizeNetwork(construct: BaseConstruct, ctx: SynthContext): 
         properties: routeProps,
       });
 
-      outputs.push({ name: `${construct.id}Url`, type: 'string', value: `${endpointSym}.properties.hostName` });
+      outputs.push({ name: outputName(construct.id, 'Url'), type: 'string', value: `${endpointSym}.properties.hostName` });
       break;
     }
 

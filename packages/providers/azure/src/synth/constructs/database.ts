@@ -1,5 +1,5 @@
 import { BaseConstruct } from '@iacmp/core';
-import { expr, tag, toSym, crossParamName, SynthContext } from './shared';
+import { expr, tag, toSym, crossParamName, outputName, SynthContext } from './shared';
 
 function flexibleServerSku(accountTier: 'free' | 'standard'): { name: string; tier: string } {
   return accountTier === 'free'
@@ -25,9 +25,9 @@ export function synthesizeDatabase(construct: BaseConstruct, ctx: SynthContext):
       if (engine === 'mysql') {
         resources.push({ sym, type: 'Microsoft.DBforMySQL/flexibleServers', apiVersion: '2023-06-30', name: serverName, location: 'location', tags: tag(construct.id), sku: dbSku, properties: { administratorLogin: 'dbadmin', administratorLoginPassword: expr('adminPassword'), version: '8.0.21', storage: { storageSizeGB: props.storageGb ?? 20, autoGrow: 'Enabled' }, backup: { backupRetentionDays: Math.max(Number(props.backupRetentionDays ?? 7), 7), geoRedundantBackup: 'Disabled' }, highAvailability: { mode: zoneRedundant ? 'ZoneRedundant' : 'Disabled' } } });
         resources.push({ ...fwRule, type: 'Microsoft.DBforMySQL/flexibleServers/firewallRules', apiVersion: '2023-06-30' });
-        outputs.push({ name: `${construct.id}Endpoint`, type: 'string', value: `${sym}.properties.fullyQualifiedDomainName` });
-        outputs.push({ name: `${construct.id}Port`, type: 'string', value: `'3306'` });
-        outputs.push({ name: `${construct.id}Username`, type: 'string', value: `'dbadmin'` });
+        outputs.push({ name: outputName(construct.id, 'Endpoint'), type: 'string', value: `${sym}.properties.fullyQualifiedDomainName` });
+        outputs.push({ name: outputName(construct.id, 'Port'), type: 'string', value: `'3306'` });
+        outputs.push({ name: outputName(construct.id, 'Username'), type: 'string', value: `'dbadmin'` });
         break;
       }
       if (engine === 'postgres') {
@@ -35,9 +35,9 @@ export function synthesizeDatabase(construct: BaseConstruct, ctx: SynthContext):
         const pgStorageGB = pgStorageRaw < 32 ? 32 : pgStorageRaw;
         resources.push({ sym, type: 'Microsoft.DBforPostgreSQL/flexibleServers', apiVersion: '2023-06-01-preview', name: serverName, location: 'location', tags: tag(construct.id), sku: dbSku, properties: { administratorLogin: 'dbadmin', administratorLoginPassword: expr('adminPassword'), version: '15', storage: { storageSizeGB: pgStorageGB }, backup: { backupRetentionDays: Math.max(Number(props.backupRetentionDays ?? 7), 7), geoRedundantBackup: 'Disabled' }, highAvailability: { mode: zoneRedundant ? 'ZoneRedundant' : 'Disabled' } } });
         resources.push({ ...fwRule, type: 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules', apiVersion: '2023-06-01-preview' });
-        outputs.push({ name: `${construct.id}Endpoint`, type: 'string', value: `${sym}.properties.fullyQualifiedDomainName` });
-        outputs.push({ name: `${construct.id}Port`, type: 'string', value: `'5432'` });
-        outputs.push({ name: `${construct.id}Username`, type: 'string', value: `'dbadmin'` });
+        outputs.push({ name: outputName(construct.id, 'Endpoint'), type: 'string', value: `${sym}.properties.fullyQualifiedDomainName` });
+        outputs.push({ name: outputName(construct.id, 'Port'), type: 'string', value: `'5432'` });
+        outputs.push({ name: outputName(construct.id, 'Username'), type: 'string', value: `'dbadmin'` });
         break;
       }
       if (engine === 'mariadb') {
@@ -53,9 +53,9 @@ export function synthesizeDatabase(construct: BaseConstruct, ctx: SynthContext):
       const dbSym = `${sym}Db`;
       resources.push({ sym, type: 'Microsoft.Sql/servers', apiVersion: '2023-02-01-preview', name: serverName, location: 'location', tags: tag(construct.id), properties: { administratorLogin: 'sqladmin', administratorLoginPassword: expr('adminPassword'), version: '12.0' } });
       resources.push({ sym: dbSym, type: 'Microsoft.Sql/servers/databases', apiVersion: '2023-02-01-preview', parent: sym, name: construct.id, location: 'location', sku: { name: edition === 'ee' ? 'BusinessCritical' : 'Standard', tier: edition === 'ee' ? 'BusinessCritical' : 'Standard' }, properties: { collation: 'SQL_Latin1_General_CP1_CI_AS', maxSizeBytes: storageBytes, zoneRedundant } });
-      outputs.push({ name: `${construct.id}Endpoint`, type: 'string', value: `${sym}.properties.fullyQualifiedDomainName` });
-      outputs.push({ name: `${construct.id}Port`, type: 'string', value: `'1433'` });
-      outputs.push({ name: `${construct.id}Username`, type: 'string', value: `'sqladmin'` });
+      outputs.push({ name: outputName(construct.id, 'Endpoint'), type: 'string', value: `${sym}.properties.fullyQualifiedDomainName` });
+      outputs.push({ name: outputName(construct.id, 'Port'), type: 'string', value: `'1433'` });
+      outputs.push({ name: outputName(construct.id, 'Username'), type: 'string', value: `'sqladmin'` });
       break;
     }
 
@@ -113,7 +113,7 @@ export function synthesizeDatabase(construct: BaseConstruct, ctx: SynthContext):
           options: {},
         },
       });
-      outputs.push({ name: `${construct.id}Endpoint`, type: 'string', value: `${sym}.properties.documentEndpoint` });
+      outputs.push({ name: outputName(construct.id, 'Endpoint'), type: 'string', value: `${sym}.properties.documentEndpoint` });
       outputs.push({ name: crossParamName(construct.id, 'Name'), type: 'string', value: `'${construct.id}'` });
       outputs.push({ name: crossParamName(construct.id, 'Arn'), type: 'string', value: `${sym}.id` });
       outputs.push({

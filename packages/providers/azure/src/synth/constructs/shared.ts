@@ -66,6 +66,13 @@ export function crossParamName(constructId: string, attribute: string): string {
   return `${constructId.replace(/[^a-zA-Z0-9]/g, '')}${attribute}`;
 }
 
+// Nome de um output de stack. Identificadores Bicep NÃO aceitam hífen — um
+// construct.id como "app-db" geraria `output app-dbEndpoint` (inválido) e não
+// bateria com o param `appdbEndpoint` que o consumidor cross-stack pede via
+// crossParamName. PRODUTOR (emissão de output) e CONSUMIDOR (resolveRef) TÊM
+// que usar a mesma sanitização — por isso outputName é crossParamName.
+export const outputName = crossParamName;
+
 export function resolveRef(r: Ref, idx: Map<string, BaseConstruct>, crossParams: Map<string, string>): string {
   const c = idx.get(r.constructId);
   if (!c) {
