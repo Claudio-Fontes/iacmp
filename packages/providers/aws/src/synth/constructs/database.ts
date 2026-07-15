@@ -1,5 +1,5 @@
 import { BaseConstruct, databaseDefaultsForTier } from '@iacmp/core';
-import type { CloudFormationResource, SynthContext } from '../types';
+import { physicalName, type CloudFormationResource, type SynthContext } from '../types';
 import { resolveSubnetId, resolveSecurityGroupId } from '../resolvers';
 import { resourceRef } from '../graph';
 
@@ -61,7 +61,7 @@ export function synthDatabase(
           }]);
 
           const clusterProps: Record<string, unknown> = {
-            DBClusterIdentifier: construct.id.toLowerCase(),
+            DBClusterIdentifier: physicalName(ctx, construct.id, 63).toLowerCase(),
             Engine: auroraEngine.Engine,
             EngineVersion: auroraEngine.EngineVersion,
             MasterUsername: masterUser,
@@ -84,7 +84,7 @@ export function synthDatabase(
             Type: 'AWS::RDS::DBCluster',
             DeletionPolicy: deletionPolicy,
             Properties: {
-              DBClusterIdentifier: construct.id.toLowerCase(),
+              DBClusterIdentifier: physicalName(ctx, construct.id, 63).toLowerCase(),
               Engine: auroraEngine.Engine,
               EngineVersion: auroraEngine.EngineVersion,
               MasterUsername: masterUser,
@@ -206,7 +206,7 @@ export function synthDatabase(
         },
       }]);
       const docDbClusterProps: Record<string, unknown> = {
-        DBClusterIdentifier: construct.id.toLowerCase(),
+        DBClusterIdentifier: physicalName(ctx, construct.id, 63).toLowerCase(),
         MasterUsername: 'docdbadmin',
         MasterUserPassword: { 'Fn::Sub': `{{resolve:secretsmanager:\${${docDbSecretId}}:SecretString:password}}` },
         StorageEncrypted: true,
@@ -258,7 +258,7 @@ export function synthDatabase(
         Type: 'AWS::DynamoDB::Table',
         DeletionPolicy: (props.deletionProtection as boolean) ? 'Retain' : 'Delete',
         Properties: {
-          TableName: construct.id,
+          TableName: physicalName(ctx, construct.id, 255),
           BillingMode: billingMode,
           ...(billingMode === 'PROVISIONED' ? {
             ProvisionedThroughput: { ReadCapacityUnits: props.readCapacity ?? 5, WriteCapacityUnits: props.writeCapacity ?? 5 },

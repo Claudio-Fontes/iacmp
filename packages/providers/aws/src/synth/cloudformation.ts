@@ -213,7 +213,7 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
       s3TriggerBucketsForLambda.set(lambdaId, set);
     }
   }
-  const ctx: SynthContext = { currentStackName: prefixStack(stack.name), registry, lambdaRoles, vpcLambdas, dbSecretSuffix, dbMasterUsername, sqsEventSourceLambdas, kinesisEventSourceLambdas, albDefaultTg, publicSubnetsByVpc, profile, s3TriggerBucketsForLambda, sfnInitiatorLambdas, dynamoRefLambdas, sqsSenderRefLambdas };
+  const ctx: SynthContext = { currentStackName: prefixStack(stack.name), projectName, registry, lambdaRoles, vpcLambdas, dbSecretSuffix, dbMasterUsername, sqsEventSourceLambdas, kinesisEventSourceLambdas, albDefaultTg, publicSubnetsByVpc, profile, s3TriggerBucketsForLambda, sfnInitiatorLambdas, dynamoRefLambdas, sqsSenderRefLambdas };
 
   // Guard: detecta handlers .ts que leem process.env de env vars omitidas pelo
   // synth (omitidas porque referenciam o bucket-trigger — evitar ciclo CFN).

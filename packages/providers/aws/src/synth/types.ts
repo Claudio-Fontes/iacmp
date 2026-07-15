@@ -23,6 +23,13 @@ export interface CloudFormationTemplate {
  */
 export interface SynthContext {
   currentStackName: string;
+  /**
+   * Nome do projeto (iacmp.json), quando o synth roda via CLI. Prefixa NOMES
+   * FÍSICOS de recursos (FunctionName, TableName, DBClusterIdentifier) para
+   * que dois projetos na mesma conta não colidam — mesma regra do StackName.
+   * Ausente em testes isolados → nomes sem prefixo (comportamento antigo).
+   */
+  projectName?: string;
   /** constructId → { stackName, type } de TODAS as stacks do universo. */
   registry: Map<string, { stackName: string; type: string }>;
   /**
@@ -81,3 +88,15 @@ export const INSTANCE_TYPE_MAP: Record<string, string> = {
   medium: 't3.medium',
   large: 't3.large',
 };
+
+/**
+ * Nome FÍSICO de um recurso: prefixado com o nome do projeto quando presente
+ * (synth real), para que dois projetos na mesma conta AWS nunca colidam —
+ * ex: Lambda "Api" do p08 e do p09 viram "p08-Api" e "p09-Api". Sem projectName
+ * (testes isolados), retorna o id cru — comportamento idêntico ao anterior.
+ * `maxLen` respeita o limite do serviço (Lambda 64, RDS identifier 63).
+ */
+export function physicalName(ctx: SynthContext, id: string, maxLen = 64): string {
+  const name = ctx.projectName ? `${ctx.projectName}-${id}` : id;
+  return name.slice(0, maxLen);
+}

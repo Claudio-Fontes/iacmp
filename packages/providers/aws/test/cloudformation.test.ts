@@ -178,6 +178,19 @@ describe('AWSProvider', () => {
     expect(tpl.Resources.DB.DeletionPolicy).toBe('Retain');
   });
 
+  test('nomes físicos prefixados com projectName (colisão entre projetos)', () => {
+    new Fn.Lambda(stack, 'Api', { runtime: 'nodejs20', handler: 'index.handler', code: 'dist/' });
+    new Database.DynamoDB(stack, 'Orders', { partitionKey: 'id' });
+    // COM projectName (synth real via CLI): FunctionName/TableName prefixados
+    const tpl = provider.synthesize(stack, [stack], undefined, 'p09') as any;
+    expect(tpl.Resources.Api.Properties.FunctionName).toBe('p09-Api');
+    expect(tpl.Resources.Orders.Properties.TableName).toBe('p09-Orders');
+    // SEM projectName (testes isolados): nomes crus — backward compat
+    const raw = provider.synthesize(stack) as any;
+    expect(raw.Resources.Api.Properties.FunctionName).toBe('Api');
+    expect(raw.Resources.Orders.Properties.TableName).toBe('Orders');
+  });
+
   test('regressao: Database.DocumentDB → DeletionPolicy Delete por default, Snapshot requer snapshotOnDelete:true', () => {
     new Database.DocumentDB(stack, 'Docs', { instances: 1 });
     const tpl = provider.synthesize(stack) as any;

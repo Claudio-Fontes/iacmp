@@ -1,5 +1,5 @@
 import { BaseConstruct, isRef, type Ref } from '@iacmp/core';
-import type { CloudFormationResource, SynthContext } from '../types';
+import { physicalName, type CloudFormationResource, type SynthContext } from '../types';
 import {
   resolveLambdaArnRef,
   requireLambda,
@@ -35,7 +35,7 @@ export function synthFunction(
       entries.push([logicalId, {
         Type: 'AWS::Lambda::Function',
         Properties: {
-          FunctionName: construct.id,
+          FunctionName: physicalName(ctx, construct.id, 64),
           Runtime: runtimeMap[(props.runtime as string) ?? 'nodejs20'] ?? 'nodejs20.x',
           Handler: props.handler as string,
           // String (não { ZipFile }) — formato local-path que `aws cloudformation
