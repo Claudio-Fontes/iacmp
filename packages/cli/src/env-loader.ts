@@ -13,6 +13,7 @@ function parseEnvFile(filePath: string, opts?: { overwrite?: boolean }): void {
     const key = trimmed.slice(0, eq).trim();
     const val = trimmed.slice(eq + 1).trim();
     if (!key) continue;
+    if (!val) continue;
     if (opts?.overwrite || process.env[key] === undefined) process.env[key] = val;
   }
 }
