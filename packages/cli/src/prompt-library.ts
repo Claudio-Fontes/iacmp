@@ -226,6 +226,141 @@ Gere todos os handlers TypeScript com lógica real de transição de estados e p
 Gere o handler TypeScript que valida o ENV, busca o secret correto e retorna apenas as keys não-sensíveis (remove password, token, key das responses).
 
 Free tier: na AWS são 3 secrets × USD 0,40/mês após o trial de 30 dias (~USD 1,20/mês) — adicione em warnings. No Azure o Key Vault é praticamente gratuito.`,
+  },
+  {
+    id: '13-url-shortener',
+    title: 'Encurtador de URL',
+    category: 'Backend',
+    description: 'Encurtador de URLs com redirect 301, contagem de cliques e expiração. 100% free tier nas duas nuvens.',
+    prompt: `Crie uma infraestrutura de encurtador de URL na AWS com:
+
+- DynamoDB "LinksTable" (partitionKey: slug, tipo string) com os campos: slug, targetUrl, clicks, createdAt, expiresAt
+- Lambda "CreateLinkFn": POST /links recebe { targetUrl, slug opcional } — se o slug não vier, gera um código curto aleatório de 7 caracteres; grava com ConditionExpression attribute_not_exists(slug) e retorna 409 se o slug já existir
+- Lambda "RedirectFn": GET /{slug} busca o link, incrementa o contador clicks com UpdateCommand (ADD clicks :one) e retorna 301 com o header Location apontando para targetUrl; retorna 404 se não existir ou estiver expirado
+- Lambda "StatsFn": GET /links/{slug}/stats retorna slug, targetUrl, clicks e createdAt
+- API Gateway com as 3 rotas
+- Policy IAM mínima por Lambda (GetItem, PutItem, UpdateItem — apenas o que cada handler usa)
+
+Gere os handlers TypeScript com DynamoDBDocumentClient. O redirect retorna statusCode 301 com headers { Location: targetUrl } e body vazio.`,
+  },
+  {
+    id: '14-waitlist-double-optin',
+    title: 'Lista de Espera com Confirmação (Double Opt-in)',
+    category: 'Backend',
+    description: 'Inscrição em lista de espera com token de confirmação e limpeza de inscrições pendentes.',
+    prompt: `Crie uma infraestrutura de lista de espera com confirmação em duas etapas na AWS com:
+
+- DynamoDB "WaitlistTable" (partitionKey: email, tipo string) com os campos: email, status (pending|confirmed), token, createdAt
+- Lambda "SubscribeFn": POST /subscribe recebe { email }, valida o formato do e-mail, gera um token com crypto.randomUUID() e grava com status "pending"; se o e-mail já estiver confirmado retorna 409
+- Lambda "ConfirmFn": GET /confirm?email=...&token=... valida o token e muda o status para "confirmed" com ConditionExpression (o token tem que bater); token inválido retorna 403
+- Lambda "CleanupFn": remove inscrições "pending" com mais de 48h usando Scan + FilterExpression (atenção: status é palavra reservada no DynamoDB — use alias #status) e BatchWrite de deletes
+- EventBridge Rule executando CleanupFn a cada 6 horas (rate: 6 hours)
+- API Gateway: POST /subscribe e GET /confirm
+- Policy IAM mínima por Lambda
+
+Gere os handlers TypeScript com DynamoDBDocumentClient e validação real de e-mail (regex simples).`,
+  },
+  {
+    id: '15-webhook-receiver',
+    title: 'Receptor de Webhooks com Assinatura HMAC',
+    category: 'Integração',
+    description: 'Endpoint que recebe webhooks externos, valida a assinatura HMAC e processa de forma assíncrona via fila.',
+    prompt: `Crie uma infraestrutura de recepção de webhooks na AWS com:
+
+- Secret.Vault "WebhookSecret" com a chave HMAC compartilhada com o emissor dos webhooks
+- Lambda "ReceiverFn": POST /webhooks — valida a assinatura HMAC-SHA256 do body contra o header X-Signature usando a chave do secret (crypto.createHmac + timingSafeEqual); assinatura inválida retorna 401; válida → envia o payload para a fila e responde 202 imediatamente
+- Fila SQS "WebhookQueue" com visibilityTimeout 60s e Dead Letter Queue "WebhookDLQ" (maxReceiveCount 3)
+- Lambda "ProcessorFn" consumindo a fila (batchSize 10) que processa cada evento e persiste no DynamoDB
+- DynamoDB "WebhookEventsTable" (partitionKey: eventId, tipo string) com campos: eventId, type, payload, receivedAt
+- Policy IAM mínima por Lambda (o receiver precisa de secretsmanager:GetSecretValue e sqs:SendMessage; o processor das actions de consumo da fila e dynamodb:PutItem)
+
+Gere os handlers TypeScript com lógica real de HMAC. O eventId vem do payload ou é gerado com crypto.randomUUID().
+
+Free tier: tudo gratuito nas duas nuvens; o único custo é 1 secret na AWS (USD 0,40/mês após o trial de 30 dias — Key Vault no Azure é grátis). Adicione em warnings.`,
+  },
+  {
+    id: '16-event-counter-analytics',
+    title: 'Telemetria com Contadores Atômicos',
+    category: 'Dados',
+    description: 'API de ingestão de eventos com contadores atômicos por tipo e por dia, e endpoint de estatísticas.',
+    prompt: `Crie uma infraestrutura de telemetria leve na AWS com:
+
+- DynamoDB "CountersTable" (partitionKey: counterKey, tipo string) onde counterKey é a composição "<eventType>#<YYYY-MM-DD>" e o campo total é numérico
+- Lambda "TrackFn": POST /track recebe { eventType } (ex: page_view, signup, click), monta a counterKey com a data UTC de hoje e incrementa com UpdateCommand ADD total :one (contador atômico — cria o item automaticamente se não existir)
+- Lambda "StatsFn": GET /stats?eventType=...&days=7 retorna a série dos últimos N dias fazendo BatchGet das counterKeys calculadas (uma por dia) — sem Scan e sem GSI
+- API Gateway com as 2 rotas e CORS habilitado (o track é chamado de browsers)
+- Policy IAM mínima por Lambda
+
+Gere os handlers TypeScript com DynamoDBDocumentClient. O StatsFn preenche com 0 os dias sem contador e retorna { eventType, series: [{ date, total }] }.`,
+  },
+  {
+    id: '17-scheduled-backup-s3',
+    title: 'Backup Agendado DynamoDB → S3',
+    category: 'Automação',
+    description: 'Export diário de uma tabela DynamoDB para S3 em JSON particionado por data, com retenção limitada.',
+    prompt: `Crie uma infraestrutura de backup agendado na AWS com:
+
+- DynamoDB "ItemsTable" (partitionKey: id, tipo string) — a tabela de dados da aplicação
+- Lambda "SeedFn": POST /items insere um item (id via crypto.randomUUID(), name, value) — serve para popular a tabela e testar o fluxo
+- Lambda "BackupFn" (timeout 300s, memory 512MB): escaneia a ItemsTable com paginação (LastEvaluatedKey) e grava um único arquivo JSON no bucket com a key backups/YYYY/MM/DD/items.json
+- S3 Bucket "BackupsBucket" privado com versioning
+- Lambda "RetentionFn": lista os objetos de backups/ e apaga os com mais de 30 dias (ListObjectsV2 + DeleteObjects)
+- EventBridge Rule executando BackupFn todo dia às 03:00 UTC (cron: 0 3 * * ? *) e RetentionFn todo domingo às 04:00 UTC (cron: 0 4 ? * 1 *)
+- API Gateway: POST /items
+- Policy IAM mínima por Lambda (scan na tabela; put/list/delete no bucket — cada handler só o que usa)
+
+Gere os handlers TypeScript com paginação real no Scan e @aws-sdk/client-s3 no backup.`,
+  },
+  {
+    id: '18-uptime-monitor',
+    title: 'Monitor de Disponibilidade (Uptime)',
+    category: 'Monitoramento',
+    description: 'Health checks agendados de URLs externas com histórico e alarme quando um site cai.',
+    prompt: `Crie uma infraestrutura de monitoramento de disponibilidade na AWS com:
+
+- DynamoDB "ChecksTable" (partitionKey: url, tipo string) com os campos: url, lastStatus, lastLatencyMs, lastCheckedAt, consecutiveFailures
+- Lambda "CheckerFn" (timeout 60s): faz fetch com timeout de 10s numa lista fixa de URLs definida na env var TARGET_URLS (separadas por vírgula), mede a latência, grava o resultado na tabela e LANÇA UM ERRO ao final se alguma URL retornou status >= 400 ou estourou o timeout (o erro alimenta a métrica de Errors da Lambda)
+- EventBridge Rule executando CheckerFn a cada 5 minutos (rate: 5 minutes)
+- Monitoring.Alarm "SiteDownAlarm" sobre a métrica Errors da CheckerFn: threshold 1 erro em 5 minutos
+- Lambda "StatusFn": GET /status retorna o snapshot de todas as URLs monitoradas (Scan na tabela)
+- API Gateway: GET /status
+- Policy IAM mínima por Lambda
+
+Gere os handlers TypeScript. O CheckerFn usa fetch nativo do Node 20 com AbortController para o timeout e Promise.allSettled para checar as URLs em paralelo.`,
+  },
+  {
+    id: '19-feature-flags',
+    title: 'Feature Flags Multi-Ambiente',
+    category: 'Configuração',
+    description: 'Serviço de feature flags por ambiente com API de leitura pública e administração protegida.',
+    prompt: `Crie uma infraestrutura de feature flags na AWS com:
+
+- DynamoDB "FlagsTable" (partitionKey: flagKey, tipo string) onde flagKey é a composição "<env>#<flagName>" e os campos são: enabled (boolean), rolloutPercent (0-100), description, updatedAt
+- Lambda "GetFlagsFn": GET /flags?env=dev|staging|prod retorna todas as flags do ambiente via Scan + FilterExpression begins_with(flagKey, :envPrefix) — valida o env e retorna 400 para valores inválidos
+- Lambda "SetFlagFn": PUT /flags/{env}/{name} recebe { enabled, rolloutPercent, description } e faz upsert; exige o header X-Admin-Token igual ao valor do secret
+- Secret.Vault "AdminToken" com o token de administração
+- API Gateway com as 2 rotas e CORS habilitado
+- Policy IAM mínima por Lambda (o SetFlagFn precisa de secretsmanager:GetSecretValue)
+
+Gere os handlers TypeScript com DynamoDBDocumentClient. O GetFlagsFn responde { env, flags: { nome: { enabled, rolloutPercent } } } — formato pronto para o cliente consumir.
+
+Free tier: tudo gratuito nas duas nuvens; único custo é 1 secret na AWS (USD 0,40/mês pós-trial — Key Vault no Azure é grátis).`,
+  },
+  {
+    id: '20-leaderboard-api',
+    title: 'Leaderboard de Pontuação',
+    category: 'Dados',
+    description: 'Ranking de jogadores com envio de pontuação e top 10, portável entre as duas nuvens (sem GSI).',
+    prompt: `Crie uma infraestrutura de leaderboard na AWS com:
+
+- DynamoDB "ScoresTable" (partitionKey: playerId, tipo string) com os campos: playerId, playerName, bestScore (numérico), gamesPlayed, updatedAt
+- Lambda "SubmitScoreFn": POST /scores recebe { playerId, playerName, score } — atualiza bestScore APENAS se o novo score for maior (UpdateCommand com ConditionExpression score > bestScore, tratando ConditionalCheckFailedException como "não superou o recorde") e sempre incrementa gamesPlayed com ADD
+- Lambda "TopScoresFn": GET /leaderboard retorna o top 10 fazendo Scan na tabela e ordenando por bestScore no handler (NÃO use GSI nem IndexName — a ordenação é feita em memória, o que mantém o cenário portável entre as nuvens)
+- Lambda "PlayerFn": GET /players/{playerId} retorna o registro do jogador (404 se não existir)
+- API Gateway com as 3 rotas e CORS habilitado
+- Policy IAM mínima por Lambda
+
+Gere os handlers TypeScript com DynamoDBDocumentClient. Atenção: "score" pode colidir com palavras reservadas — use ExpressionAttributeNames com alias em todas as expressions.`,
   },];
 
 export const CATEGORIES = [...new Set(PROMPT_LIBRARY.map(p => p.category))];
