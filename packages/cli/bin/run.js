@@ -14,7 +14,9 @@ const fs = require('fs');
     if (eq === -1) continue;
     const key = trimmed.slice(0, eq).trim();
     const val = trimmed.slice(eq + 1).trim();
-    if (key) process.env[key] = val;
+    if (!key) continue;
+    if (!val) continue;
+    process.env[key] = val;
   }
 })();
 
