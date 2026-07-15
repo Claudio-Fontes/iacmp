@@ -60,6 +60,13 @@ export function tag(name: string): Record<string, string> {
 }
 
 // ── Ref resolution ───────────────────────────────────────────────────────────
+// DECLARAÇÃO do que o Azure resolve por (tipo, atributo) — o teste de
+// consistência garante que é subconjunto do canônico (CONSTRUCT_TYPES).
+// Valores `__xxx__` são MARCADORES: esses pares são resolvidos pelos `if`s
+// especiais do resolveRef (expressões compostas — listKeys etc.), não pelo
+// fallback `sym.<valor>` deste mapa. O fallback só é consultado quando nenhum
+// `if` bate. Ao adicionar um atributo novo: entrada aqui + case no resolveRef
+// (se composto) + atributo no CONSTRUCT_TYPES do core.
 export const AZURE_ATTR_MAP: Record<string, Record<string, string>> = {
   'Network.VPC':           { VpcId: 'id' },
   'Network.Subnet':        { SubnetId: 'id' },
@@ -199,10 +206,8 @@ export interface SynthContext {
   crossParams: Map<string, string>;
   functionImageParams: Map<string, string>;
   sharedContainerEnvSym: string | null;
-  sharedFunctionPlanSym: string | null;
   sharedFunctionStorageSym: string | null;
   sharedFnBlobServiceSym: string | null;
-  sharedFnDeployContainerSym: string | null;
   cdnBucketRefs: Set<string>;
   subnetsByVpc: Map<string, Array<{ id: string; cidr: string; public: boolean }>>;
   accountTier: 'free' | 'standard';

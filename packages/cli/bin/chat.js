@@ -7,7 +7,7 @@ const fs = require('fs');
 const cp = require('child_process');
 
 // Carrega um arquivo no formato key=value para process.env
-function loadEnvFile(filePath) {
+function loadEnvFile(filePath, overwrite) {
   if (!fs.existsSync(filePath)) return;
   const lines = fs.readFileSync(filePath, 'utf8').split('\n');
   for (const line of lines) {
@@ -17,18 +17,19 @@ function loadEnvFile(filePath) {
     if (eq === -1) continue;
     const key = trimmed.slice(0, eq).trim();
     const val = trimmed.slice(eq + 1).trim();
-    if (key) process.env[key] = val;
+    if (!key) continue;
+    if (overwrite || process.env[key] === undefined) process.env[key] = val;
   }
 }
 
-// Ordem de prioridade (menor → maior):
-// 1. ~/.iacmp/config — configuração global do usuário (API keys, preferências)
-// 2. .env do projeto — sobrescreve o global (override por projeto)
+// Ordem de prioridade (menor → maior) — mesma semântica do env-loader.ts:
+// 1. ~/.iacmp/config — defaults globais; NÃO sobrescreve env exportado no shell
+// 2. .env do projeto — sobrescreve shell e global (projeto tem prioridade)
 (function loadEnv() {
   const home = process.env.HOME || process.env.USERPROFILE || '';
-  loadEnvFile(path.join(home, '.iacmp', 'config'));
+  loadEnvFile(path.join(home, '.iacmp', 'config'), false);
   const cwd = process.env.IACMP_CWD || process.cwd();
-  loadEnvFile(path.resolve(cwd, '.env'));
+  loadEnvFile(path.resolve(cwd, '.env'), true);
 })();
 
 // Resolve @iacmp/* — suporta: global install, monorepo (workspace), link local

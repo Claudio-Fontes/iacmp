@@ -20,9 +20,15 @@ export function validateTypeScript(files: GeneratedFile[], projectDir: string): 
   const tmpDir = fs.mkdtempSync(path.join(projectDir, '.iacmp-validate-'));
 
   try {
-    // Escreve os arquivos gerados no diretório temporário
+    // Escreve os arquivos gerados PRESERVANDO a árvore de diretórios. Achatar
+    // para basename (comportamento antigo) fazia src/a/index.ts e src/b/index.ts
+    // colidirem no mesmo arquivo e quebrava import relativo entre handlers
+    // (./util → "Cannot find module") — erros TS FALSOS que alimentavam retries.
     for (const file of files) {
-      const filePath = path.join(tmpDir, path.basename(file.path));
+      const filePath = path.resolve(tmpDir, file.path);
+      // paths vêm do modelo — nunca deixar escapar do tmpDir (../, absoluto)
+      if (!filePath.startsWith(tmpDir + path.sep)) continue;
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
       fs.writeFileSync(filePath, file.content, 'utf-8');
     }
 
@@ -55,7 +61,7 @@ export function validateTypeScript(files: GeneratedFile[], projectDir: string): 
         baseUrl: '/',
         paths: tsconfigPaths,
       }),
-      include: [path.join(tmpDir, '*.ts')],
+      include: [path.join(tmpDir, '**', '*.ts')],
     };
 
     fs.writeFileSync(

@@ -201,7 +201,6 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
 
   const hasLambda = stack.constructs.some(c => c.type === 'Function.Lambda');
   const sharedFunctionStorageSym: string | null = hasLambda ? 'sharedFnStorage' : null;
-  const sharedFunctionPlanSym: string | null = null; // FC1 suporta apenas 1 Function por plano — cada Function cria o seu
   if (sharedFunctionStorageSym) {
     resources.push({
       sym: sharedFunctionStorageSym,
@@ -217,7 +216,6 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
   }
 
   const sharedFnBlobServiceSym: string | null = hasLambda ? 'sharedFnStorageBlobSvc' : null;
-  const sharedFnDeployContainerSym: string | null = null; // cada Function cria seu próprio container
 
   if (sharedFnBlobServiceSym) {
     resources.push({
@@ -239,10 +237,8 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
     crossParams,
     functionImageParams,
     sharedContainerEnvSym,
-    sharedFunctionPlanSym,
     sharedFunctionStorageSym,
     sharedFnBlobServiceSym,
-    sharedFnDeployContainerSym,
     cdnBucketRefs,
     subnetsByVpc,
     accountTier,

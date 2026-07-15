@@ -12,8 +12,11 @@ function getTableClient(tableName: string): TableClient {
   throw new Error(`No connection string found for table "${tableName}". Expected env var {KEY}_CONNECTION_STRING where {KEY}="${tableName}".`);
 }
 
-function entityToItem(entity: TableEntity): Record<string, unknown> {
-  const { partitionKey, rowKey, etag, timestamp, ...rest } = entity as Record<string, unknown>;
+// Aceita Record em vez de TableEntity: o SDK retorna TableEntityResult (com
+// partitionKey/rowKey opcionais), incompatível com TableEntity estrito — e o
+// corpo só desestrutura chaves, não precisa da garantia de presença.
+function entityToItem(entity: Record<string, unknown>): Record<string, unknown> {
+  const { partitionKey, rowKey, etag, timestamp, ...rest } = entity;
   void partitionKey; void etag; void timestamp;
   const filtered = Object.fromEntries(Object.entries(rest).filter(([k]) => !k.startsWith('odata.')));
   return { id: rowKey, ...filtered };
