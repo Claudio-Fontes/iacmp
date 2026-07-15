@@ -12,7 +12,7 @@ export interface MonitoringAlarmProps {
   treatMissingData?: 'breaching' | 'notBreaching' | 'ignore' | 'missing';
   alarmActions?: Array<string | Ref>;
   okActions?: Array<string | Ref>;
-  dimensions?: Record<string, string>;
+  dimensions?: Record<string, string | Ref>;
 }
 
 export interface MonitoringDashboardWidget {

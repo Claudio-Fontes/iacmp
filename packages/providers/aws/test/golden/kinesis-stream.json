@@ -166,6 +166,14 @@
         "Name": "kinesis-stream-ProducerFn-Arn"
       }
     },
+    "ProducerFnName": {
+      "Value": {
+        "Ref": "ProducerFn"
+      },
+      "Export": {
+        "Name": "kinesis-stream-ProducerFn-Name"
+      }
+    },
     "ProducerPolicyRoleRoleArn": {
       "Value": {
         "Fn::GetAtt": [
@@ -186,6 +194,14 @@
       },
       "Export": {
         "Name": "kinesis-stream-ConsumerFn-Arn"
+      }
+    },
+    "ConsumerFnName": {
+      "Value": {
+        "Ref": "ConsumerFn"
+      },
+      "Export": {
+        "Name": "kinesis-stream-ConsumerFn-Name"
       }
     }
   }

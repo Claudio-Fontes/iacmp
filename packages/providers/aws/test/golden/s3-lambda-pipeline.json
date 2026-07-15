@@ -121,6 +121,14 @@
         "Name": "s3-lambda-pipeline-ProcessFn-Arn"
       }
     },
+    "ProcessFnName": {
+      "Value": {
+        "Ref": "ProcessFn"
+      },
+      "Export": {
+        "Name": "s3-lambda-pipeline-ProcessFn-Name"
+      }
+    },
     "InputBucketName": {
       "Value": {
         "Ref": "InputBucket"

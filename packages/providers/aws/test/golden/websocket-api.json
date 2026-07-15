@@ -339,6 +339,14 @@
           "Name": "ws-api-ConnectFn-Arn"
         }
       },
+      "ConnectFnName": {
+        "Value": {
+          "Ref": "ConnectFn"
+        },
+        "Export": {
+          "Name": "ws-api-ConnectFn-Name"
+        }
+      },
       "DisconnectFnArn": {
         "Value": {
           "Fn::GetAtt": [
@@ -350,6 +358,14 @@
           "Name": "ws-api-DisconnectFn-Arn"
         }
       },
+      "DisconnectFnName": {
+        "Value": {
+          "Ref": "DisconnectFn"
+        },
+        "Export": {
+          "Name": "ws-api-DisconnectFn-Name"
+        }
+      },
       "DefaultFnArn": {
         "Value": {
           "Fn::GetAtt": [
@@ -359,6 +375,14 @@
         },
         "Export": {
           "Name": "ws-api-DefaultFn-Arn"
+        }
+      },
+      "DefaultFnName": {
+        "Value": {
+          "Ref": "DefaultFn"
+        },
+        "Export": {
+          "Name": "ws-api-DefaultFn-Name"
         }
       },
       "ApiUrl": {

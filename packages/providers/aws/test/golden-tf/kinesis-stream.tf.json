@@ -111,6 +111,10 @@
       "value": "${aws_lambda_function.producerfn.arn}",
       "description": "kinesis-stream-ProducerFn-Arn"
     },
+    "ProducerFnName": {
+      "value": "${aws_lambda_function.producerfn.function_name}",
+      "description": "kinesis-stream-ProducerFn-Name"
+    },
     "ProducerPolicyRoleRoleArn": {
       "value": "${aws_iam_role.producerpolicyrole.arn}",
       "description": "kinesis-stream-ProducerPolicyRole-RoleArn"
@@ -118,6 +122,10 @@
     "ConsumerFnArn": {
       "value": "${aws_lambda_function.consumerfn.arn}",
       "description": "kinesis-stream-ConsumerFn-Arn"
+    },
+    "ConsumerFnName": {
+      "value": "${aws_lambda_function.consumerfn.function_name}",
+      "description": "kinesis-stream-ConsumerFn-Name"
     }
   }
 }

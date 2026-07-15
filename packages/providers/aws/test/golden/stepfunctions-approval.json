@@ -164,6 +164,14 @@
         "Name": "stepfunctions-approval-NotifyFn-Arn"
       }
     },
+    "NotifyFnName": {
+      "Value": {
+        "Ref": "NotifyFn"
+      },
+      "Export": {
+        "Name": "stepfunctions-approval-NotifyFn-Name"
+      }
+    },
     "ActionFnArn": {
       "Value": {
         "Fn::GetAtt": [
@@ -173,6 +181,14 @@
       },
       "Export": {
         "Name": "stepfunctions-approval-ActionFn-Arn"
+      }
+    },
+    "ActionFnName": {
+      "Value": {
+        "Ref": "ActionFn"
+      },
+      "Export": {
+        "Name": "stepfunctions-approval-ActionFn-Name"
       }
     },
     "ApprovalFlowArn": {

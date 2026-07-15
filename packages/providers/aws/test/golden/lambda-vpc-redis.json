@@ -404,6 +404,14 @@
         "Export": {
           "Name": "lvr-api-ApiHandler-Arn"
         }
+      },
+      "ApiHandlerName": {
+        "Value": {
+          "Ref": "ApiHandler"
+        },
+        "Export": {
+          "Name": "lvr-api-ApiHandler-Name"
+        }
       }
     }
   }

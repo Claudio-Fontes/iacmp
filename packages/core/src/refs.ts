@@ -35,7 +35,7 @@ export interface ConstructAttributeMap {
   'Messaging.Queue':       'Arn' | 'QueueUrl' | 'QueueArn' | 'ConnectionString';
   'Messaging.Topic':       'Arn' | 'TopicArn' | 'ConnectionString';
   'Messaging.Stream':      'Arn' | 'Name';
-  'Function.Lambda':       'Arn' | 'Fqdn';
+  'Function.Lambda':       'Arn' | 'Fqdn' | 'Name';
   'Compute.Container':     'Arn' | 'Fqdn' | 'DnsName';
   'Network.LoadBalancer':  'TargetGroupArn' | 'DnsName';
   'Network.WAF':           'Arn';

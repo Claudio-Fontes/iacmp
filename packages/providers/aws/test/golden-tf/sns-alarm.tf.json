@@ -88,7 +88,7 @@
           "${aws_sns_topic.alertstopic.arn}"
         ],
         "dimensions": {
-          "FunctionName": "AlertHandler"
+          "FunctionName": "${aws_lambda_function.alerthandler.function_name}"
         }
       }
     }
@@ -97,6 +97,10 @@
     "AlertHandlerArn": {
       "value": "${aws_lambda_function.alerthandler.arn}",
       "description": "sns-alarm-AlertHandler-Arn"
+    },
+    "AlertHandlerName": {
+      "value": "${aws_lambda_function.alerthandler.function_name}",
+      "description": "sns-alarm-AlertHandler-Name"
     },
     "AlertsTopicArn": {
       "value": "${aws_sns_topic.alertstopic.arn}",

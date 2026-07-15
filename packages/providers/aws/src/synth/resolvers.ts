@@ -60,7 +60,8 @@ const RESOLVE_MAP: Record<string, Record<string, ResolutionEntry>> = {
     'Name': { sameStack: (l) => resourceRef(l, 'Id'), exportSuffix: 'Name' },
   },
   'Function.Lambda': {
-    'Arn': { sameStack: (l) => resourceRef(l, 'Arn'), exportSuffix: 'Arn' },
+    'Arn':  { sameStack: (l) => resourceRef(l, 'Arn'), exportSuffix: 'Arn' },
+    'Name': { sameStack: (l) => resourceRef(l, 'Id'), exportSuffix: 'Name' },
   },
   'Network.LoadBalancer': {
     'TargetGroupArn': {

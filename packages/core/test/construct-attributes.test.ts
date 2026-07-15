@@ -16,7 +16,7 @@ describe('CONSTRUCT_TYPES.attributes — fonte única de verdade (Fase 2 item 2)
     expect(canonico('Secret.Vault')).toEqual(['SecretArn', 'Arn', 'VaultUri', 'Name', 'SecretValue', 'SecretString']);
     expect(canonico('Storage.Bucket')).toEqual(['Arn', 'Name', 'ConnectionString']);
     expect(canonico('Compute.Container')).toEqual(['Arn', 'Fqdn', 'DnsName']);
-    expect(canonico('Function.Lambda')).toEqual(['Arn', 'Fqdn']);
+    expect(canonico('Function.Lambda')).toEqual(['Arn', 'Fqdn', 'Name']);
   });
 
   test('CONSTRUCT_ATTRIBUTES deriva de CONSTRUCT_TYPES sem divergir', () => {

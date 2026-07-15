@@ -245,13 +245,25 @@
         "value": "${aws_lambda_function.connectfn.arn}",
         "description": "ws-api-ConnectFn-Arn"
       },
+      "ConnectFnName": {
+        "value": "${aws_lambda_function.connectfn.function_name}",
+        "description": "ws-api-ConnectFn-Name"
+      },
       "DisconnectFnArn": {
         "value": "${aws_lambda_function.disconnectfn.arn}",
         "description": "ws-api-DisconnectFn-Arn"
       },
+      "DisconnectFnName": {
+        "value": "${aws_lambda_function.disconnectfn.function_name}",
+        "description": "ws-api-DisconnectFn-Name"
+      },
       "DefaultFnArn": {
         "value": "${aws_lambda_function.defaultfn.arn}",
         "description": "ws-api-DefaultFn-Arn"
+      },
+      "DefaultFnName": {
+        "value": "${aws_lambda_function.defaultfn.function_name}",
+        "description": "ws-api-DefaultFn-Name"
       },
       "ApiUrl": {
         "value": "https://${aws_apigatewayv2_api.wsapi.id}.execute-api.${data.aws_region.current.name}.amazonaws.com/$default",

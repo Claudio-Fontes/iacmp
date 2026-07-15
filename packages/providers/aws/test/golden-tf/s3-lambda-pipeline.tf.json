@@ -132,6 +132,10 @@
       "value": "${aws_lambda_function.processfn.arn}",
       "description": "s3-lambda-pipeline-ProcessFn-Arn"
     },
+    "ProcessFnName": {
+      "value": "${aws_lambda_function.processfn.function_name}",
+      "description": "s3-lambda-pipeline-ProcessFn-Name"
+    },
     "InputBucketName": {
       "value": "${aws_s3_bucket.inputbucket.bucket}",
       "description": "s3-lambda-pipeline-InputBucket-Name"

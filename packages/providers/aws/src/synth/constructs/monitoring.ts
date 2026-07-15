@@ -1,7 +1,24 @@
-import { BaseConstruct, isRef, type Ref } from '@iacmp/core';
+import { BaseConstruct, isRef, ref, type Ref } from '@iacmp/core';
 import type { CloudFormationResource, SynthContext } from '../types';
 import { alarmActionsBlock, resolveRef } from '../resolvers';
 import { resourceRef } from '../graph';
+
+// Resolve o VALUE de uma dimension de métrica (ex: FunctionName). Aceita:
+// - ref('LambdaId', 'Name') explícito → resolve via RESOLVE_MAP (mesma/outra stack)
+// - string bare que é o id de uma Function.Lambda → resolve para o nome físico
+//   real (prefixado com o projectName), nunca o id lógico cru — o nome lógico
+//   NÃO bate com a métrica emitida pela Lambda de verdade (bug: alarme nunca
+//   recebe datapoints porque a dimension não corresponde ao FunctionName real).
+// - qualquer outra string (dimension não ligada a um construct) → passa literal.
+function resolveDimensionValue(value: unknown, ctx: SynthContext): unknown {
+  if (isRef(value)) return resolveRef(value as Ref, ctx);
+  if (typeof value !== 'string') return value;
+  const entry = ctx.registry.get(value);
+  if (entry?.type === 'Function.Lambda') {
+    return resolveRef(ref(value, 'Name'), ctx);
+  }
+  return value;
+}
 
 function resolveCustomProps(value: unknown, ctx: SynthContext): unknown {
   if (value === null || value === undefined || typeof value !== 'object') return value;
@@ -37,7 +54,7 @@ export function synthMonitoring(
   const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
   switch (construct.type) {
     case 'Monitoring.Alarm': {
-      const dimensions = props.dimensions as Record<string, string> | undefined;
+      const dimensions = props.dimensions as Record<string, unknown> | undefined;
       return [[logicalId, {
         Type: 'AWS::CloudWatch::Alarm',
         Properties: {
@@ -52,7 +69,7 @@ export function synthMonitoring(
           TreatMissingData: (props.treatMissingData as string) ?? 'notBreaching',
           ...alarmActionsBlock('AlarmActions', props.alarmActions, ctx),
           ...alarmActionsBlock('OKActions', props.okActions, ctx),
-          ...(dimensions ? { Dimensions: Object.entries(dimensions).map(([k, v]) => ({ Name: k, Value: v })) } : {}),
+          ...(dimensions ? { Dimensions: Object.entries(dimensions).map(([k, v]) => ({ Name: k, Value: resolveDimensionValue(v, ctx) })) } : {}),
         },
       }]];
     }

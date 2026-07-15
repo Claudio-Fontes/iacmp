@@ -223,7 +223,7 @@ export const CONSTRUCT_TYPES: Record<ConstructType, ConstructTypeInfo> = {
         gcp: 'Cloud Functions',
       },
     },
-    attributes: ['Arn', 'Fqdn'],
+    attributes: ['Arn', 'Fqdn', 'Name'],
   },
   'Logging.Stream': {
     layer: null,

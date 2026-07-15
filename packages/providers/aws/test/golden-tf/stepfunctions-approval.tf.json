@@ -96,9 +96,17 @@
       "value": "${aws_lambda_function.notifyfn.arn}",
       "description": "stepfunctions-approval-NotifyFn-Arn"
     },
+    "NotifyFnName": {
+      "value": "${aws_lambda_function.notifyfn.function_name}",
+      "description": "stepfunctions-approval-NotifyFn-Name"
+    },
     "ActionFnArn": {
       "value": "${aws_lambda_function.actionfn.arn}",
       "description": "stepfunctions-approval-ActionFn-Arn"
+    },
+    "ActionFnName": {
+      "value": "${aws_lambda_function.actionfn.function_name}",
+      "description": "stepfunctions-approval-ActionFn-Name"
     },
     "ApprovalFlowArn": {
       "value": "${aws_sfn_state_machine.approvalflow.arn}",

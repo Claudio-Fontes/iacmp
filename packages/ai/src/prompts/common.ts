@@ -181,6 +181,9 @@ securityGroupIds: ['LambdaSG']                      // OK — ID lógico do Netw
 7. **Imports de módulos built-in do Node.js** usam SEMPRE \`import * as X from 'X'\`, NUNCA \`import X from 'X'\`
 8. **NUNCA use \`Custom.Resource\` para inserir dados em banco** — não existe recurso nativo (CloudFormation, ARM, Terraform, Deployment Manager) que insira itens em DynamoDB/Cosmos DB/Firestore/PostgreSQL. O deploy falha com erro de validação. Dados de seed vão no handler com lógica idempotente (PutItem + ConditionExpression / upsert / INSERT ON CONFLICT DO NOTHING).
 
+## REGRA — Monitoring.Alarm/Dashboard: dimension FunctionName usa ref('LambdaId', 'Name')
+Para alarmar/plotar uma métrica de \`Function.Lambda\` (ex: \`Errors\`, \`Duration\`), a dimension \`FunctionName\` deve usar \`ref('MinhaFn', 'Name')\`, NUNCA o id lógico como string crua (\`'MinhaFn'\`) — o nome físico real da Lambda em produção é prefixado com o nome do projeto (ex: \`meuprojeto-MinhaFn\`), diferente do id lógico usado no código. Um id cru como dimension não bate com a métrica emitida pela função de verdade, e o alarme nunca recebe datapoints.
+
 ## REGRA ABSOLUTA — API REST/HTTP = Fn.ApiGateway, NUNCA Network.LoadBalancer para Lambdas
 NUNCA use \`Network.LoadBalancer\` (ALB) para expor Lambdas — ALB é para containers/EC2.
 Um \`Compute.Container\`/ECS é exposto por \`Network.LoadBalancer\` (ALB), NUNCA por \`Fn.ApiGateway\`.

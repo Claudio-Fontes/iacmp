@@ -97,7 +97,9 @@
         "Dimensions": [
           {
             "Name": "FunctionName",
-            "Value": "AlertHandler"
+            "Value": {
+              "Ref": "AlertHandler"
+            }
           }
         ]
       }
@@ -113,6 +115,14 @@
       },
       "Export": {
         "Name": "sns-alarm-AlertHandler-Arn"
+      }
+    },
+    "AlertHandlerName": {
+      "Value": {
+        "Ref": "AlertHandler"
+      },
+      "Export": {
+        "Name": "sns-alarm-AlertHandler-Name"
       }
     },
     "AlertsTopicArn": {

@@ -198,6 +198,10 @@
       "value": "${aws_lambda_function.apihandler.arn}",
       "description": "waf-rest-api-ApiHandler-Arn"
     },
+    "ApiHandlerName": {
+      "value": "${aws_lambda_function.apihandler.function_name}",
+      "description": "waf-rest-api-ApiHandler-Name"
+    },
     "ApiUrl": {
       "value": "https://${aws_api_gateway_rest_api.restapi.id}.execute-api.${data.aws_region.current.name}.amazonaws.com/prod",
       "description": "waf-rest-api-RestApi-ApiUrl"

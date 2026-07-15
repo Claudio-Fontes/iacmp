@@ -331,6 +331,10 @@
       "ApiHandlerArn": {
         "value": "${aws_lambda_function.apihandler.arn}",
         "description": "lvr-api-ApiHandler-Arn"
+      },
+      "ApiHandlerName": {
+        "value": "${aws_lambda_function.apihandler.function_name}",
+        "description": "lvr-api-ApiHandler-Name"
       }
     }
   }

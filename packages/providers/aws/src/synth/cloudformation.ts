@@ -321,6 +321,13 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
         Value: resourceRef(lambdaLogicalId, 'Arn'),
         Export: { Name: `${prefixStack(stack.name)}-${construct.id}-Arn` },
       };
+      // Nome físico (Ref retorna FunctionName) — permite Monitoring.Alarm/Dashboard
+      // em OUTRA stack referenciar a dimension FunctionName pelo nome real
+      // (prefixado com o projectName), em vez de hardcodar o id lógico.
+      outputs[`${lambdaLogicalId}Name`] = {
+        Value: resourceRef(lambdaLogicalId, 'Id'),
+        Export: { Name: `${prefixStack(stack.name)}-${construct.id}-Name` },
+      };
     }
     if (construct.type === 'Policy.IAM') {
       const p = construct.props as Record<string, unknown>;

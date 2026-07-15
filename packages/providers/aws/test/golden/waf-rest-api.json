@@ -242,6 +242,14 @@
         "Name": "waf-rest-api-ApiHandler-Arn"
       }
     },
+    "ApiHandlerName": {
+      "Value": {
+        "Ref": "ApiHandler"
+      },
+      "Export": {
+        "Name": "waf-rest-api-ApiHandler-Name"
+      }
+    },
     "ApiUrl": {
       "Value": {
         "Fn::Sub": "https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
