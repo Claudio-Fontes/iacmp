@@ -1,6 +1,6 @@
 import { Stack, Compute, Storage, Network, Database, Fn, Messaging, Cache, ref, CONSTRUCT_TYPES } from '@iacmp/core';
 import { AzureProvider, emitBicep } from '../src';
-import { AZURE_ATTR_MAP } from '../src/synth/constructs/shared';
+import { AZURE_ATTR_MAP, bv, expr } from '../src/synth/constructs/shared';
 
 function synth(stack: Stack): string {
   return new AzureProvider().synthesize(stack);
@@ -708,6 +708,23 @@ describe('Nomes de output cross-stack — identificadores Bicep válidos (item 4
     // o output do produtor (appdbEndpoint) tem que existir como param no consumidor
     expect(producer).toContain('output appdbEndpoint string');
     expect(consumer).toContain('param appdbEndpoint string');
+  });
+});
+
+describe('bv() — guard de aspas duplas (Fase 2 item 3, bug fa435fe)', () => {
+  test('string literal comum é quotada uma vez', () => {
+    expect(bv('meu-recurso')).toBe("'meu-recurso'");
+  });
+  test('expr() é emitida crua, sem aspas', () => {
+    expect(bv(expr('resourceGroup().location'))).toBe('resourceGroup().location');
+  });
+  test('string JÁ entre aspas (bug pré-quote sem expr) → lança em synth-time', () => {
+    // era o bug do DocumentDB: name: `'${dbName}'` sem expr() → ''dbname''
+    expect(() => bv("'docdatabase-db'")).toThrow(/já vem entre aspas|expr\(/);
+  });
+  test('valor com apóstrofo no meio NÃO é confundido com pré-quote', () => {
+    expect(() => bv("it's fine")).not.toThrow();
+    expect(bv("it's fine")).toBe("'it\\'s fine'");
   });
 });
 

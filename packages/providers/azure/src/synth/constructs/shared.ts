@@ -2,8 +2,12 @@ import { BaseConstruct, isRef } from '@iacmp/core';
 import type { Ref } from '@iacmp/core';
 
 // ── Expr marker ──────────────────────────────────────────────────────────────
+// BicepExpr = string marcada como EXPRESSÃO Bicep crua (emitida sem aspas), em
+// oposição a um literal (que bv() quota). O branded type documenta a intenção no
+// compilador; a proteção de fato contra o bug de aspas duplas é o guard em bv().
+export type BicepExpr = string & { readonly __bicepExpr: unique symbol };
 export const EXPR = '\x00EXPR\x00';
-export function expr(e: string): string { return EXPR + e; }
+export function expr(e: string): BicepExpr { return (EXPR + e) as BicepExpr; }
 export function isExpr(v: string): boolean { return v.startsWith(EXPR); }
 export function rawExpr(v: string): string { return v.slice(EXPR.length); }
 
@@ -25,6 +29,18 @@ export function bv(v: unknown, depth = 0): string {
   if (typeof v === 'number') return String(v);
   if (typeof v === 'string') {
     if (isExpr(v)) return rawExpr(v);
+    // Guard contra o bug recorrente (fa435fe): uma string que JÁ vem entre aspas
+    // simples é quase sempre uma expressão Bicep pré-quotada à mão sem passar por
+    // expr() — bv() a quotaria de novo, gerando ''valor'' (nome ARM inválido).
+    // Literais legítimos raramente começam e terminam com aspas; se precisar de um
+    // valor entre aspas, use expr("'...'"). Falhar em synth-time é melhor que no deploy.
+    if (/^'[^'\n]*'$/.test(v)) {
+      throw new Error(
+        `[bicep] o valor ${v} já vem entre aspas simples. ` +
+        `Se é uma expressão Bicep, use expr(${v}); se é um literal, remova as aspas. ` +
+        `bv() não re-quota strings já quotadas (evita o bug ''valor'' de nome ARM inválido).`,
+      );
+    }
     return `'${v.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
   }
   if (Array.isArray(v)) {
