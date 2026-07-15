@@ -21,6 +21,7 @@ import {
 import { ensureProjectInitialized } from '../bootstrap';
 import { runGeneration, AskFn } from '../generation';
 import { loadEnv } from '../env-loader';
+import { checkAzureResourceAvailability } from '../deploy/azure-resource-check';
 
 // Recupera conhecimento (docs de construct + padrões de plataforma) relevante
 // ao pedido e o formata para injeção no contexto da geração. Usa só BM25
@@ -223,9 +224,30 @@ export default class AI extends Command {
     // 2 perguntas ao usuário antes de gerar. IAM, runtime e TLS são injetados
     // silenciosamente sem perguntar. Pula em stdin não-interativo (pipe/CI).
     const userPrompt = args.prompt!;
-    const enrichedUserPrompt = process.stdin.isTTY
+    let enrichedUserPrompt = process.stdin.isTTY
       ? await enrichPrompt(aiProvider, userPrompt, iacProvider, ask)
       : userPrompt;
+
+    // Verificação de disponibilidade de recursos Azure: detecta restrições da
+    // subscription antes de gerar e apresenta alternativas ao usuário.
+    if (iacProvider === 'azure' && process.stdin.isTTY) {
+      const configPath = path.join(cwd, 'iacmp.json');
+      const config = fs.existsSync(configPath) ? JSON.parse(fs.readFileSync(configPath, 'utf8')) : {};
+      const azureRegion: string = config.azureRegion ?? 'eastus2';
+      const checkSpinner = ora({ text: 'Verificando disponibilidade de recursos...', spinner: 'dots', discardStdin: false }).start();
+      const restrictions = await checkAzureResourceAvailability(enrichedUserPrompt, azureRegion);
+      checkSpinner.stop();
+
+      for (const r of restrictions) {
+        const opts = r.alternatives.map(a => a.label).join('\n');
+        const answer = await ask(`\n⚠️  ${r.resource}: ${r.reason}.\n\nComo prosseguir?\n${opts}\nc) Continuar mesmo assim\n> `);
+        const letter = answer.trim().toLowerCase().replace(/[)\s.].*/, '');
+        const selected = r.alternatives.find((_, i) => String.fromCharCode(97 + i) === letter);
+        if (selected) {
+          enrichedUserPrompt = `${enrichedUserPrompt}\n\n${selected.constraint}`;
+        }
+      }
+    }
 
     // Quando provider=azure, o prompt pode mencionar SDKs AWS explicitamente (ex: o
     // prompt 04 diz "@aws-sdk/client-s3"). O GPT-4o tende a seguir a instrução do
