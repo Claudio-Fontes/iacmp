@@ -19,23 +19,27 @@ export function isRef(value: unknown): value is Ref {
 }
 
 /**
- * FONTE ÚNICA DE VERDADE: atributos referenciáveis por tipo de construct.
- * Derivada dos Outputs que o synth exporta hoje (cloudformation.ts) e dos
- * sufixos aceitos pelos resolvers (resolveEnvVarValue, resolvePolicyResource).
+ * FONTE ÚNICA DE VERDADE (nível de tipo): atributos referenciáveis por tipo de
+ * construct. É a UNIÃO do que qualquer provider resolve — cada provider suporta
+ * um subconjunto (ex: ConnectionString/Host/Fqdn são Azure; AWS rejeita alguns).
+ * DEVE ficar consistente com `CONSTRUCT_TYPES[type].attributes` (runtime) — o
+ * teste de consistência do core trava a divergência. Ao adicionar um atributo
+ * resolvível num provider, adicione aqui E no CONSTRUCT_TYPES.
  */
 export interface ConstructAttributeMap {
-  'Secret.Vault':          'SecretArn' | 'Arn';
+  'Secret.Vault':          'SecretArn' | 'Arn' | 'VaultUri' | 'Name' | 'SecretValue' | 'SecretString';
   'Database.SQL':          'Endpoint' | 'Port' | 'SecretArn' | 'Password' | 'Username';
-  'Database.DocumentDB':   'Endpoint' | 'Port' | 'SecretArn' | 'Password';
+  'Database.DocumentDB':   'Endpoint' | 'Port' | 'SecretArn' | 'Password' | 'ConnectionString';
   'Database.DynamoDB':     'Arn' | 'Name' | 'ConnectionString';
-  'Cache.Redis':           'Endpoint' | 'Port';
-  'Messaging.Queue':       'Arn' | 'QueueUrl' | 'QueueArn';
-  'Messaging.Topic':       'Arn' | 'TopicArn';
+  'Cache.Redis':           'Endpoint' | 'Port' | 'Host' | 'ConnectionString';
+  'Messaging.Queue':       'Arn' | 'QueueUrl' | 'QueueArn' | 'ConnectionString';
+  'Messaging.Topic':       'Arn' | 'TopicArn' | 'ConnectionString';
   'Messaging.Stream':      'Arn' | 'Name';
-  'Function.Lambda':       'Arn';
+  'Function.Lambda':       'Arn' | 'Fqdn';
+  'Compute.Container':     'Arn' | 'Fqdn' | 'DnsName';
   'Network.LoadBalancer':  'TargetGroupArn' | 'DnsName';
   'Network.WAF':           'Arn';
-  'Storage.Bucket':        'Arn' | 'Name';
+  'Storage.Bucket':        'Arn' | 'Name' | 'ConnectionString';
   'Network.VPC':           'VpcId';
   'Network.Subnet':        'SubnetId';
   'Network.SecurityGroup': 'GroupId';

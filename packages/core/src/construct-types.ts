@@ -69,7 +69,7 @@ export const CONSTRUCT_TYPES: Record<ConstructType, ConstructTypeInfo> = {
         gcp: 'Memorystore (Redis)',
       },
     },
-    attributes: ['Endpoint', 'Port', 'ConnectionString'],
+    attributes: ['Endpoint', 'Port', 'Host', 'ConnectionString'],
   },
   'Cache.Memcached': {
     layer: 'cache',
@@ -119,7 +119,7 @@ export const CONSTRUCT_TYPES: Record<ConstructType, ConstructTypeInfo> = {
         gcp: 'Cloud Run',
       },
     },
-    attributes: [],
+    attributes: ['Arn', 'Fqdn', 'DnsName'],
   },
   'Compute.Instance': {
     layer: 'compute',
@@ -161,7 +161,7 @@ export const CONSTRUCT_TYPES: Record<ConstructType, ConstructTypeInfo> = {
         gcp: 'Firestore',
       },
     },
-    attributes: ['Endpoint', 'Port', 'SecretArn', 'Password'],
+    attributes: ['Endpoint', 'Port', 'SecretArn', 'Password', 'ConnectionString'],
   },
   'Database.DynamoDB': {
     layer: 'database',
@@ -223,7 +223,7 @@ export const CONSTRUCT_TYPES: Record<ConstructType, ConstructTypeInfo> = {
         gcp: 'Cloud Functions',
       },
     },
-    attributes: ['Arn'],
+    attributes: ['Arn', 'Fqdn'],
   },
   'Logging.Stream': {
     layer: null,
@@ -249,7 +249,7 @@ export const CONSTRUCT_TYPES: Record<ConstructType, ConstructTypeInfo> = {
         gcp: 'Pub/Sub Queue',
       },
     },
-    attributes: ['Arn', 'QueueUrl', 'QueueArn'],
+    attributes: ['Arn', 'QueueUrl', 'QueueArn', 'ConnectionString'],
   },
   'Messaging.Stream': {
     layer: 'messaging',
@@ -274,7 +274,7 @@ export const CONSTRUCT_TYPES: Record<ConstructType, ConstructTypeInfo> = {
         gcp: 'Pub/Sub Topic',
       },
     },
-    attributes: ['Arn', 'TopicArn'],
+    attributes: ['Arn', 'TopicArn', 'ConnectionString'],
   },
   'Monitoring.Alarm': {
     layer: null,
@@ -422,7 +422,7 @@ export const CONSTRUCT_TYPES: Record<ConstructType, ConstructTypeInfo> = {
         gcp: 'Secret Manager',
       },
     },
-    attributes: ['SecretArn', 'Arn'],
+    attributes: ['SecretArn', 'Arn', 'VaultUri', 'Name', 'SecretValue', 'SecretString'],
   },
   'Storage.Archive': {
     layer: 'storage',
@@ -447,7 +447,7 @@ export const CONSTRUCT_TYPES: Record<ConstructType, ConstructTypeInfo> = {
         gcp: 'Cloud Storage',
       },
     },
-    attributes: ['Arn', 'Name'],
+    attributes: ['Arn', 'Name', 'ConnectionString'],
   },
   'Storage.FileSystem': {
     layer: 'storage',

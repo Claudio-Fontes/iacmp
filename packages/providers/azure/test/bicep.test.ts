@@ -1,5 +1,6 @@
-import { Stack, Compute, Storage, Network, Database, Fn, Messaging, Cache, ref } from '@iacmp/core';
+import { Stack, Compute, Storage, Network, Database, Fn, Messaging, Cache, ref, CONSTRUCT_TYPES } from '@iacmp/core';
 import { AzureProvider, emitBicep } from '../src';
+import { AZURE_ATTR_MAP } from '../src/synth/constructs/shared';
 
 function synth(stack: Stack): string {
   return new AzureProvider().synthesize(stack);
@@ -707,6 +708,22 @@ describe('Nomes de output cross-stack — identificadores Bicep válidos (item 4
     // o output do produtor (appdbEndpoint) tem que existir como param no consumidor
     expect(producer).toContain('output appdbEndpoint string');
     expect(consumer).toContain('param appdbEndpoint string');
+  });
+});
+
+describe('Consistência de atributos — AZURE_ATTR_MAP ⊆ CONSTRUCT_TYPES (Fase 2 item 2)', () => {
+  // O core (CONSTRUCT_TYPES.attributes) é a fonte única de verdade — a UNIÃO do
+  // que os providers resolvem. Todo atributo que o Azure sabe resolver DEVE estar
+  // declarado no canônico; senão é divergência silenciosa (o bug das "5 tabelas").
+  test('todo atributo resolvível no Azure está declarado no canônico do core', () => {
+    const violacoes: string[] = [];
+    for (const [type, attrs] of Object.entries(AZURE_ATTR_MAP)) {
+      const canonicos = CONSTRUCT_TYPES[type as keyof typeof CONSTRUCT_TYPES]?.attributes ?? [];
+      for (const attr of Object.keys(attrs)) {
+        if (!canonicos.includes(attr)) violacoes.push(`${type}.${attr} está no AZURE_ATTR_MAP mas não em CONSTRUCT_TYPES`);
+      }
+    }
+    expect(violacoes).toEqual([]);
   });
 });
 
