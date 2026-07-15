@@ -14,7 +14,10 @@ export const AZURE_TABLES_HELPER = `// GERADO pelo iacmp — NÃO editar. Helper
 // API simples por cima do @azure/data-tables: get/put/update/increment/del/list.
 import { TableClient, odata } from '@azure/data-tables';
 
-type Item = Record<string, unknown>;
+// any (não unknown) para os VALORES: o handler acessa item.email/item.slug como
+// string sem cast — mesma ergonomia do DynamoDBDocumentClient no AWS. unknown
+// forçava casts que o modelo esquece → erro de TS que travava a geração.
+type Item = Record<string, any>;
 
 function client(): TableClient {
   const conn = process.env.COSMOS_CONNECTION;
