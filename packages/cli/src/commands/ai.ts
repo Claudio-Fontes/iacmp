@@ -234,8 +234,9 @@ export default class AI extends Command {
       const configPath = path.join(cwd, 'iacmp.json');
       const config = fs.existsSync(configPath) ? JSON.parse(fs.readFileSync(configPath, 'utf8')) : {};
       const azureRegion: string = config.azureRegion ?? 'eastus2';
+      const accountTier: 'free' | 'standard' = config.accountTier ?? 'free';
       const checkSpinner = ora({ text: 'Verificando disponibilidade de recursos...', spinner: 'dots', discardStdin: false }).start();
-      const restrictions = await checkAzureResourceAvailability(enrichedUserPrompt, azureRegion);
+      const restrictions = await checkAzureResourceAvailability(enrichedUserPrompt, azureRegion, accountTier);
       checkSpinner.stop();
 
       for (const r of restrictions) {
