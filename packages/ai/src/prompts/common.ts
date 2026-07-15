@@ -127,24 +127,6 @@ environment: { TABLE_NAME: ref('ItemsTable', 'Name') }
 
 String literal só é válida para constantes que não variam por recurso: \`DB_NAME: 'postgres'\`, \`REGION: 'us-east-1'\`, \`LOG_LEVEL: 'info'\`.
 
-**REGRA — DynamoDB UpdateExpression: SEMPRE use \`ExpressionAttributeNames\`.**
-\`name\`, \`item\`, \`value\`, \`status\`, \`size\`, \`type\` são palavras reservadas. Um \`SET name = :name\` quebra em runtime com \`ValidationException\`.
-Padrão obrigatório no handler de update:
-\`\`\`typescript
-const fields = Object.entries(body).filter(([k]) => k !== 'id');
-const expr = 'SET ' + fields.map(([k], i) => \`#f\${i} = :v\${i}\`).join(', ');
-const names: Record<string,string> = {}; const vals: Record<string,unknown> = {};
-fields.forEach(([k, v], i) => { names[\`#f\${i}\`] = k; vals[\`:v\${i}\`] = v; });
-await doc.send(new UpdateCommand({ TableName: process.env.TABLE_NAME, Key: { id },
-  UpdateExpression: expr, ExpressionAttributeNames: names, ExpressionAttributeValues: vals }));
-\`\`\`
-NUNCA escreva \`SET fieldName = :fieldName\` direto sem \`ExpressionAttributeNames\`.
-
-**Para CRUD com IDs vindos de \`event.pathParameters\`, use \`partitionKeyType: 'S'\`** — path params são SEMPRE strings; \`partitionKeyType: 'N'\` causa \`ValidationException\` em runtime.
-
-**REGRA — DynamoDB para CRUD simples por ID: NUNCA gere \`sortKey\`.**
-Um CRUD que acessa itens por ID usa APENAS \`partitionKey: 'id'\`. \`sortKey\` só existe quando o prompt pede explicitamente acesso por chave composta (ex: "listar por usuário e data"). Se a tabela tem \`sortKey: 'createdAt'\`, os handlers DEVEM incluir \`Key: { id, createdAt }\` — se você não puder garantir o \`createdAt\` nos handlers, NÃO coloque \`sortKey\` na tabela.
-
 **REGRA — API Gateway para CRUD DEVE ter as 5 rotas.**
 Para um CRUD exposto via API Gateway, as rotas obrigatórias são:
 \`\`\`

@@ -16,26 +16,14 @@ function cloudRules(provider?: string): string {
   return Object.values(domains).filter(Boolean).join('\n\n');
 }
 
-function azureOverrideHeader(provider?: string): string {
-  if (provider !== 'azure') return '';
-  return `
-# ============================================================
-# OVERRIDE ABSOLUTO — PROVIDER AZURE ATIVO
-# As seções de Database.DynamoDB, Fn.Lambda e handlers abaixo
-# neste prompt descrevem o comportamento AWS padrão.
-# Quando provider=azure, as regras abaixo desta caixa SUBSTITUEM
-# qualquer instrução que mencione @aws-sdk/*, DynamoDBClient,
-# DynamoDBDocumentClient, ScanCommand, GetCommand, PutCommand,
-# DeleteCommand, UpdateCommand ou qualquer import aws-sdk.
-# ============================================================
-`;
-}
-
 export function buildSystemPrompt(projectContext: string, lang: Language = DEFAULT_LANGUAGE, provider?: string): string {
   const parts = [
     'Você é um especialista em infraestrutura como código (IaC) integrado ao iacmp CLI.',
     'Seu papel é gerar stacks de infraestrutura em TypeScript usando os constructs do @iacmp/core. Prefira sempre os constructs tipados quando existirem. Quando o serviço pedido pelo usuário NÃO tiver construct tipado no catálogo abaixo, NÃO diga apenas "não existe" — use o `Custom.Resource` (ver seção dedicada mais abaixo) para gerar o recurso nativo real do provider (CloudFormation/ARM/Deployment Manager/Terraform) com sua própria sintaxe, formatado nesse construct de escape hatch. Você conhece a sintaxe nativa de cada formato; use esse conhecimento em vez de bloquear o pedido do usuário.',
-    azureOverrideHeader(provider),
+    // As regras específicas do provider (AWS ou Azure) vêm de cloudRules(provider);
+    // o COMMON é provider-NEUTRO. Antes o COMMON trazia exemplos @aws-sdk/DynamoDB
+    // e um "override" pedia ao modelo para ignorá-los no Azure — contexto confuso.
+    // Agora o bloco DynamoDB SDK vive só em aws/database.ts (injetado só p/ AWS).
     CATALOG,
     cloudRules(provider),
     COMMON,

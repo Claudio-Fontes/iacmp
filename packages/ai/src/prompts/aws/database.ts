@@ -5,6 +5,22 @@ SEMPRE defina \`partitionKeyType\`/\`sortKeyType\` (e o equivalente nos GSIs) de
 
 **REGRA — GSI: só consulte índice que a tabela declara.** Se um handler faz \`QueryCommand({ IndexName: 'X', ... })\`, a \`Database.DynamoDB\` TEM que declarar esse índice em \`globalSecondaryIndexes\` E a Policy.IAM deve liberar \`<TableArn>/index/*\`. Para limpeza por TTL use \`ScanCommand + FilterExpression\` (sem GSI). **PALAVRAS RESERVADAS** (\`name\`, \`status\`, \`date\`, \`timestamp\`, \`ttl\`, etc.) precisam de alias: \`FilterExpression: '#name = :n', ExpressionAttributeNames: { '#name': 'name' }\` — na dúvida, sempre aliase.
 
+**REGRA — DynamoDB UpdateExpression: SEMPRE use \`ExpressionAttributeNames\`.**
+\`name\`, \`item\`, \`value\`, \`status\`, \`size\`, \`type\` são palavras reservadas. Um \`SET name = :name\` quebra em runtime com \`ValidationException\`.
+Padrão obrigatório no handler de update:
+\`\`\`typescript
+const fields = Object.entries(body).filter(([k]) => k !== 'id');
+const expr = 'SET ' + fields.map(([k], i) => \`#f\${i} = :v\${i}\`).join(', ');
+const names: Record<string,string> = {}; const vals: Record<string,unknown> = {};
+fields.forEach(([k, v], i) => { names[\`#f\${i}\`] = k; vals[\`:v\${i}\`] = v; });
+await doc.send(new UpdateCommand({ TableName: process.env.TABLE_NAME, Key: { id },
+  UpdateExpression: expr, ExpressionAttributeNames: names, ExpressionAttributeValues: vals }));
+\`\`\`
+NUNCA escreva \`SET fieldName = :fieldName\` direto sem \`ExpressionAttributeNames\`.
+
+**REGRA — DynamoDB para CRUD simples por ID: NUNCA gere \`sortKey\`.**
+Um CRUD que acessa itens por ID usa APENAS \`partitionKey: 'id'\`. \`sortKey\` só existe quando o prompt pede explicitamente acesso por chave composta (ex: "listar por usuário e data"). Se a tabela tem \`sortKey: 'createdAt'\`, os handlers DEVEM incluir \`Key: { id, createdAt }\` — se você não puder garantir o \`createdAt\` nos handlers, NÃO coloque \`sortKey\` na tabela.
+
 **REGRA Aurora**: sempre informe subnetIds (2 subnets em AZs diferentes) e securityGroupIds. Aurora sem subnets só funciona em contas com VPC default — nunca adequado para produção. A senha é gerada automaticamente no Secrets Manager e injetada no cluster via resolve:secretsmanager.
 
 **REGRA ABSOLUTA — secret do banco é automático**: \`Database.SQL\` e \`Database.DocumentDB\` JÁ criam o secret da senha no Secrets Manager sozinhos. NUNCA crie um \`Secret.Vault\` nem \`Custom.Resource\` do tipo \`AWS::SecretsManager::Secret\` para a senha do banco — é redundante e fica desconectado do banco. As Lambdas acessam o secret automático via as env vars \`<DbId>.Password\`/\`<DbId>.SecretArn\` (ver regra de env vars de banco).
