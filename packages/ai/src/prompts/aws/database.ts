@@ -5,6 +5,16 @@ SEMPRE defina \`partitionKeyType\`/\`sortKeyType\` (e o equivalente nos GSIs) de
 
 **REGRA — GSI: só consulte índice que a tabela declara.** Se um handler faz \`QueryCommand({ IndexName: 'X', ... })\`, a \`Database.DynamoDB\` TEM que declarar esse índice em \`globalSecondaryIndexes\` E a Policy.IAM deve liberar \`<TableArn>/index/*\`. Para limpeza por TTL use \`ScanCommand + FilterExpression\` (sem GSI). **PALAVRAS RESERVADAS** (\`name\`, \`status\`, \`date\`, \`timestamp\`, \`ttl\`, etc.) precisam de alias: \`FilterExpression: '#name = :n', ExpressionAttributeNames: { '#name': 'name' }\` — na dúvida, sempre aliase.
 
+**REGRA ABSOLUTA — SEMPRE use ExpressionAttributeNames em Update/Filter/Condition/ProjectionExpression.** O DynamoDB tem 570+ palavras reservadas (ex: \`status\`, \`total\`, \`name\`, \`data\`, \`date\`, \`type\`, \`count\`, \`value\`, \`size\`, \`timestamp\`) que quebram em runtime com \`ValidationException: Attribute name is a reserved keyword\` mesmo sendo nomes de campo razoáveis. NÃO tente adivinhar quais são reservados — impraticável. Referencie CADA atributo por um alias \`#nome\`, nunca o literal. Exemplo (contador atômico com campo \`total\`):
+\`\`\`ts
+await doc.send(new UpdateCommand({
+  TableName: process.env.TABLE_NAME, Key: { counterKey },
+  UpdateExpression: 'ADD #total :one',
+  ExpressionAttributeNames: { '#total': 'total' },
+  ExpressionAttributeValues: { ':one': 1 },
+}));
+\`\`\`
+
 **REGRA — DynamoDB UpdateExpression: SEMPRE use \`ExpressionAttributeNames\`.**
 \`name\`, \`item\`, \`value\`, \`status\`, \`size\`, \`type\` são palavras reservadas. Um \`SET name = :name\` quebra em runtime com \`ValidationException\`.
 Padrão obrigatório no handler de update:

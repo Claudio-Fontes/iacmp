@@ -82,8 +82,36 @@ export async function handler() {
   for await (const e of client.listEntities()) items.push({ id: e.rowKey, ...e });
   return { statusCode: 200, body: JSON.stringify(items) };
 }
-// GET: client.getEntity('items', id)
-// UPDATE: client.updateEntity({ partitionKey: 'items', rowKey: id, ...rest }, 'Replace') — excluir 'id' do spread
+// GET — getEntity retorna a entidade FLAT (campos direto no objeto).
+// NUNCA existe .value: os campos estão em entity.rowKey, entity.targetUrl, etc.
+export async function handler(event: any) {
+  const id = event.pathParameters?.id;
+  try {
+    const entity = await client.getEntity('items', id);   // FLAT — sem .value
+    return { statusCode: 200, body: JSON.stringify({ id: entity.rowKey, ...entity }) };
+  } catch (e: any) {
+    if (e.statusCode === 404) return { statusCode: 404, body: JSON.stringify({ error: 'não encontrado' }) };
+    throw e;
+  }
+}
+\`\`\`
+
+**REGRA ABSOLUTA — @azure/data-tables getEntity (3 erros que quebram em runtime, NÃO em compilação):**
+1. \`getEntity(pk, rk)\` retorna a entidade **FLAT** — os campos estão direto no objeto (\`entity.rowKey\`, \`entity.targetUrl\`). **NUNCA acesse \`entity.value.X\`** — \`.value\` NÃO existe, dá \`TypeError\` → 500. (Não confunda com o resultado do SDK AWS, que tem \`.Item\`.)
+2. \`getEntity\` de um item inexistente **LANÇA** \`RestError\` com \`statusCode: 404\` — NÃO retorna null. Todo padrão "checar se existe" DEVE usar \`try { await client.getEntity(...) } catch (e) { if (e.statusCode === 404) { /* não existe */ } else throw e; }\`.
+3. Ao atualizar, **NUNCA espalhe o objeto retornado por getEntity** dentro de updateEntity/upsertEntity — ele carrega campos OData (\`odata.metadata\`, \`etag\`, \`timestamp\`) que causam \`400 PropertyNameInvalid\`. Reconstrua com APENAS os campos de negócio.
+
+\`\`\`typescript
+// UPDATE / contador atômico — Table API NÃO tem "ADD": leia, some em JS, grave só campos de negócio
+export async function handler(event: any) {
+  const id = event.pathParameters?.id;
+  const cur = await client.getEntity('items', id);            // FLAT, pode lançar 404
+  await client.updateEntity(
+    { partitionKey: 'items', rowKey: id, name: cur.name, clicks: Number(cur.clicks ?? 0) + 1 },  // só negócio, sem spread do cur
+    'Merge',
+  );
+  return { statusCode: 200, body: JSON.stringify({ ok: true }) };
+}
 // DELETE: client.deleteEntity('items', id)
 \`\`\`
 
