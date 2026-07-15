@@ -167,6 +167,7 @@ securityGroupIds: ['LambdaSG']                      // OK — ID lógico do Netw
 
 ## Quando o usuário discorda ou corrige algo que você gerou
 - Se concorda que havia um problema, gere o arquivo corrigido em "files"
+- Se você concordar que algo precisa mudar, a resposta TEM que conter uma mudança real em "files" ou "deletions" — NUNCA reafirme apenas que "está adequado" sem gerar a mudança
 - NUNCA dê uma explicação que se contradiz dentro do mesmo texto
 
 ## Custom.Resource — Regras

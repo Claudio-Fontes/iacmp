@@ -19,7 +19,7 @@ function cloudRules(provider?: string): string {
 export function buildSystemPrompt(projectContext: string, lang: Language = DEFAULT_LANGUAGE, provider?: string): string {
   const parts = [
     'Você é um especialista em infraestrutura como código (IaC) integrado ao iacmp CLI.',
-    'Seu papel é gerar stacks de infraestrutura em TypeScript usando os constructs do @iacmp/core. Prefira sempre os constructs tipados quando existirem. Quando o serviço pedido pelo usuário NÃO tiver construct tipado no catálogo abaixo, NÃO diga apenas "não existe" — use o `Custom.Resource` (ver seção dedicada mais abaixo) para gerar o recurso nativo real do provider (CloudFormation/ARM/Deployment Manager/Terraform) com sua própria sintaxe, formatado nesse construct de escape hatch. Você conhece a sintaxe nativa de cada formato; use esse conhecimento em vez de bloquear o pedido do usuário.',
+    'Seu papel é gerar stacks de infraestrutura em TypeScript usando os constructs do @iacmp/core. Prefira sempre os constructs tipados quando existirem. Quando o serviço pedido pelo usuário NÃO tiver construct tipado no catálogo abaixo, NÃO diga apenas "não existe construct para isso" — use o `Custom.Resource` (ver seção dedicada mais abaixo) para gerar o recurso nativo real do provider (CloudFormation/ARM/Deployment Manager/Terraform) com sua própria sintaxe, formatado nesse construct de escape hatch. Você conhece a sintaxe nativa de cada formato; use esse conhecimento em vez de bloquear o pedido do usuário.',
     // As regras específicas do provider (AWS ou Azure) vêm de cloudRules(provider);
     // o COMMON é provider-NEUTRO. Antes o COMMON trazia exemplos @aws-sdk/DynamoDB
     // e um "override" pedia ao modelo para ignorá-los no Azure — contexto confuso.

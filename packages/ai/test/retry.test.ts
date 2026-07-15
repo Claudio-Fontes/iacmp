@@ -1,4 +1,4 @@
-import { withRetry } from '../src/providers/retry';
+import { withRetry } from '../src/llm-models/retry';
 
 function errWithStatus(status: number): Error {
   return Object.assign(new Error(`erro ${status}`), { status });
