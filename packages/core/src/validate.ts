@@ -1,8 +1,28 @@
 import { Stack, BaseConstruct } from './stack';
 import { SQLEngine } from './constructs/database';
 import { defaultPortForEngine, RDS_MIN_AZ_COUNT, isAuroraEngine } from './knowledge/database';
-import { EnvironmentProfile } from './profile';
+import { EnvironmentProfile, DEFAULT_PROFILE } from './profile';
 import { CONSTRUCT_TYPES } from './construct-types';
+import { applyEnvironmentDefaults } from './normalize';
+
+/**
+ * Ponto de entrada ÚNICO e provider-agnóstico que todo synth deve chamar antes
+ * de emitir template: normaliza (preenche defaults derivados do perfil, in-place)
+ * e valida a semântica (refs quebradas, porta de SG, AZ do RDS, CIDR). Lança se
+ * a validação falhar — a mensagem é reenviada à IA no loop de auto-correção.
+ *
+ * Antes, esse par (applyEnvironmentDefaults + validateSemantics) vivia dentro do
+ * buildGraph do provider AWS, então só a AWS tinha a rede de segurança. Extrair
+ * para o core permite que Azure/GCP chamem a MESMA função — cada bug que o
+ * validate.ts sabe pegar em synth-time passa a valer para os três providers.
+ */
+export function prepareStacksForSynth(stacks: Stack[], profile: EnvironmentProfile = DEFAULT_PROFILE): void {
+  applyEnvironmentDefaults(stacks, profile);
+  const errors = validateSemantics(stacks, profile);
+  if (errors.length > 0) {
+    throw new Error(`Validação semântica falhou:\n- ${errors.join('\n- ')}`);
+  }
+}
 
 /**
  * Validação semântica provider-agnóstica que roda em SYNTH-TIME, sobre os

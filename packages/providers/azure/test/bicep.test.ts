@@ -709,3 +709,34 @@ describe('Nomes de output cross-stack — identificadores Bicep válidos (item 4
     expect(consumer).toContain('param appdbEndpoint string');
   });
 });
+
+describe('Validação semântica no Azure (Fase 2 item 1 — prepareStacksForSynth)', () => {
+  // A validação só roda com o universo completo (allStacks). Antes, refs
+  // quebradas/porta de SG só apareciam no deploy real; agora falham no synth.
+  test('env var referenciando construct inexistente → falha no synth (com allStacks)', () => {
+    const stack = new Stack('api');
+    new Fn.Lambda(stack, 'ApiFn', {
+      runtime: 'nodejs20', handler: 'dist/api.handler', code: '.',
+      environment: { DB_HOST: 'NaoExiste.Endpoint' },
+    });
+    expect(() => emitBicep(stack, { accountTier: 'free', allStacks: [stack] }))
+      .toThrow(/NaoExiste|não existe/i);
+  });
+
+  test('ref cross-stack VÁLIDA entre stacks distintas → NÃO falha (universo resolve)', () => {
+    const netStack = new Stack('network');
+    new Network.VPC(netStack, 'MainVnet', { cidr: '10.0.0.0/16' });
+    const sgStack = new Stack('security');
+    new Network.SecurityGroup(sgStack, 'DbSg', { vpcId: 'MainVnet', ingressRules: [] });
+    // MainVnet está em OUTRA stack, mas allStacks contém as duas → resolve
+    expect(() => emitBicep(sgStack, { accountTier: 'free', allStacks: [netStack, sgStack] }))
+      .not.toThrow();
+  });
+
+  test('sem allStacks (fragmento isolado) → não valida refs cross-stack', () => {
+    const stack = new Stack('sg');
+    new Network.SecurityGroup(stack, 'SG', { vpcId: 'vnetEmOutraStack', ingressRules: [] });
+    // unit test de fragmento: sem o universo, não dá para validar — não lança
+    expect(() => emitBicep(stack, { accountTier: 'free' })).not.toThrow();
+  });
+});

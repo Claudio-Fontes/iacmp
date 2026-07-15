@@ -1,8 +1,7 @@
 import {
   Stack,
   BaseConstruct,
-  validateSemantics,
-  applyEnvironmentDefaults,
+  prepareStacksForSynth,
   EnvironmentProfile,
   DEFAULT_PROFILE,
   isRef,
@@ -55,21 +54,12 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
   // ao anterior — nenhum teste existente é afetado.
   const prefixStack = (name: string): string => projectName ? `${projectName}-${name}` : name;
 
-  // Normalização: preenche defaults derivados do perfil (AZ de subnet, porta do
-  // SG do banco) in-place ANTES de validar e emitir — assim os bugs recorrentes
-  // deixam de existir na origem, e a validação/synth leem props já consistentes.
-  applyEnvironmentDefaults(universe, profile);
-
-  // Validação semântica provider-agnóstica (porta de SG vs engine, cobertura de
-  // AZ do RDS, conflito maxAzs/subnets, CIDR, referências quebradas) — roda
-  // antes de emitir o template para que esses erros apareçam em synth-time, não
-  // no deploy real. O loop do `iacmp ai` captura e reenvia para auto-correção.
-  const semanticErrors = validateSemantics(universe, profile);
-  if (semanticErrors.length > 0) {
-    throw new Error(
-      `Validação semântica falhou:\n- ${semanticErrors.join('\n- ')}`,
-    );
-  }
+  // Normaliza (defaults derivados do perfil, in-place) + valida a semântica
+  // (porta de SG, AZ do RDS, CIDR, refs quebradas) ANTES de emitir. Ponto de
+  // entrada único do core — o MESMO que Azure/GCP chamam, para que a rede de
+  // segurança valha para os três providers. Lança em synth-time; o loop do
+  // `iacmp ai` captura e reenvia para auto-correção.
+  prepareStacksForSynth(universe, profile);
 
   const registry = new Map<string, { stackName: string; type: string }>();
   const lambdaRoles = new Map<string, { stackName: string; roleLogicalId: string }>();

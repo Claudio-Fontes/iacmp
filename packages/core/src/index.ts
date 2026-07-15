@@ -11,7 +11,7 @@ export type { BaseConstruct } from './stack';
 export { Testing } from './testing';
 export type { TestableStack } from './testing';
 
-export { validateSemantics, cidrContains } from './validate';
+export { validateSemantics, prepareStacksForSynth, cidrContains } from './validate';
 export { applyEnvironmentDefaults } from './normalize';
 export { tsCompilerOptions, detectTypeScriptMajor } from './ts-compat';
 export {

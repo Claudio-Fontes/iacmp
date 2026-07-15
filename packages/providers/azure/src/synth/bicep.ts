@@ -1,4 +1,4 @@
-import { Stack, BaseConstruct, isRef } from '@iacmp/core';
+import { Stack, BaseConstruct, isRef, prepareStacksForSynth } from '@iacmp/core';
 import type { Ref } from '@iacmp/core';
 
 import {
@@ -141,6 +141,15 @@ export function extractAzureFunctionMeta(stack: Stack, allStacks?: Stack[]): Azu
 // ── Main export ───────────────────────────────────────────────────────────────
 export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standard'; allStacks?: Stack[] }): string {
   const accountTier = opts?.accountTier ?? 'standard';
+  // Normalização + validação semântica provider-agnóstica (o MESMO ponto de
+  // entrada do AWS) — refs quebradas, porta de SG do banco, CIDR de subnet, etc.
+  // passam a ser pegos em synth-time no Azure também, não só no deploy real.
+  // Só roda com o UNIVERSO completo (allStacks): validar refs cross-stack exige
+  // ver todas as stacks. O synth.ts real sempre passa allStacks; chamadas
+  // isoladas (unit test de um fragmento) pulam — não há projeto para validar.
+  if (opts?.allStacks && opts.allStacks.length > 0) {
+    prepareStacksForSynth(opts.allStacks, { accountTier });
+  }
   const idx = new Map<string, BaseConstruct>(stack.constructs.map(c => [c.id, c]));
   // globalIdx: lookup de tipo em qualquer stack (nunca usado para resolver valor de ref)
   const allConstructs = (opts?.allStacks ?? [stack]).flatMap(s => s.constructs);
