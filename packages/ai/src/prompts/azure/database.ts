@@ -61,59 +61,52 @@ export async function handler() {
 
 **REGRA CRÍTICA — CREATE TABLE em todos os handlers:** O PostgreSQL Flexible Server não cria tabelas automaticamente. Todo handler que acessa uma tabela DEVE executar \`CREATE TABLE IF NOT EXISTS\` antes de qualquer SELECT/INSERT/UPDATE/DELETE. Isso vale para TODOS os handlers (list, create, get, update, delete) — não só o de listagem.
 
-### Padrão obrigatório para handlers com Database.DynamoDB (Cosmos DB Table API):
-\`\`\`typescript
-import { TableClient } from '@azure/data-tables';
-import { randomUUID } from 'crypto';
-const client = TableClient.fromConnectionString(process.env.COSMOS_CONNECTION!, process.env.TABLE_NAME!);
+### OBRIGATÓRIO — handlers com Database.DynamoDB usam o helper \`./tables\`, NUNCA @azure/data-tables cru
+Todo projeto Azure com Database.DynamoDB recebe automaticamente um arquivo \`src/tables.ts\` (o iacmp injeta — você NÃO precisa criá-lo nem editá-lo). Ele expõe uma API simples por cima do Cosmos DB Table API, resolvendo as armadilhas do SDK (getEntity flat, 404 que lança, campos OData). **Gere TODOS os handlers de Database.DynamoDB importando esse helper** — NUNCA use \`TableClient\`/\`getEntity\`/\`createEntity\`/\`updateEntity\` diretamente.
 
-// CREATE — ATENÇÃO: 'id' é RESERVADO na Table API — excluir do spread
+API do helper (o único import de dados que os handlers precisam):
+\`\`\`typescript
+import { table } from './tables';   // caminho relativo à raiz de src/ (ajuste ../ se o handler estiver em subpasta)
+const items = table('items');       // 'items' = partição fixa desta "tabela lógica"
+
+await items.get(id)                          // → objeto com .id, ou null se não existe (nunca lança 404)
+await items.put(id, { name, price })         // cria/sobrescreve
+await items.put(id, { ... }, { ifNotExists: true })  // → false se já existe (não sobrescreve) — use p/ slug único, etc.
+await items.update(id, { price: 9 })         // mescla campos (Merge)
+await items.increment(id, 'clicks')          // contador atômico (+1); increment(id,'x',5,{seed}) cria se não existe
+await items.del(id)                          // apaga (idempotente)
+await items.list()                           // todos os itens da partição
+await items.listByPrefix('dev#')             // itens cujo id começa com o prefixo (chaves compostas env#nome)
+\`\`\`
+
+Exemplo completo (CRUD + create com id gerado):
+\`\`\`typescript
+import { table } from './tables';
+import { randomUUID } from 'crypto';
+const items = table('items');
+
+// CREATE
 export async function handler(event: any) {
   const body = typeof event.body === 'string' ? JSON.parse(event.body) : (event.body ?? {});
   const id = randomUUID();
-  const { id: _id, ...rest } = body;
-  await client.createEntity({ partitionKey: 'items', rowKey: id, ...rest });
-  return { statusCode: 201, body: JSON.stringify({ id, ...rest }) };
+  await items.put(id, body);
+  return { statusCode: 201, body: JSON.stringify({ id, ...body }) };
 }
-
-// LIST — listEntities() é AsyncIterable — use for await
+// GET por id
+export async function handler(event: any) {
+  const item = await items.get(event.pathParameters?.id);
+  if (!item) return { statusCode: 404, body: JSON.stringify({ error: 'não encontrado' }) };
+  return { statusCode: 200, body: JSON.stringify(item) };
+}
+// LIST
 export async function handler() {
-  const items: any[] = [];
-  for await (const e of client.listEntities()) items.push({ id: e.rowKey, ...e });
-  return { statusCode: 200, body: JSON.stringify(items) };
+  return { statusCode: 200, body: JSON.stringify(await items.list()) };
 }
-// GET — getEntity retorna a entidade FLAT (campos direto no objeto).
-// NUNCA existe .value: os campos estão em entity.rowKey, entity.targetUrl, etc.
-export async function handler(event: any) {
-  const id = event.pathParameters?.id;
-  try {
-    const entity = await client.getEntity('items', id);   // FLAT — sem .value
-    return { statusCode: 200, body: JSON.stringify({ id: entity.rowKey, ...entity }) };
-  } catch (e: any) {
-    if (e.statusCode === 404) return { statusCode: 404, body: JSON.stringify({ error: 'não encontrado' }) };
-    throw e;
-  }
-}
+// UPDATE (merge) / DELETE
+// await items.update(id, patch);  /  await items.del(id);
 \`\`\`
 
-**REGRA ABSOLUTA — @azure/data-tables getEntity (3 erros que quebram em runtime, NÃO em compilação):**
-1. \`getEntity(pk, rk)\` retorna a entidade **FLAT** — os campos estão direto no objeto (\`entity.rowKey\`, \`entity.targetUrl\`). **NUNCA acesse \`entity.value.X\`** — \`.value\` NÃO existe, dá \`TypeError\` → 500. (Não confunda com o resultado do SDK AWS, que tem \`.Item\`.)
-2. \`getEntity\` de um item inexistente **LANÇA** \`RestError\` com \`statusCode: 404\` — NÃO retorna null. Todo padrão "checar se existe" DEVE usar \`try { await client.getEntity(...) } catch (e) { if (e.statusCode === 404) { /* não existe */ } else throw e; }\`.
-3. Ao atualizar, **NUNCA espalhe o objeto retornado por getEntity** dentro de updateEntity/upsertEntity — ele carrega campos OData (\`odata.metadata\`, \`etag\`, \`timestamp\`) que causam \`400 PropertyNameInvalid\`. Reconstrua com APENAS os campos de negócio.
-
-\`\`\`typescript
-// UPDATE / contador atômico — Table API NÃO tem "ADD": leia, some em JS, grave só campos de negócio
-export async function handler(event: any) {
-  const id = event.pathParameters?.id;
-  const cur = await client.getEntity('items', id);            // FLAT, pode lançar 404
-  await client.updateEntity(
-    { partitionKey: 'items', rowKey: id, name: cur.name, clicks: Number(cur.clicks ?? 0) + 1 },  // só negócio, sem spread do cur
-    'Merge',
-  );
-  return { statusCode: 200, body: JSON.stringify({ ok: true }) };
-}
-// DELETE: client.deleteEntity('items', id)
-\`\`\`
+O helper cuida de: id ↔ rowKey, remoção de campos OData, 404→null, contador atômico. Não replique essa lógica no handler.
 
 ### Env vars obrigatórias no Fn.Lambda que acessa Database.DynamoDB:
 \`\`\`typescript

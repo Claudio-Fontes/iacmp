@@ -25,6 +25,7 @@ import {
 } from './file-persister';
 import { validateWithAutoInstall } from './synth-validator';
 import { generatePostmanCollection } from './postman';
+import { ensureAzureTablesHelper } from './azure-tables-helper';
 import {
   REVIEW_PROMPT,
   buildAzureSdkCorrection,
@@ -125,6 +126,7 @@ async function fixInitialTypeErrors(
     session.addAssistantMessage(retryRaw);
     try {
       const retryParsed = extractResponse(retryRaw);
+      ensureAzureTablesHelper(retryParsed, iacProvider);
       if (retryParsed.files.length < originalFileCount) {
         console.log(chalk.yellow(
           `  ⚠ a correção devolveu menos arquivos que a resposta original (${retryParsed.files.length} vs ${originalFileCount}) — confira se nada foi perdido.`
@@ -239,6 +241,9 @@ async function runSynthCorrectionLoop(
       try {
         parsed = extractResponse(retryRaw);
         stripProtectedFiles(parsed);
+        // Re-injeta o helper Azure (o modelo não o devolve; sem isso o reconcile
+        // o removeria como órfão e a próxima validação quebraria no './tables').
+        ensureAzureTablesHelper(parsed, iacProvider);
         // Cada regeneração SUBSTITUI o conjunto anterior: escreve a nova geração e
         // remove os órfãos da tentativa anterior.
         written = await rewriteAndReconcile(parsed, cwd, written);
@@ -298,6 +303,10 @@ export async function runGeneration(
   if (!fromCache && parsed.files.length > 0) {
     parsed = await applySemanticReview(provider, session, parsed, reviewProvider);
   }
+
+  // Injeta o helper nativo src/tables.ts em projetos Azure com Database.DynamoDB
+  // ANTES de validar TS (os handlers importam './tables') e persistir.
+  ensureAzureTablesHelper(parsed, iacProvider);
 
   parsed = await fixInitialTypeErrors(provider, session, cwd, iacProvider, parsed, reviewProvider);
 

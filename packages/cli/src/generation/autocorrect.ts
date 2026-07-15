@@ -85,13 +85,13 @@ export function buildAzureSdkCorrection(files: GeneratedFile[]): string | null {
       `// list: for await (const b of container.listBlobsFlat()){...}  // delete: await container.deleteBlob(name)\n` +
       `\`\`\`\n\n` +
       `Env var ÚNICA: BLOB_CONNECTION: ref('<Bucket>','ConnectionString'). NÃO gere BLOB_KEY/BLOB_ACCOUNT/COSMOS_CONNECTION/TABLE_NAME. NUNCA @azure/data-tables/@azure/cosmos nem @aws-sdk/*.`
-    : `Reescreva APENAS esses handlers usando @azure/data-tables:\n` +
+    : `Reescreva APENAS esses handlers usando o helper './tables' (injetado pelo iacmp — NÃO importe @azure/data-tables direto):\n` +
       `\`\`\`typescript\n` +
-      `import { TableClient } from '@azure/data-tables';\n` +
-      `const client = TableClient.fromConnectionString(process.env.COSMOS_CONNECTION!, process.env.TABLE_NAME!);\n` +
-      `// createEntity({partitionKey,rowKey,...}) / listEntities() / getEntity(pk,rk) / updateEntity(...,'Replace') / deleteEntity(pk,rk)\n` +
+      `import { table } from './tables';\n` +
+      `const items = table('items');\n` +
+      `// items.get(id)->obj|null  put(id,fields,{ifNotExists})  update(id,patch)  increment(id,field)  del(id)  list()  listByPrefix(pfx)\n` +
       `\`\`\`\n\n` +
-      `Env vars: COSMOS_CONNECTION: ref('ItemsTable','ConnectionString'), TABLE_NAME: ref('ItemsTable','Name'). NUNCA @aws-sdk/*.`;
+      `Env vars no Fn.Lambda: COSMOS_CONNECTION: ref('ItemsTable','ConnectionString'), TABLE_NAME: ref('ItemsTable','Name'). NUNCA @aws-sdk/* nem TableClient/getEntity cru.`;
   return `ERRO AZURE: os handlers ${fileList} usam o SDK errado para o datastore deste projeto.\n\n` +
     sdkExample + `\n\n` +
     `Retorne o JSON completo com TODOS os ${files.length} arquivo(s) da resposta anterior (corrija os handlers + as env vars dos Fn.Lambda nas stacks).`;
