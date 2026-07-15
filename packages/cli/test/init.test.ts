@@ -67,12 +67,13 @@ describe('init <nome> — caso feliz (template default)', () => {
     expect(exists(cwd, 'meu-proj/stacks/network/api-gateway-stack.ts')).toBe(false);
   });
 
-  test('--template hello cria test/ e o scaffold HelloWorld', () => {
+  test('--template hello cria o scaffold HelloWorld (Lambda + API Gateway + handler)', () => {
     cwd = makeEmptyDir();
     runCli(['init', 'meu-proj', '--template', 'hello'], { cwd });
 
-    expect(exists(cwd, 'meu-proj/test/meu-proj.test.ts')).toBe(true);
     expect(exists(cwd, 'meu-proj/stacks/compute/meu-proj-stack.ts')).toBe(true);
+    expect(exists(cwd, 'meu-proj/stacks/network/api-gateway-stack.ts')).toBe(true);
+    expect(exists(cwd, 'meu-proj/src/index.ts')).toBe(true);
   });
 });
 

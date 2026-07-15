@@ -53,6 +53,14 @@ function runProc(
   if (opts.stripKeys) {
     delete env['ANTHROPIC_API_KEY'];
     delete env['GITHUB_TOKEN'];
+    // O comando `ai` carrega ~/.iacmp/config (loadEnv), que na máquina do dev tem
+    // OPENAI_API_KEY. Para um teste hermético "sem key", removemos também a key
+    // OpenAI/Copilot E apontamos HOME para o dir do projeto (sem .iacmp/config).
+    delete env['OPENAI_API_KEY'];
+    delete env['COPILOT_API_KEY'];
+    delete env['IACMP_PROVIDER_AI'];
+    env['HOME'] = opts.cwd;
+    env['USERPROFILE'] = opts.cwd;
   }
 
   try {

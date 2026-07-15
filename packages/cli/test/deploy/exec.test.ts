@@ -32,23 +32,23 @@ describe('printPlan', () => {
 describe('runCommands', () => {
   beforeEach(() => jest.resetAllMocks());
 
-  test('executa cada comando na ordem, com stdio inherit', () => {
+  test('executa cada comando na ordem, com stdio inherit', async () => {
     mockedCp.execFileSync.mockReturnValue('' as any);
     const commands: NativeCommand[] = [{ bin: 'terraform', args: ['init'] }, { bin: 'terraform', args: ['apply'] }];
 
-    runCommands(commands);
+    await runCommands(commands);
 
     expect(mockedCp.execFileSync).toHaveBeenCalledTimes(2);
     expect(mockedCp.execFileSync).toHaveBeenNthCalledWith(1, 'terraform', ['init'], expect.objectContaining({ stdio: 'inherit' }));
     expect(mockedCp.execFileSync).toHaveBeenNthCalledWith(2, 'terraform', ['apply'], expect.objectContaining({ stdio: 'inherit' }));
   });
 
-  test('lança erro claro quando um comando falha, e interrompe os seguintes', () => {
+  test('lança erro claro quando um comando falha, e interrompe os seguintes', async () => {
     mockedCp.execFileSync
       .mockImplementationOnce(() => { throw new Error('boom'); });
     const commands: NativeCommand[] = [{ bin: 'aws', args: ['cloudformation', 'deploy'] }, { bin: 'aws', args: ['nunca-chega'] }];
 
-    expect(() => runCommands(commands)).toThrow('aws cloudformation deploy');
+    await expect(runCommands(commands)).rejects.toThrow('aws cloudformation deploy');
     expect(mockedCp.execFileSync).toHaveBeenCalledTimes(1);
   });
 });
