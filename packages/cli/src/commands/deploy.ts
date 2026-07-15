@@ -26,6 +26,7 @@ export default class Deploy extends Command {
     provider: Flags.string({ char: 'p', description: 'Provider alvo (aws, azure, gcp, terraform) — default: o provider do iacmp.json' }),
     stack: Flags.string({ char: 's', description: 'Nome da stack específica' }),
     'dry-run': Flags.boolean({ description: 'Mostra os comandos que seriam executados, sem rodar nada', default: false }),
+    yes: Flags.boolean({ char: 'y', description: 'Responde sim a todas as confirmações (apagar recurso órfão, criar resource group). Obrigatório para confirmações destrutivas em stdin não-interativo.', default: false }),
   };
 
   static examples = [
@@ -35,6 +36,7 @@ export default class Deploy extends Command {
     '$ iacmp deploy --provider gcp',
     '$ iacmp deploy --provider terraform',
     '$ iacmp deploy --dry-run',
+    '$ iacmp deploy --yes',
   ];
 
   async run(): Promise<void> {
@@ -92,8 +94,9 @@ export default class Deploy extends Command {
         if (dryRun) {
           this.log(`Resource group "${config.resourceGroup}" ainda não existe — seria criado:`);
           this.log(chalk.dim('  $ ') + formatCommand(createCmd));
-        } else if (!process.stdin.isTTY) {
-          // Não-TTY (CI, pipe): cria o RG automaticamente sem perguntar
+        } else if (flags.yes || !process.stdin.isTTY) {
+          // --yes ou não-TTY (CI, pipe): cria o RG automaticamente sem perguntar
+          // (criar RG é seguro/reversível — diferente de apagar recurso órfão).
           execFileSync(createCmd.bin, createCmd.args, { stdio: 'inherit' });
         } else {
           const proceed = await confirm(`Resource group "${config.resourceGroup}" não existe. Criar agora em ${region}?`);
@@ -182,9 +185,23 @@ export default class Deploy extends Command {
           this.log(chalk.red(
             `\n⚠ ATENÇÃO: a stack "${t.stackName}" criaria recurso(s) que JÁ EXISTEM na conta AWS: ${list} — provavelmente retidos de uma stack anterior destruída.`
           ));
-          const proceed = await confirm(
-            `Apagar o(s) recurso(s) existente(s) e continuar o deploy de "${t.stackName}"? Isso é IRREVERSÍVEL e PERDE os dados atuais`
-          );
+          // Sob stdin não-interativo o readline nunca resolve — o processo saía
+          // com exit 0 SEM deployar nada, parecendo sucesso (abort silencioso que
+          // mordeu a bateria 3×). Não-TTY: exige --yes explícito ou falha ALTO.
+          let proceed: boolean;
+          if (flags.yes) {
+            this.log(chalk.yellow('--yes: apagando recurso(s) órfão(s) e continuando.'));
+            proceed = true;
+          } else if (!process.stdin.isTTY) {
+            this.error(
+              `Recurso(s) órfão(s) detectado(s) e stdin não é interativo — não há como confirmar. ` +
+              `Rode com --yes para apagar e continuar, ou apague/importe manualmente: ${list}`,
+            );
+          } else {
+            proceed = await confirm(
+              `Apagar o(s) recurso(s) existente(s) e continuar o deploy de "${t.stackName}"? Isso é IRREVERSÍVEL e PERDE os dados atuais`
+            );
+          }
           if (!proceed) {
             this.log(chalk.yellow(`Pulando "${t.stackName}" — apague ou importe o(s) recurso(s) manualmente e rode o deploy de novo.\n`));
             continue;
