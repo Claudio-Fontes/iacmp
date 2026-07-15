@@ -10,7 +10,7 @@ import { TerraformProvider } from '@iacmp/provider-terraform';
 import { Stack } from '@iacmp/core';
 import { resolveTemplateDir, templateExt } from '../synth-out';
 import { findStackFiles } from '../load-stacks';
-import { readJsonFile, errMessage } from '../utils';
+import { errMessage, loadIacmpConfig, resolveProvider, IacmpConfig } from '../utils';
 
 const CONTEXT_LINES = 2;
 
@@ -109,19 +109,17 @@ export default class Diff extends Command {
   async run(): Promise<void> {
     const { flags } = await this.parse(Diff);
     const cwd = process.cwd();
-    const configPath = path.join(cwd, 'iacmp.json');
 
-    if (!fs.existsSync(configPath)) {
-      this.error('Projeto não inicializado. Rode: iacmp init');
-    }
-
-    let config: { provider?: string; name?: string };
+    let config: IacmpConfig | null;
     try {
-      config = readJsonFile<{ provider?: string; name?: string }>(configPath);
+      config = loadIacmpConfig(cwd);
     } catch (err) {
       this.error(errMessage(err));
     }
-    const provider = flags.provider ?? config.provider ?? 'aws';
+    if (!config) {
+      this.error('Projeto não inicializado. Rode: iacmp init');
+    }
+    const provider = resolveProvider(config, flags.provider);
     const outDir = resolveTemplateDir(cwd, provider);
 
     if (!outDir) {

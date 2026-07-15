@@ -6,7 +6,8 @@ import { AWSProvider } from '@iacmp/provider-aws';
 import { AzureProvider } from '@iacmp/provider-azure';
 import { GCPProvider } from '@iacmp/provider-gcp';
 import { TerraformProvider } from '@iacmp/provider-terraform';
-import { Stack, EnvironmentProfile, AccountTier, tsCompilerOptions } from '@iacmp/core';
+import { Stack, tsCompilerOptions } from '@iacmp/core';
+import { loadIacmpConfig, resolveProvider, profileFromConfig } from '../utils';
 import { loadPlugins } from '@iacmp/plugin-sdk';
 import { synthRoot, providerOutDir, templateExt, listTemplates, orderByDependency } from '../synth-out';
 import {
@@ -44,19 +45,14 @@ export default class Synth extends Command {
   async run(): Promise<void> {
     const { flags } = await this.parse(Synth);
     const cwd = process.cwd();
-    const configPath = path.join(cwd, 'iacmp.json');
+    const config = loadIacmpConfig(cwd);
 
-    if (!fs.existsSync(configPath)) {
+    if (!config) {
       this.error('Projeto não inicializado. Rode: iacmp init');
     }
 
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-    const provider = flags.provider ?? config.provider ?? 'aws';
-    const profile: EnvironmentProfile = {
-      accountTier: (config.accountTier === 'standard' ? 'standard' : 'free') as AccountTier,
-      region: config.region,
-      availabilityZones: config.availabilityZones,
-    };
+    const provider = resolveProvider(config, flags.provider);
+    const profile = profileFromConfig(config);
     const stacksDir = path.join(cwd, 'stacks');
 
     if (!fs.existsSync(stacksDir)) {

@@ -2,17 +2,10 @@ import { Command, Flags } from '@oclif/core';
 import * as fs from 'fs';
 import * as path from 'path';
 import chalk from 'chalk';
-import { readJsonFile, errMessage } from '../utils';
+import { errMessage, loadIacmpConfig, resolveProvider } from '../utils';
 import { commandExists } from './doctor';
 import { getExecutor } from '../deploy';
 
-interface IacmpConfig {
-  name?: string;
-  provider?: string;
-  region?: string;
-  resourceGroup?: string;
-  projectId?: string;
-}
 
 export default class Ls extends Command {
   static description = 'Lista as stacks disponíveis no projeto';
@@ -63,13 +56,12 @@ export default class Ls extends Command {
     let statusCtx: { region: string; resourceGroup?: string; projectId?: string } | undefined;
     let executor: ReturnType<typeof getExecutor> | undefined;
     if (flags.status) {
-      const configPath = path.join(cwd, 'iacmp.json');
-      if (!fs.existsSync(configPath)) {
+      const config = loadIacmpConfig(cwd);
+      if (!config) {
         this.log(chalk.yellow('--status exige um projeto inicializado (iacmp.json não encontrado) — mostrando só as stacks locais.\n'));
       } else {
         try {
-          const config = readJsonFile<IacmpConfig>(configPath);
-          const provider = config.provider ?? 'aws';
+          const provider = resolveProvider(config);
           executor = getExecutor(provider);
           if (!executor.describeStatus) {
             this.log(chalk.yellow(`--status ainda não é suportado para o provider "${provider}" — mostrando só as stacks locais.\n`));

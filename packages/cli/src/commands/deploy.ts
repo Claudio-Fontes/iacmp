@@ -5,18 +5,9 @@ import * as path from 'path';
 import * as readline from 'readline';
 import chalk from 'chalk';
 import { listTemplates, countResources, orderByDependency } from '../synth-out';
-import { readJsonFile, errMessage } from '../utils';
+import { errMessage, loadIacmpConfig, resolveProvider, IacmpConfig } from '../utils';
 import { commandExists } from './doctor';
 import { getExecutor, printPlan, runCommands, formatCommand, resourceGroupExists, getAzureStackOutputs, findExistingRetainedResources, deleteResourceAndWait, DeployContext } from '../deploy';
-
-interface IacmpConfig {
-  name?: string;
-  provider?: string;
-  region?: string;
-  azureRegion?: string;
-  resourceGroup?: string;
-  projectId?: string;
-}
 
 function confirm(message: string): Promise<boolean> {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -49,20 +40,18 @@ export default class Deploy extends Command {
   async run(): Promise<void> {
     const { flags } = await this.parse(Deploy);
     const cwd = process.cwd();
-    const configPath = path.join(cwd, 'iacmp.json');
     const dryRun = flags['dry-run'];
 
-    if (!fs.existsSync(configPath)) {
-      this.error('Projeto não inicializado. Rode: iacmp init');
-    }
-
-    let config: IacmpConfig;
+    let config: IacmpConfig | null;
     try {
-      config = readJsonFile<IacmpConfig>(configPath);
+      config = loadIacmpConfig(cwd);
     } catch (err) {
       this.error(errMessage(err));
     }
-    const provider = flags.provider ?? config.provider ?? 'aws';
+    if (!config) {
+      this.error('Projeto não inicializado. Rode: iacmp init');
+    }
+    const provider = resolveProvider(config, flags.provider);
     const region = (provider === 'azure' ? config.azureRegion : undefined) ?? config.region ?? 'us-east-1';
 
     let executor;

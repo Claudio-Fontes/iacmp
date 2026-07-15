@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { Stack, tsCompilerOptions } from '@iacmp/core';
-import { readJsonFile, errMessage } from './utils';
+import { errMessage, loadIacmpConfig, resolveProvider } from './utils';
 
 export interface AuditConfig {
   name: string;
@@ -9,12 +9,11 @@ export interface AuditConfig {
 }
 
 export function readConfig(cwd: string): AuditConfig {
-  const configPath = path.join(cwd, 'iacmp.json');
-  if (!fs.existsSync(configPath)) throw new Error('iacmp.json não encontrado. Rode: iacmp init');
-  const config = readJsonFile<Record<string, unknown>>(configPath);
+  const config = loadIacmpConfig(cwd);
+  if (!config) throw new Error('iacmp.json não encontrado. Rode: iacmp init');
   return {
-    name: (config.name as string) ?? path.basename(cwd),
-    provider: (config.provider as string) ?? 'aws',
+    name: config.name ?? path.basename(cwd),
+    provider: resolveProvider(config),
   };
 }
 

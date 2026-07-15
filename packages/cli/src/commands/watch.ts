@@ -2,7 +2,7 @@ import { Command, Flags } from '@oclif/core';
 import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
-import { readJsonFile, errMessage } from '../utils';
+import { errMessage, loadIacmpConfig, resolveProvider, IacmpConfig } from '../utils';
 
 // Editores (vim/jetbrains/vscode) geram swap/temporários durante o salvamento;
 // dispará-los re-sintetiza com arquivos meio-gravados. Filtramos esse ruído.
@@ -39,19 +39,17 @@ export default class Watch extends Command {
   async run(): Promise<void> {
     const { flags } = await this.parse(Watch);
     const cwd = process.cwd();
-    const configPath = path.join(cwd, 'iacmp.json');
 
-    if (!fs.existsSync(configPath)) {
-      this.error('Projeto não inicializado. Rode: iacmp init');
-    }
-
-    let config: { provider?: string };
+    let config: IacmpConfig | null;
     try {
-      config = readJsonFile<{ provider?: string }>(configPath);
+      config = loadIacmpConfig(cwd);
     } catch (err) {
       this.error(errMessage(err));
     }
-    const provider = flags.provider ?? config.provider ?? 'aws';
+    if (!config) {
+      this.error('Projeto não inicializado. Rode: iacmp init');
+    }
+    const provider = resolveProvider(config, flags.provider);
     const stacksDir = path.join(cwd, 'stacks');
 
     if (!fs.existsSync(stacksDir)) {
