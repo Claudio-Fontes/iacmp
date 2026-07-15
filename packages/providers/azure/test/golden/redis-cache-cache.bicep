@@ -4,9 +4,9 @@ resource productCache 'Microsoft.Cache/redis@2023-04-01' = {
   name: 'productcache-${uniqueString(resourceGroup().id)}'
   location: location
   sku: {
-    name: 'Standard'
+    name: 'Basic'
     family: 'C'
-    capacity: 1
+    capacity: 0
   }
   tags: {
     Name: 'ProductCache'

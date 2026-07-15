@@ -512,13 +512,17 @@ describe('accountTier free → SKUs mais baratas (paridade de custo com AWS free
     expect(std).toContain("name: 'Standard_D2ds_v5'");
   });
 
-  test('Cache.Redis → Standard C1 (Enterprise Balanced_B0 falha com AllocationFailed)', () => {
+  test('Cache.Redis por tier: free → Basic C0 (menor custo), standard → Standard C1', () => {
     const stack = new Stack('c');
     new Cache.Redis(stack, 'AppCache', { nodeType: 'small' });
+    // Azure não tem Redis grátis — free usa o menor SKU pago (Basic C0 ~USD 16/mês)
     const free = emitBicep(stack, { accountTier: 'free' });
-    // deploy-validado p20az-r3: Standard C1 sobe; Enterprise Balanced_B0 não tem capacidade
-    expect(free).toMatch(/name: 'Standard'[\s\S]{0,40}capacity: 1/);
+    expect(free).toMatch(/name: 'Basic'[\s\S]{0,40}capacity: 0/);
+    const std = emitBicep(stack, { accountTier: 'standard' });
+    expect(std).toMatch(/name: 'Standard'[\s\S]{0,40}capacity: 1/);
+    // nunca Enterprise (Balanced_B0 falha com AllocationFailed em várias regiões)
     expect(free).not.toContain('redisEnterprise');
+    expect(std).not.toContain('redisEnterprise');
   });
 
   test('Database.DynamoDB → Cosmos Table API sem enableFreeTier (evita conflito de conta grátis)', () => {

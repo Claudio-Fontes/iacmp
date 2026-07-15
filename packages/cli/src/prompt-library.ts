@@ -37,7 +37,9 @@ Alta disponibilidade:
 - RDS em subnet group cobrindo 2 AZs
 - Lambdas em múltiplas AZs (2 subnets)
 
-Gere também os handlers Node.js (TypeScript) para cada Lambda com lógica real de conexão ao PostgreSQL via secret do Secrets Manager e operações CRUD na tabela items (campos: id, name, description, createdAt).`,
+Gere também os handlers Node.js (TypeScript) para cada Lambda com lógica real de conexão ao PostgreSQL via secret do Secrets Manager e operações CRUD na tabela items (campos: id, name, description, createdAt).
+
+Free tier: na AWS o db.t3.micro entra nas 750h/mês do free tier (12 meses). No Azure o banco vira PostgreSQL Flexible Server B1ms (também 750h/mês em conta free) — adicione em warnings que subscriptions FREE TRIAL podem bloquear a criação em algumas regiões (LocationIsOfferRestricted) e que a região eastus costuma aceitar.`,
   },
   {
     id: '02-serverless-api-dynamodb',
@@ -137,7 +139,9 @@ Adicione um nextStep explicando como fazer o deploy do site: aws s3 sync build/ 
 - Lambda "PushProcessorFn" consumindo PushQueue
 - Policies IAM mínimas para cada Lambda
 
-Gere os handlers TypeScript. O publisher envia { type, userId, message, metadata } ao SNS. Os consumidores logam e simulam o processamento.`,
+Gere os handlers TypeScript. O publisher envia { type, userId, message, metadata } ao SNS. Os consumidores logam e simulam o processamento.
+
+Free tier: na AWS, SNS+SQS são gratuitos (1M requisições/mês). No Azure, tópicos exigem Service Bus STANDARD (o tier Basic não tem topics) — custo base ~USD 10/mês cobrado por hora; adicione em warnings e recomende destruir após o teste.`,
   },
   {
     id: '08-api-with-cache-redis',
@@ -155,7 +159,9 @@ Gere os handlers TypeScript. O publisher envia { type, userId, message, metadata
 - API Gateway GET /products, GET /products/{id}
 - Policy IAM para a Lambda
 
-Gere o handler TypeScript com lógica real de cache usando a biblioteca ioredis. Adicione nextSteps sobre instalar ioredis com npm install ioredis.`,
+Gere o handler TypeScript com lógica real de cache usando a biblioteca ioredis. Adicione nextSteps sobre instalar ioredis com npm install ioredis.
+
+Free tier: na AWS o cache.t3.micro entra nas 750h/mês do free tier (12 meses). No Azure NÃO existe Redis gratuito — o menor SKU é Basic C0 (~USD 16/mês, cobrado por hora); adicione em warnings e recomende destruir logo após o teste.`,
   },
   {
     id: '09-rds-postgres-api',
@@ -171,7 +177,9 @@ Gere o handler TypeScript com lógica real de cache usando a biblioteca ioredis.
 - API Gateway REST /users com rotas CRUD completas
 - Policy IAM para acesso ao Secrets Manager em cada Lambda
 
-Gere os handlers TypeScript com lógica real usando a biblioteca pg (node-postgres) para conectar ao PostgreSQL via connection string montada a partir do secret. Inclua criação da tabela users (id UUID, name, email, createdAt) no CreateUserFn se não existir.`,
+Gere os handlers TypeScript com lógica real usando a biblioteca pg (node-postgres) para conectar ao PostgreSQL via connection string montada a partir do secret. Inclua criação da tabela users (id UUID, name, email, createdAt) no CreateUserFn se não existir.
+
+Free tier: na AWS o db.t3.micro entra nas 750h/mês (12 meses). No Azure vira PostgreSQL Flexible Server B1ms — adicione em warnings que subscriptions FREE TRIAL podem bloquear a criação em algumas regiões (LocationIsOfferRestricted); a região eastus costuma aceitar.`,
   },
   {
     id: '10-ecs-fargate-api',
@@ -189,7 +197,9 @@ Gere os handlers TypeScript com lógica real usando a biblioteca pg (node-postgr
 - Network.LoadBalancer application internet-facing nas subnets públicas
 - Auto-scaling: mínimo 2, máximo 10 tasks
 
-Adicione em nextSteps os comandos para criar o ECR e fazer push da imagem antes do deploy.`,
+Adicione em nextSteps os comandos para criar o ECR e fazer push da imagem antes do deploy.
+
+Custo: Fargate NÃO tem free tier na AWS (2 tasks 256/512 ≈ USD 0,02/hora) — adicione em warnings. No Azure este cenário vira Container Apps, que TEM franquia mensal gratuita (180 mil vCPU-s + 2M requisições).`,
   },
   {
     id: '11-data-pipeline-s3-lambda',
@@ -221,7 +231,9 @@ Gere o handler TypeScript que: lê o arquivo do S3, parseia como JSON (array de 
 - Secret.Vault "JwtSecret" para armazenar a chave secreta JWT
 - Policy IAM para a JwtAuthorizerFn com secretsmanager:GetSecretValue
 
-Gere os handlers TypeScript: o authorizer usa a biblioteca jsonwebtoken para verificar o token com a chave do Secrets Manager. As rotas protegidas leem o userId do contexto do authorizer.`,
+Gere os handlers TypeScript: o authorizer usa a biblioteca jsonwebtoken para verificar o token com a chave do Secrets Manager. As rotas protegidas leem o userId do contexto do authorizer.
+
+Free tier: na AWS o Secrets Manager tem trial de 30 dias e depois custa USD 0,40/secret/mês — adicione em warnings. No Azure o Key Vault é praticamente gratuito (USD 0,03/10 mil operações).`,
   },
   {
     id: '13-cloudwatch-monitoring',
@@ -272,13 +284,13 @@ Gere todos os handlers TypeScript com lógica real de transição de estados e p
 - API Gateway REST /api/{proxy+} conectado ao WAF via wafAclId
 - Policy IAM mínima para a Lambda
 
-Adicione em warnings os custos do WAF (USD 5/mês por WebACL + USD 1/mês por regra) e em nextSteps como associar o WAF ao CloudFront em vez de API Gateway para proteção na borda.`,
+Adicione em warnings os custos do WAF (USD 5/mês por WebACL + USD 1/mês por regra na AWS; no Azure o WAF exige Application Gateway WAF_v2, ~USD 125/mês SEM free tier) e em nextSteps como associar o WAF ao CloudFront em vez de API Gateway para proteção na borda. No Azure, sugira em warnings as políticas de rate-limit do APIM como alternativa gratuita ao WAF.`,
   },
   {
     id: '16-documentdb-api',
     title: 'Document Store com DocumentDB',
     category: 'Backend',
-    description: 'API com DocumentDB (compatível MongoDB) para dados semi-estruturados. ATENÇÃO: DocumentDB NÃO é free tier (instância mínima db.t3.medium é paga).',
+    description: 'API com DocumentDB (compatível MongoDB) para dados semi-estruturados. ATENÇÃO: na AWS o DocumentDB NÃO é free tier (db.t3.medium é pago); no Azure o equivalente (Cosmos DB Mongo API) É free tier.',
     prompt: `Crie uma infraestrutura de document store na AWS com:
 
 - VPC com CIDR 10.0.0.0/16 e 2 subnets privadas
@@ -289,7 +301,9 @@ Adicione em warnings os custos do WAF (USD 5/mês por WebACL + USD 1/mês por re
 - API Gateway REST /documents com rotas CRUD
 - Policy IAM para acesso ao Secrets Manager (senha do DocDB gerada automaticamente)
 
-Gere os handlers TypeScript com lógica real usando a biblioteca mongodb para conectar ao DocumentDB. A collection se chama "documents" com campos: _id, title, content, tags (array), createdAt.`,
+Gere os handlers TypeScript com lógica real usando a biblioteca mongodb para conectar ao DocumentDB. A collection se chama "documents" com campos: _id, title, content, tags (array), createdAt.
+
+Custo: na AWS o DocumentDB é PAGO (db.t3.medium ~USD 0,08/hora, sem free tier) — adicione em warnings e recomende destruir após o teste. No Azure este cenário vira Cosmos DB Mongo API, que TEM free tier (1 conta grátis por subscription) — sem custo.`,
   },
   {
     id: '17-kinesis-log-pipeline',
@@ -305,7 +319,9 @@ Gere os handlers TypeScript com lógica real usando a biblioteca mongodb para co
 - DynamoDB "EventMetricsTable" com contagens por tipo de evento (partitionKey: eventType, sortKey: date)
 - Policy IAM para cada Lambda com actions mínimas
 
-Gere os handlers TypeScript. O ingestor recebe { eventType, userId, payload, timestamp } e coloca no stream. O processador agrupa por tipo, salva métricas no DynamoDB e arquiva no S3.`,
+Gere os handlers TypeScript. O ingestor recebe { eventType, userId, payload, timestamp } e coloca no stream. O processador agrupa por tipo, salva métricas no DynamoDB e arquiva no S3.
+
+Custo: streams NÃO têm free tier em nenhuma das nuvens — Kinesis ~USD 0,015/shard-hora na AWS (contas novas podem exigir assinatura do serviço); Event Hubs Basic ~USD 11/mês no Azure. Adicione em warnings e recomende destruir após o teste. Alternativa gratuita quando ordem/replay não são exigidos: fila (SQS/Service Bus Basic).`,
   },
   {
     id: '18-multi-env-config',
@@ -321,7 +337,9 @@ Gere os handlers TypeScript. O ingestor recebe { eventType, userId, payload, tim
 - API Gateway GET /config?env=dev|staging|prod
 - Policy IAM para a Lambda com secretsmanager:GetSecretValue e secretsmanager:ListSecrets
 
-Gere o handler TypeScript que valida o ENV, busca o secret correto e retorna apenas as keys não-sensíveis (remove password, token, key das responses).`,
+Gere o handler TypeScript que valida o ENV, busca o secret correto e retorna apenas as keys não-sensíveis (remove password, token, key das responses).
+
+Free tier: na AWS são 3 secrets × USD 0,40/mês após o trial de 30 dias (~USD 1,20/mês) — adicione em warnings. No Azure o Key Vault é praticamente gratuito.`,
   },
   {
     id: '19-websocket-api',
@@ -338,7 +356,9 @@ Gere o handler TypeScript que valida o ENV, busca o secret correto e retorna ape
 - DynamoDB "ConnectionsTable" (partitionKey: connectionId, TTL: expiresAt)
 - Policy IAM para cada Lambda, incluindo execute-api:ManageConnections para enviar mensagens de volta
 
-Gere os handlers TypeScript com lógica real: ConnectFn salva a conexão com TTL de 2h, MessageFn processa e faz echo, BroadcastFn lista todas as conexões ativas e envia para cada uma usando @aws-sdk/client-apigatewaymanagementapi.`,
+Gere os handlers TypeScript com lógica real: ConnectFn salva a conexão com TTL de 2h, MessageFn processa e faz echo, BroadcastFn lista todas as conexões ativas e envia para cada uma usando @aws-sdk/client-apigatewaymanagementapi.
+
+Free tier: na AWS o WebSocket do API Gateway entra no free tier (1M mensagens/mês, 12 meses). No Azure o APIM Consumption NÃO suporta WebSocket — adicione em warnings que o cenário exige APIM Standard (pago) ou o serviço Web PubSub (que tem tier Free F1).`,
   },
   {
     id: '20-microservice-complete',
@@ -371,7 +391,9 @@ Monitoramento:
 
 Policy IAM mínima para cada Lambda.
 
-Gere todos os handlers TypeScript com lógica real usando pg e ioredis. Inclua nextSteps para instalar dependências.`,
+Gere todos os handlers TypeScript com lógica real usando pg e ioredis. Inclua nextSteps para instalar dependências.
+
+Free tier: na AWS, db.t3.micro e cache.t3.micro entram nas 750h/mês do free tier (12 meses). No Azure: (a) o Postgres Flexible B1ms pode ser bloqueado por região em subscriptions FREE TRIAL (LocationIsOfferRestricted — eastus costuma aceitar); (b) NÃO existe Redis gratuito — menor SKU Basic C0 ~USD 16/mês cobrado por hora. Adicione ambos em warnings e recomende destruir após o teste.`,
   },
 ];
 

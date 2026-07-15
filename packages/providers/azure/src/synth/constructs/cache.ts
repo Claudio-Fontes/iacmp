@@ -16,7 +16,12 @@ export function synthesizeCache(construct: BaseConstruct, ctx: SynthContext): vo
   switch (construct.type) {
     case 'Cache.Redis': {
       const cacheName = expr(`'${construct.id.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 40) || 'cache'}-\${uniqueString(resourceGroup().id)}'`);
-      resources.push({ sym, type: 'Microsoft.Cache/redis', apiVersion: '2023-04-01', name: cacheName, location: 'location', tags: tag(construct.id), sku: { name: 'Standard', family: 'C', capacity: 1 }, properties: { enableNonSslPort: false, minimumTlsVersion: '1.2', redisConfiguration: {} } });
+      // Azure NÃO tem Redis grátis — conta free usa o menor SKU (Basic C0,
+      // ~USD 16/mês, sem SLA); standard usa Standard C1 (réplica, SLA).
+      const sku = ctx.accountTier === 'free'
+        ? { name: 'Basic', family: 'C', capacity: 0 }
+        : { name: 'Standard', family: 'C', capacity: 1 };
+      resources.push({ sym, type: 'Microsoft.Cache/redis', apiVersion: '2023-04-01', name: cacheName, location: 'location', tags: tag(construct.id), sku, properties: { enableNonSslPort: false, minimumTlsVersion: '1.2', redisConfiguration: {} } });
       outputs.push({ name: crossParamName(construct.id, 'Endpoint'), type: 'string', value: `${sym}.properties.hostName` });
       outputs.push({ name: crossParamName(construct.id, 'Port'), type: 'string', value: `'6380'` });
       outputs.push({ name: crossParamName(construct.id, 'Host'), type: 'string', value: `${sym}.properties.hostName` });

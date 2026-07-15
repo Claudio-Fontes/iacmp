@@ -77,11 +77,11 @@ export const RESOURCE_TIER_MAP: ResourceTierInfo[] = [
     name: 'Cache Redis',
     construct: 'Cache.Redis',
     aws: {
-      free:     { availability: 'unavailable', reason: 'ElastiCache não incluso no free tier', alternative: 'DynamoDB como cache TTL ou implementar in-memory' },
-      standard: { availability: 'available',   recommendedSku: 'cache.t3.micro' },
+      free:     { availability: 'available',   recommendedSku: 'cache.t3.micro', reason: '750h/mês de cache.t3.micro inclusos no free tier de 12 meses (deploy-validado na bateria p08aws)' },
+      standard: { availability: 'available',   recommendedSku: 'cache.t3.micro+' },
     },
     azure: {
-      free:     { availability: 'available',   recommendedSku: 'Standard C1 (porta 6380)', reason: 'Redis Standard C1 disponível. Redis Enterprise (Balanced_B0) falha com AllocationFailed — não usar.' },
+      free:     { availability: 'restricted',  recommendedSku: 'Basic C0 (porta 6380)', reason: 'Azure NÃO tem Redis grátis — Basic C0 é o menor SKU (~USD 16/mês, cobrado por hora). Redis Enterprise (Balanced_B0) falha com AllocationFailed — não usar.', alternative: 'Cosmos DB Table API com TTL como cache (free tier) ou destruir o Redis logo após o teste' },
       standard: { availability: 'available',   recommendedSku: 'Standard C1+' },
     },
   },
@@ -151,7 +151,7 @@ export const RESOURCE_TIER_MAP: ResourceTierInfo[] = [
       standard: { availability: 'available' },
     },
     azure: {
-      free:     { availability: 'available',   recommendedSku: 'Event Hub Basic' },
+      free:     { availability: 'restricted',  recommendedSku: 'Event Hub Basic', reason: 'Event Hubs não tem free tier (Basic ~USD 11/mês, cobrado por hora)', alternative: 'Service Bus Queue (Basic, quase grátis) quando ordem/replay não são exigidos' },
       standard: { availability: 'available' },
     },
   },
