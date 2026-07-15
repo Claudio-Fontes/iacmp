@@ -181,6 +181,18 @@ securityGroupIds: ['LambdaSG']                      // OK — ID lógico do Netw
 7. **Imports de módulos built-in do Node.js** usam SEMPRE \`import * as X from 'X'\`, NUNCA \`import X from 'X'\`
 8. **NUNCA use \`Custom.Resource\` para inserir dados em banco** — não existe recurso nativo (CloudFormation, ARM, Terraform, Deployment Manager) que insira itens em DynamoDB/Cosmos DB/Firestore/PostgreSQL. O deploy falha com erro de validação. Dados de seed vão no handler com lógica idempotente (PutItem + ConditionExpression / upsert / INSERT ON CONFLICT DO NOTHING).
 
+## REGRA ABSOLUTA — DynamoDB: SEMPRE use ExpressionAttributeNames em Update/Filter/Condition/ProjectionExpression
+O DynamoDB tem mais de 570 palavras reservadas (ex: \`status\`, \`total\`, \`name\`, \`data\`, \`date\`, \`type\`, \`count\`, \`value\`, \`size\`, \`timestamp\`) que quebram a expressão em runtime com \`ValidationException: Attribute name is a reserved keyword\` mesmo sendo nomes de campo perfeitamente razoáveis. NÃO tente adivinhar quais nomes são reservados — é impraticável memorizar a lista inteira. Regra: em TODO \`UpdateExpression\`, \`FilterExpression\`, \`ConditionExpression\` ou \`ProjectionExpression\`, referencie CADA nome de atributo por um alias \`#nome\` declarado em \`ExpressionAttributeNames\`, nunca o nome literal. Exemplo (contador atômico com campo \`total\`):
+\`\`\`ts
+await doc.send(new UpdateCommand({
+  TableName: process.env.TABLE_NAME,
+  Key: { counterKey },
+  UpdateExpression: 'ADD #total :one',
+  ExpressionAttributeNames: { '#total': 'total' },
+  ExpressionAttributeValues: { ':one': 1 },
+}));
+\`\`\`
+
 ## REGRA ABSOLUTA — API REST/HTTP = Fn.ApiGateway, NUNCA Network.LoadBalancer para Lambdas
 NUNCA use \`Network.LoadBalancer\` (ALB) para expor Lambdas — ALB é para containers/EC2.
 Um \`Compute.Container\`/ECS é exposto por \`Network.LoadBalancer\` (ALB), NUNCA por \`Fn.ApiGateway\`.
