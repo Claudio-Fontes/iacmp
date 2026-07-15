@@ -97,6 +97,41 @@ export function buildAzureSdkCorrection(files: GeneratedFile[]): string | null {
     `Retorne o JSON completo com TODOS os ${files.length} arquivo(s) da resposta anterior (corrija os handlers + as env vars dos Fn.Lambda nas stacks).`;
 }
 
+/**
+ * Guard: em projeto Azure com Database.DynamoDB, o iacmp injeta src/tables.ts
+ * (helper nativo). Os handlers DEVEM usá-lo — mas o modelo teima em escrever
+ * @azure/data-tables/TableClient cru, reintroduzindo os bugs de getEntity/OData.
+ * Detecta handlers (não o próprio tables.ts) que usam o SDK cru e força a
+ * correção para o helper. Retorna a mensagem, ou null se todos já usam o helper.
+ */
+export function buildAzureTablesHelperCorrection(files: GeneratedFile[]): string | null {
+  const stacksBlob = files.filter(f => f.path.startsWith('stacks/')).map(f => f.content).join('\n');
+  if (!stacksBlob.includes('Database.DynamoDB')) return null;
+  const handlers = files.filter(f =>
+    (f.path.startsWith('src/') || f.path.endsWith('.ts')) &&
+    !f.path.startsWith('stacks/') &&
+    f.path !== 'src/tables.ts',
+  );
+  const offenders = handlers.filter(f =>
+    f.content.includes('@azure/data-tables') || /\bTableClient\b/.test(f.content),
+  );
+  if (offenders.length === 0) return null;
+  const list = [...new Set(offenders.map(f => f.path))].join(', ');
+  return `ERRO AZURE: os handlers ${list} usam @azure/data-tables/TableClient DIRETAMENTE. ` +
+    `Este projeto JÁ TEM o helper nativo src/tables.ts — os handlers DEVEM usá-lo, NUNCA o SDK cru ` +
+    `(o SDK cru reintroduz os bugs de getEntity flat/.value, 404 que lança e campos OData).\n\n` +
+    `Reescreva CADA handler de Database.DynamoDB assim:\n` +
+    "```typescript\n" +
+    "import { table } from './tables';\n" +
+    "const items = table('items');   // 'items' = partição da tabela lógica\n" +
+    "// items.get(id) -> objeto com .id, ou null (nunca lança 404)\n" +
+    "// items.put(id, fields, { ifNotExists: true }) -> false se já existe\n" +
+    "// items.update(id, patch) | items.increment(id, 'campo') | items.del(id) | items.list() | items.listByPrefix('pref#')\n" +
+    "```\n\n" +
+    `REMOVA todo import de '@azure/data-tables' e todo uso de TableClient/getEntity/createEntity/updateEntity/deleteEntity dos handlers. ` +
+    `NÃO altere src/tables.ts (é do iacmp). Retorne o JSON completo com TODOS os ${files.length} arquivo(s).`;
+}
+
 // Monta o hint de correção para erros de compilação TypeScript. Prioriza o
 // detector de SDK errado no Azure (buildAzureSdkCorrection) — @aws-sdk/* é a
 // causa mais comum de "Cannot find module" em projetos Azure e o hint genérico

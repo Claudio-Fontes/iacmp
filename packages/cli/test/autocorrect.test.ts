@@ -1,8 +1,47 @@
-import { buildAzureSdkCorrection } from '../src/generation/autocorrect';
+import { buildAzureSdkCorrection, buildAzureTablesHelperCorrection } from '../src/generation/autocorrect';
 
 // stack de projeto DynamoDB (Cosmos Table API no Azure)
 const dynamoStack = { path: 'stacks/database/db-stack.ts', content: `new Database.DynamoDB(stack, 'ItemsTable', {})` };
 const sqlStack = { path: 'stacks/database/db-stack.ts', content: `new Database.SQL(stack, 'AppDB', { engine: 'postgres' })` };
+
+describe('buildAzureTablesHelperCorrection — força handlers a usarem ./tables', () => {
+  const helper = { path: 'src/tables.ts', content: "import { table } from '@azure/data-tables';" };
+
+  test('handler com TableClient cru → corrige (aponta o arquivo)', () => {
+    const files = [
+      dynamoStack, helper,
+      { path: 'src/get.ts', content: "import { TableClient } from '@azure/data-tables';\nconst c = TableClient.fromConnectionString(x, y);" },
+    ];
+    const msg = buildAzureTablesHelperCorrection(files);
+    expect(msg).not.toBeNull();
+    expect(msg).toContain('src/get.ts');
+    expect(msg).toContain("./tables");
+  });
+
+  test('handlers que já usam ./tables → NÃO corrige', () => {
+    const files = [
+      dynamoStack, helper,
+      { path: 'src/get.ts', content: "import { table } from './tables';\nconst items = table('items');" },
+    ];
+    expect(buildAzureTablesHelperCorrection(files)).toBeNull();
+  });
+
+  test('o próprio src/tables.ts não é acusado (é ele quem usa data-tables)', () => {
+    const files = [
+      dynamoStack, helper,
+      { path: 'src/get.ts', content: "import { table } from './tables';" },
+    ];
+    expect(buildAzureTablesHelperCorrection(files)).toBeNull();
+  });
+
+  test('projeto sem Database.DynamoDB → não se aplica', () => {
+    const files = [
+      sqlStack,
+      { path: 'src/get.ts', content: "import { TableClient } from '@azure/data-tables';" },
+    ];
+    expect(buildAzureTablesHelperCorrection(files)).toBeNull();
+  });
+});
 
 describe('buildAzureSdkCorrection — shim de DynamoDB SDK no Azure', () => {
   test('handler com @aws-sdk/client-dynamodb + lib-dynamodb num projeto DynamoDB → NÃO corrige (shim cobre)', () => {

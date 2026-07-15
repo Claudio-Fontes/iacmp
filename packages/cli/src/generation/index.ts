@@ -29,6 +29,7 @@ import { ensureAzureTablesHelper } from './azure-tables-helper';
 import {
   REVIEW_PROMPT,
   buildAzureSdkCorrection,
+  buildAzureTablesHelperCorrection,
   buildTsErrorCorrection,
   buildHandlerTsCorrection,
   classifySynthError,
@@ -207,9 +208,13 @@ async function runSynthCorrectionLoop(
         ? validateWithAutoInstall(currentTs, cwd, iacProvider, parsed.files)
         : { valid: true, errors: [] };
       const azureSdkMsg = iacProvider === 'azure' ? buildAzureSdkCorrection(parsed.files) : null;
+      const azureTablesMsg = iacProvider === 'azure' && !azureSdkMsg ? buildAzureTablesHelperCorrection(parsed.files) : null;
       if (azureSdkMsg) {
         spinner.fail('Azure: handlers com SDK errado — corrigindo...');
         correctionMsg = azureSdkMsg;
+      } else if (azureTablesMsg) {
+        spinner.fail('Azure: handlers ignoram o helper ./tables — corrigindo...');
+        correctionMsg = azureTablesMsg;
       } else if (tsResult.valid) {
         const currentSigs = extractConstructSignatures(parsed.files);
         const removed = [...initialSignatures].filter(s => !currentSigs.has(s));
