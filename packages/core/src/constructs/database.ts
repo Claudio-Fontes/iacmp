@@ -73,6 +73,10 @@ export interface DatabaseDynamoDBProps {
   ttlAttribute?: string;
   pointInTimeRecovery?: boolean;
   streamEnabled?: boolean;
+  /** true → DeletionPolicy Retain (a tabela sobrevive ao destroy). Default: false (Delete). */
+  deletionProtection?: boolean;
+  /** true (e sem deletionProtection) → DeletionPolicy Snapshot no destroy. */
+  snapshotOnDelete?: boolean;
   globalSecondaryIndexes?: Array<{
     name: string;
     partitionKey: string;

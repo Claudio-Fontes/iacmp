@@ -5,7 +5,7 @@
     "Resources": {
       "Connections": {
         "Type": "AWS::DynamoDB::Table",
-        "DeletionPolicy": "Retain",
+        "DeletionPolicy": "Delete",
         "Properties": {
           "TableName": "Connections",
           "BillingMode": "PAY_PER_REQUEST",
@@ -359,6 +359,14 @@
         },
         "Export": {
           "Name": "ws-api-DefaultFn-Arn"
+        }
+      },
+      "ApiUrl": {
+        "Value": {
+          "Fn::Sub": "https://${WsApi}.execute-api.${AWS::Region}.amazonaws.com/$default"
+        },
+        "Export": {
+          "Name": "ws-api-WsApi-ApiUrl"
         }
       }
     }

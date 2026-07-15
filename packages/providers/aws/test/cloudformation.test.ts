@@ -184,10 +184,14 @@ describe('AWSProvider', () => {
     expect(tpl.Resources.DocsCluster.DeletionPolicy).toBe('Delete');
   });
 
-  test('regressao: Database.DynamoDB → DeletionPolicy Retain', () => {
+  test('Database.DynamoDB → DeletionPolicy condicional em deletionProtection', () => {
+    // default: Delete (permite destroy limpo); Retain só quando deletionProtection.
     new Database.DynamoDB(stack, 'Tab', { partitionKey: 'id' });
-    const tpl = provider.synthesize(stack) as any;
-    expect(tpl.Resources.Tab.DeletionPolicy).toBe('Retain');
+    expect((provider.synthesize(stack) as any).Resources.Tab.DeletionPolicy).toBe('Delete');
+
+    const protectedStack = new Stack('protected', { region: 'us-east-1' });
+    new Database.DynamoDB(protectedStack, 'Tab', { partitionKey: 'id', deletionProtection: true });
+    expect((provider.synthesize(protectedStack) as any).Resources.Tab.DeletionPolicy).toBe('Retain');
   });
 
   test('Database.DynamoDB sem partitionKeyType/sortKeyType → AttributeType default \'S\' (compat)', () => {

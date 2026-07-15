@@ -308,28 +308,27 @@ export function validateUpdateHandlerExpression(projectDir: string = process.cwd
  * nunca é o tipo certo e causa ValidationException em runtime. O modelo 'S'
  * é o default universal; 'N' deve ser explicitamente justificado no prompt.
  */
+// partitionKeyType/sortKeyType 'N' é raramente correto (IDs de CRUD são strings),
+// mas É uma feature válida do DynamoDB para chaves genuinamente numéricas — por
+// isso ALERTA (nudge visível), sem BLOQUEAR o synth. A steering para 'S' vive no
+// prompt de geração; um hard-block aqui rejeitaria infra válida.
 export function validateDynamoKeyTypes(universe: Stack[]): void {
-  const errors: string[] = [];
   for (const stack of universe) {
     for (const construct of stack.constructs) {
       if (construct.type !== 'Database.DynamoDB') continue;
       const props = construct.props as Record<string, unknown>;
       if (props.partitionKeyType === 'N') {
-        errors.push(
-          `Database.DynamoDB "${construct.id}": partitionKeyType 'N' (Number) raramente é correto. ` +
-          `IDs de CRUD (UUID, slug, path param) são SEMPRE string → use partitionKeyType: 'S'. ` +
-          `Se a chave for realmente um número (ex: timestamp numérico), omita este campo pois o default já é 'S'.`,
+        console.warn(
+          `[aws] Database.DynamoDB "${construct.id}": partitionKeyType 'N' (Number) — ` +
+          `confirme que a chave é mesmo numérica. IDs de CRUD (UUID, slug, path param) são string ('S').`,
         );
       }
       if (props.sortKeyType === 'N') {
-        errors.push(
-          `Database.DynamoDB "${construct.id}": sortKeyType 'N' raramente é correto — use 'S' para sort keys de string/data.`,
+        console.warn(
+          `[aws] Database.DynamoDB "${construct.id}": sortKeyType 'N' — use 'S' para sort keys de string/data, se aplicável.`,
         );
       }
     }
-  }
-  if (errors.length > 0) {
-    throw new Error(`partitionKeyType/sortKeyType 'N' detectado:\n- ${errors.join('\n- ')}`);
   }
 }
 

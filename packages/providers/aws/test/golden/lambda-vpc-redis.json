@@ -257,7 +257,7 @@
       },
       "Sessions": {
         "Type": "AWS::DynamoDB::Table",
-        "DeletionPolicy": "Retain",
+        "DeletionPolicy": "Delete",
         "Properties": {
           "TableName": "Sessions",
           "BillingMode": "PAY_PER_REQUEST",

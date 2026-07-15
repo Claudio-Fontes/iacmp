@@ -126,7 +126,7 @@
         "StateMachineType": "STANDARD",
         "DefinitionString": {
           "Fn::Sub": [
-            "{\"Comment\":\"Workflow ApprovalFlow\",\"StartAt\":\"RequestApproval\",\"States\":{\"RequestApproval\":{\"Type\":\"Task\",\"Resource\":\"arn:aws:states:::lambda:invoke.waitForTaskToken\",\"Parameters\":{\"FunctionName\":\"${RequestApprovalArn}\",\"Payload\":{\"taskToken.$\":\"$$.Task.Token\",\"input.$\":\"$\"}},\"Next\":\"WaitForApproval\"},\"WaitForApproval\":{\"Type\":\"Wait\",\"Seconds\":3600,\"Next\":\"ExecuteAction\"},\"ExecuteAction\":{\"Type\":\"Task\",\"Resource\":\"${ExecuteActionArn}\",\"End\":true}}}",
+            "{\"Comment\":\"Workflow ApprovalFlow\",\"StartAt\":\"RequestApproval\",\"States\":{\"RequestApproval\":{\"Type\":\"Task\",\"Resource\":\"arn:aws:states:::lambda:invoke.waitForTaskToken\",\"Parameters\":{\"FunctionName\":\"${RequestApprovalArn}\",\"Payload\":{\"body.$\":\"States.JsonToString($)\",\"taskToken.$\":\"$$.Task.Token\"}},\"ResultPath\":null,\"Next\":\"WaitForApproval\"},\"WaitForApproval\":{\"Type\":\"Wait\",\"Seconds\":3600,\"Next\":\"ExecuteAction\"},\"ExecuteAction\":{\"Type\":\"Task\",\"Resource\":\"arn:aws:states:::lambda:invoke\",\"Parameters\":{\"FunctionName\":\"${ExecuteActionArn}\",\"Payload\":{\"body.$\":\"States.JsonToString($)\"}},\"ResultPath\":null,\"End\":true}}}",
             {
               "RequestApprovalArn": {
                 "Fn::GetAtt": [
@@ -173,6 +173,17 @@
       },
       "Export": {
         "Name": "stepfunctions-approval-ActionFn-Arn"
+      }
+    },
+    "ApprovalFlowArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "ApprovalFlow",
+          "Arn"
+        ]
+      },
+      "Export": {
+        "Name": "stepfunctions-approval-ApprovalFlow-Arn"
       }
     }
   }

@@ -33,9 +33,6 @@
           "hash_key": "connectionId",
           "point_in_time_recovery": {
             "enabled": true
-          },
-          "lifecycle": {
-            "prevent_destroy": true
           }
         }
       }
@@ -255,6 +252,10 @@
       "DefaultFnArn": {
         "value": "${aws_lambda_function.defaultfn.arn}",
         "description": "ws-api-DefaultFn-Arn"
+      },
+      "ApiUrl": {
+        "value": "https://${aws_apigatewayv2_api.wsapi.id}.execute-api.${data.aws_region.current.name}.amazonaws.com/$default",
+        "description": "ws-api-WsApi-ApiUrl"
       }
     }
   }

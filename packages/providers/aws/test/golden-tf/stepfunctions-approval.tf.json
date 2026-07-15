@@ -86,7 +86,7 @@
       "approvalflow": {
         "name": "ApprovalFlow",
         "type": "STANDARD",
-        "definition": "{\"Comment\":\"Workflow ApprovalFlow\",\"StartAt\":\"RequestApproval\",\"States\":{\"RequestApproval\":{\"Type\":\"Task\",\"Resource\":\"arn:aws:states:::lambda:invoke.waitForTaskToken\",\"Parameters\":{\"FunctionName\":\"${aws_lambda_function.notifyfn.arn}\",\"Payload\":{\"taskToken.$\":\"$$.Task.Token\",\"input.$\":\"$\"}},\"Next\":\"WaitForApproval\"},\"WaitForApproval\":{\"Type\":\"Wait\",\"Seconds\":3600,\"Next\":\"ExecuteAction\"},\"ExecuteAction\":{\"Type\":\"Task\",\"Resource\":\"${aws_lambda_function.actionfn.arn}\",\"End\":true}}}",
+        "definition": "{\"Comment\":\"Workflow ApprovalFlow\",\"StartAt\":\"RequestApproval\",\"States\":{\"RequestApproval\":{\"Type\":\"Task\",\"Resource\":\"arn:aws:states:::lambda:invoke.waitForTaskToken\",\"Parameters\":{\"FunctionName\":\"${aws_lambda_function.notifyfn.arn}\",\"Payload\":{\"body.$\":\"States.JsonToString($)\",\"taskToken.$\":\"$$.Task.Token\"}},\"ResultPath\":null,\"Next\":\"WaitForApproval\"},\"WaitForApproval\":{\"Type\":\"Wait\",\"Seconds\":3600,\"Next\":\"ExecuteAction\"},\"ExecuteAction\":{\"Type\":\"Task\",\"Resource\":\"arn:aws:states:::lambda:invoke\",\"Parameters\":{\"FunctionName\":\"${aws_lambda_function.actionfn.arn}\",\"Payload\":{\"body.$\":\"States.JsonToString($)\"}},\"ResultPath\":null,\"End\":true}}}",
         "role_arn": "${aws_iam_role.approvalflowexecutionrole.arn}"
       }
     }
@@ -99,6 +99,10 @@
     "ActionFnArn": {
       "value": "${aws_lambda_function.actionfn.arn}",
       "description": "stepfunctions-approval-ActionFn-Arn"
+    },
+    "ApprovalFlowArn": {
+      "value": "${aws_sfn_state_machine.approvalflow.arn}",
+      "description": "stepfunctions-approval-ApprovalFlow-Arn"
     }
   }
 }
