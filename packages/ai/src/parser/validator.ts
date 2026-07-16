@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
 import { GeneratedFile } from './code-extractor';
-import { tsCompilerOptions } from '@iacmp/core';
+import { tsCompilerOptions, detectTypeScriptMajor } from '@iacmp/core';
 
 export interface ValidationResult {
   valid: boolean;
@@ -55,10 +55,14 @@ export function validateTypeScript(files: GeneratedFile[], projectDir: string): 
       tsconfigPaths['@iacmp/core/*'] = [path.join(coreTypesPath, '*')];
     }
 
+    // TS7 REMOVEU baseUrl (TS5102) — sem ele, os `paths` resolvem relativo ao
+    // diretório do tsconfig; como os mapeamentos aqui são absolutos, funciona
+    // igual. Em TS<7 mantém baseUrl '/' (comportamento validado até TS6).
+    const tsMajor = detectTypeScriptMajor(projectDir);
     const tsconfig = {
       compilerOptions: tsCompilerOptions(projectDir, {
         noEmit: true,
-        baseUrl: '/',
+        ...(tsMajor !== null && tsMajor >= 7 ? {} : { baseUrl: '/' }),
         paths: tsconfigPaths,
       }),
       include: [path.join(tmpDir, '**', '*.ts')],
