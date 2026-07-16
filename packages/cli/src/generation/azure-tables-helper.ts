@@ -91,9 +91,11 @@ export function table(partition = 'items') {
       await c.upsertEntity(entity, 'Replace');
       return true;
     },
-    // Mescla os campos informados no item existente (Merge — preserva os demais).
+    // Mescla os campos no item, CRIANDO se não existir (upsert-merge) — mesma
+    // semântica do UpdateCommand do DynamoDB. updateEntity puro do Azure falha
+    // se a entidade não existe; upsertEntity('Merge') cria-ou-mescla.
     async update(id: string, patch: Item): Promise<void> {
-      await c.updateEntity({ partitionKey: partition, rowKey: encKey(id), ...fields(patch) }, 'Merge');
+      await c.upsertEntity({ partitionKey: partition, rowKey: encKey(id), ...fields(patch) }, 'Merge');
     },
     // Incrementa um campo numérico (read-modify-write). Cria o item se não existir.
     async increment(id: string, field: string, by = 1, seed: Item = {}): Promise<number> {

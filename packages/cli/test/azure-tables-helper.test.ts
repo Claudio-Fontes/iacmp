@@ -43,6 +43,15 @@ describe('AZURE_TABLES_HELPER — resolve as 3 armadilhas do @azure/data-tables'
     expect(AZURE_TABLES_HELPER).toMatch(/function fields/);
     expect(AZURE_TABLES_HELPER).toMatch(/odata\./); // filtra campos OData
   });
+  test('update usa upsert (cria se não existe) — semântica do UpdateCommand do DynamoDB', () => {
+    // updateEntity puro do Azure falha se a entidade não existe; o helper usa
+    // upsertEntity('Merge') para o handler poder "gravar resultado" sem pré-criar.
+    const updateBody = AZURE_TABLES_HELPER.slice(AZURE_TABLES_HELPER.indexOf('async update('));
+    const updateMethod = updateBody.slice(0, updateBody.indexOf('},'));
+    expect(updateMethod).toContain("upsertEntity");
+    expect(updateMethod).not.toContain("c.updateEntity");
+  });
+
   test('expõe a API simples get/put/update/increment/del/list', () => {
     for (const m of ['async get(', 'async put(', 'async update(', 'async increment(', 'async del(', 'async list(', 'async listByPrefix(']) {
       expect(AZURE_TABLES_HELPER).toContain(m);
