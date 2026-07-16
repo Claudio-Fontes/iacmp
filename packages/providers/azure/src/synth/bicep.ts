@@ -62,6 +62,13 @@ function renderBicep(
   }
 
   for (const o of outputs) {
+    // ConnectionString/keys como output é intencional: é a amarração cross-stack
+    // (module.outputs.X no _main.bicep). O linter avisa porque outputs ficam no
+    // histórico de deployment — aceito para os projetos gerados; silenciar aqui
+    // evita o warning em todo build.
+    if (/listKeys|listConnectionStrings|primaryKey|primaryMasterKey/.test(o.value)) {
+      lines.push('#disable-next-line outputs-should-not-contain-secrets');
+    }
     lines.push(`output ${o.name} ${o.type} = ${o.value}`);
   }
 

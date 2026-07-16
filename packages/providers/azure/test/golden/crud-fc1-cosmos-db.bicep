@@ -45,4 +45,5 @@ resource itemsTableTable 'Microsoft.DocumentDB/databaseAccounts/tables@2023-04-1
 output ItemsTableEndpoint string = itemsTable.properties.documentEndpoint
 output ItemsTableName string = 'ItemsTable'
 output ItemsTableArn string = itemsTable.id
+#disable-next-line outputs-should-not-contain-secrets
 output ItemsTableConnectionString string = 'DefaultEndpointsProtocol=https;AccountName=${itemsTable.name};AccountKey=${itemsTable.listKeys().primaryMasterKey};TableEndpoint=https://${itemsTable.name}.table.cosmos.azure.com:443/;'

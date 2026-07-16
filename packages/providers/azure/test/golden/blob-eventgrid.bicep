@@ -161,4 +161,5 @@ output ProcessorFnPrincipalId string = processorFn.identity.principalId
 output ProcessorFnFqdn string = processorFn.properties.defaultHostName
 output RawDataBucketId string = rawDataBucket.id
 output RawDataBucketName string = rawDataBucket.name
+#disable-next-line outputs-should-not-contain-secrets
 output RawDataBucketConnectionString string = 'DefaultEndpointsProtocol=https;AccountName=${rawDataBucket.name};AccountKey=${rawDataBucket.listKeys().keys[0].value};EndpointSuffix=core.windows.net'
