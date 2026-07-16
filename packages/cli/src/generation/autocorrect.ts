@@ -38,6 +38,40 @@ function usesUnshimmedAwsSdk(content: string): boolean {
   return modules.some(m => !SHIMMED_AWS_SDK.includes(m));
 }
 
+// Dicas Azure POR SERVIÇO — o exemplo principal (sdkExample) é focado no
+// datastore; secret/fila/tópico precisam do equivalente Azure nativo, senão o
+// modelo insiste no @aws-sdk (client-secrets-manager/client-sqs/client-sns) e o
+// loop não converge. NUNCA misturar: no Azure é Key Vault (via env var) e Service Bus.
+function azureServiceHints(handlerFiles: GeneratedFile[]): string {
+  const blob = handlerFiles.map(f => f.content).join('\n');
+  const hints: string[] = [];
+  if (/@aws-sdk\/client-secrets-manager/.test(blob)) {
+    hints.push(
+      `SECRET (Key Vault): NUNCA leia secret via SDK no handler. O valor do Secret.Vault chega como ENV VAR — ` +
+      `no Fn.Lambda declare environment: { MEU_SECRET: ref('NomeDoSecretVault','SecretValue') } e no handler leia process.env.MEU_SECRET. ` +
+      `REMOVA @aws-sdk/client-secrets-manager (e não use @azure/keyvault-secrets).`,
+    );
+  }
+  if (/@aws-sdk\/client-sqs/.test(blob)) {
+    hints.push(
+      `FILA (Service Bus): use @azure/service-bus, NUNCA @aws-sdk/client-sqs. ` +
+      `Env: FILA_CONNECTION: ref('NomeDaFila','ConnectionString'). Handler: ` +
+      `import { ServiceBusClient } from '@azure/service-bus'; ` +
+      `const sb = new ServiceBusClient(process.env.FILA_CONNECTION!); await sb.createSender('NomeDaFila').sendMessages({ body: obj });`,
+    );
+  }
+  if (/@aws-sdk\/client-sns/.test(blob)) {
+    hints.push(
+      `TÓPICO (Service Bus topic): use @azure/service-bus (createSender do tópico), NUNCA @aws-sdk/client-sns. ` +
+      `Env: TOPIC_CONNECTION: ref('NomeDoTopico','ConnectionString').`,
+    );
+  }
+  if (/@aws-sdk\/client-s3|s3-request-presigner/.test(blob)) {
+    hints.push(`BLOB (Storage): use @azure/storage-blob (BlobServiceClient.fromConnectionString), NUNCA @aws-sdk/client-s3. Env: BLOB_CONNECTION: ref('NomeDoBucket','ConnectionString').`);
+  }
+  return hints.length ? `\n\nSERVIÇOS ESPECÍFICOS — troque cada @aws-sdk pelo equivalente Azure NATIVO:\n- ${hints.join('\n- ')}` : '';
+}
+
 /**
  * Detector programático de SDK errado nos handlers Azure. Retorna a mensagem de
  * correção (com o SDK certo pro datastore do projeto) ou null se tudo ok.
@@ -93,7 +127,7 @@ export function buildAzureSdkCorrection(files: GeneratedFile[]): string | null {
       `\`\`\`\n\n` +
       `Env vars no Fn.Lambda: COSMOS_CONNECTION: ref('ItemsTable','ConnectionString'), TABLE_NAME: ref('ItemsTable','Name'). NUNCA @aws-sdk/* nem TableClient/getEntity cru.`;
   return `ERRO AZURE: os handlers ${fileList} usam o SDK errado para o datastore deste projeto.\n\n` +
-    sdkExample + `\n\n` +
+    sdkExample + azureServiceHints(handlerFiles) + `\n\n` +
     `Retorne o JSON completo com TODOS os ${files.length} arquivo(s) da resposta anterior (corrija os handlers + as env vars dos Fn.Lambda nas stacks).`;
 }
 
