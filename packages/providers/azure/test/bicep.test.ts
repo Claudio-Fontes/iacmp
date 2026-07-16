@@ -866,3 +866,60 @@ describe('validateAzureResources — rede de segurança offline (o que az valida
     expect(() => emitBicep(s, { accountTier: 'free', allStacks: [s] })).toThrow(/Http5xx.*não existe|Validação Azure/);
   });
 });
+
+describe('estimateNameLength — resolve comprimento offline (uniqueString = 13 chars)', () => {
+  const { estimateNameLength, validateAzureResources } = require('../src') as typeof import('../src');
+  const { expr } = require('../src/synth/constructs/shared') as typeof import('../src/synth/constructs/shared');
+
+  test('literal simples → conta os chars', () => {
+    expect(estimateNameLength('flagstable')).toBe(10);
+  });
+
+  test('expr com uniqueString → substitui por 13 chars', () => {
+    // 'fn-' (3) + 13 = 16
+    expect(estimateNameLength(expr(`'fn-\${uniqueString(resourceGroup().id)}'`))).toBe(16);
+  });
+
+  test('expr com interpolação não-resolvível → null (não arrisca falso-positivo)', () => {
+    expect(estimateNameLength(expr(`'\${location}-x'`))).toBeNull();
+  });
+
+  test('expr que não é string-interpolada → null', () => {
+    expect(estimateNameLength(expr('resourceGroup().location'))).toBeNull();
+  });
+});
+
+describe('validateResourceName — comprimento máximo por tipo (name too long no deploy)', () => {
+  const { validateAzureResources } = require('../src') as typeof import('../src');
+  const { expr } = require('../src/synth/constructs/shared') as typeof import('../src/synth/constructs/shared');
+
+  const res = (type: string, name: unknown) => [{ sym: 'r', type, apiVersion: '2023-04-15', name, properties: {} }] as never;
+
+  test('Cosmos com id longo (sem slice) estoura 44 chars → erro', () => {
+    // id de 32 chars + '-' + 13 (uniqueString) = 46 > 44
+    const longId = 'featureflagsleaderboarddatastore'; // 32 chars
+    const errs = validateAzureResources(res('Microsoft.DocumentDB/databaseAccounts', expr(`'${longId}-\${uniqueString(resourceGroup().id)}'`)));
+    expect(errs.length).toBe(1);
+    expect(errs[0]).toMatch(/Cosmos DB account.*46 chars.*máx 44/);
+  });
+
+  test('Cosmos com id curto → ok', () => {
+    const errs = validateAzureResources(res('Microsoft.DocumentDB/databaseAccounts', expr(`'flags-\${uniqueString(resourceGroup().id)}'`)));
+    expect(errs).toEqual([]);
+  });
+
+  test('Storage account > 24 chars → erro', () => {
+    const errs = validateAzureResources(res('Microsoft.Storage/storageAccounts', 'a'.repeat(25)));
+    expect(errs.some(e => /Storage account.*máx 24/.test(e))).toBe(true);
+  });
+
+  test('tipo sem regra de nome → não valida', () => {
+    const errs = validateAzureResources(res('Microsoft.Web/sites', 'a'.repeat(80)));
+    expect(errs).toEqual([]);
+  });
+
+  test('nome não-estimável (interpolação dinâmica) → não acusa', () => {
+    const errs = validateAzureResources(res('Microsoft.DocumentDB/databaseAccounts', expr(`'\${someParam}'`)));
+    expect(errs).toEqual([]);
+  });
+});

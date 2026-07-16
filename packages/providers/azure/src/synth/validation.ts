@@ -1,4 +1,5 @@
 import type { BicepResource } from './constructs/shared';
+import { isExpr, rawExpr } from './constructs/shared';
 
 /**
  * Validação semântica Azure que roda em SYNTH-TIME, offline, sobre os recursos
@@ -39,6 +40,36 @@ export const AZURE_ALERT_OPERATORS: ReadonlySet<string> = new Set([
   'Equals', 'GreaterThan', 'GreaterThanOrEqual', 'LessThan', 'LessThanOrEqual',
 ]);
 
+// ── Catálogo: comprimento máximo de nome por tipo ───────────────────────────
+// Limites rígidos do ARM que o `az validate` é inconsistente em pegar (às vezes
+// só falha no deploy real com "name too long"). O risco concreto é o Cosmos
+// (Microsoft.DocumentDB): monta o nome como `${id}-${uniqueString}` SEM slice —
+// um construct.id longo estoura 44 chars. Storage/Function/APIM/Redis já cortam.
+export const AZURE_NAME_MAX: Record<string, { max: number; label: string }> = {
+  'Microsoft.Storage/storageAccounts': { max: 24, label: 'Storage account' },
+  'Microsoft.KeyVault/vaults': { max: 24, label: 'Key Vault' },
+  'Microsoft.DocumentDB/databaseAccounts': { max: 44, label: 'Cosmos DB account' },
+  'Microsoft.Cache/redis': { max: 63, label: 'Redis' },
+  'Microsoft.ApiManagement/service': { max: 50, label: 'API Management' },
+};
+
+// Resolve o comprimento de um nome de recurso em synth-time. uniqueString()
+// SEMPRE retorna 13 chars (constante do ARM), então `'x-${uniqueString(...)}'` é
+// mensurável offline. Retorna null quando o nome não é estimável com segurança
+// (outra interpolação além de uniqueString) — nesse caso não arriscamos falso-positivo.
+export function estimateNameLength(name: unknown): number | null {
+  if (typeof name !== 'string') return null;
+  let s = name;
+  if (isExpr(s)) {
+    const m = /^'(.*)'$/.exec(rawExpr(s));
+    if (!m) return null; // expressão que não é string-interpolada → não estimável
+    s = m[1];
+  }
+  s = s.replace(/\$\{uniqueString\([^}]*\)\}/g, 'x'.repeat(13));
+  if (s.includes('${')) return null; // sobrou interpolação não-resolvível
+  return s.length;
+}
+
 interface AlertCriterion {
   metricName?: string;
   metricNamespace?: string;
@@ -57,9 +88,22 @@ export function validateAzureResources(resources: BicepResource[]): string[] {
     if (r.type === 'Microsoft.Insights/metricAlerts') {
       validateMetricAlert(r, errors);
     }
+    validateResourceName(r, errors);
   }
 
   return errors;
+}
+
+function validateResourceName(r: BicepResource, errors: string[]): void {
+  const rule = AZURE_NAME_MAX[r.type];
+  if (!rule) return;
+  const len = estimateNameLength(r.name);
+  if (len !== null && len > rule.max) {
+    errors.push(
+      `${rule.label} "${r.sym}": nome resolve para ${len} chars (máx ${rule.max} no Azure). ` +
+      `uniqueString() já ocupa 13 — encurte o id do construct ou aplique slice no prefixo.`,
+    );
+  }
 }
 
 function validateMetricAlert(r: BicepResource, errors: string[]): void {
