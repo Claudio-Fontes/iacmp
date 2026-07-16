@@ -92,6 +92,46 @@ export function validateHandlerSql(cwd: string): string[] {
 }
 
 /**
+ * Dois mundos separados em SYNTH-TIME: handler com SDK da cloud errada.
+ * Um projeto gerado para AWS tem handlers @aws-sdk — deployá-lo na Azure
+ * empacota esses handlers nas Functions e falha só em RUNTIME ("Region is
+ * missing", 500 opaco). O espelho vale para @azure/* num deploy AWS.
+ * O guard de geração não cobre isso (na geração o SDK era o certo para o
+ * provider original) — aqui barra o deploy CRUZADO, em 2s, com orientação.
+ */
+export function validateHandlerCloudSdk(cwd: string, provider: string): string[] {
+  const errors: string[] = [];
+  if (provider !== 'aws' && provider !== 'azure') return errors;
+  const srcDir = path.join(cwd, 'src');
+  if (!fs.existsSync(srcDir)) return errors;
+
+  const wrongSdk = provider === 'azure' ? /@aws-sdk\// : /@azure\//;
+  const sdkLabel = provider === 'azure' ? '@aws-sdk' : '@azure';
+  const otherCloud = provider === 'azure' ? 'AWS' : 'Azure';
+
+  const files: string[] = [];
+  const walk = (dir: string) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) walk(full);
+      else if (e.name.endsWith('.ts') || e.name.endsWith('.js')) files.push(full);
+    }
+  };
+  walk(srcDir);
+
+  const offenders = files.filter(f => wrongSdk.test(fs.readFileSync(f, 'utf-8')));
+  if (offenders.length > 0) {
+    errors.push(
+      `handlers usam ${sdkLabel} (${offenders.map(f => path.relative(cwd, f)).join(', ')}) — ` +
+      `este projeto foi gerado para ${otherCloud} e os handlers são nativos de lá. ` +
+      `Dois mundos separados: para rodar em ${provider.toUpperCase()}, gere o projeto para essa cloud ` +
+      `(iacmp ai --provider ${provider}) em vez de deployar handlers da outra.`,
+    );
+  }
+  return errors;
+}
+
+/**
  * Bloqueia handler de Lambda-em-VPC que acessa Secrets Manager em runtime.
  * Cruza cada Fn.Lambda com vpcId ao seu arquivo de handler (src/<stem>.ts) e
  * detecta uso de SecretsManager/getSecretValue/@aws-sdk/client-secrets-manager.

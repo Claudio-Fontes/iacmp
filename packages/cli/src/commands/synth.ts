@@ -13,6 +13,7 @@ import { synthRoot, providerOutDir, templateExt, listTemplates, orderByDependenc
 import {
   LoadedStack,
   validateHandlerFiles,
+  validateHandlerCloudSdk,
   validateHandlerSql,
   validateHandlerVpcSecrets,
   validateHandlerDynamoNoSql,
@@ -144,6 +145,17 @@ export default class Synth extends Command {
       this.error(
         `Handler(s) de Lambda sem arquivo de origem correspondente:\n\n` +
         handlerErrors.map(e => `  • ${e}`).join('\n'),
+      );
+    }
+
+    // ── Dois mundos: handler com SDK da cloud errada ─────────────────────────
+    // Projeto gerado para AWS deployado na Azure (ou vice-versa) empacota
+    // handlers com o SDK errado e falha só em runtime. Barra em synth-time.
+    const crossSdkErrors = validateHandlerCloudSdk(cwd, provider);
+    if (crossSdkErrors.length > 0) {
+      this.error(
+        `Handler(s) com SDK da cloud errada (falharia em runtime):\n\n` +
+        crossSdkErrors.map(e => `  • ${e}`).join('\n'),
       );
     }
 
