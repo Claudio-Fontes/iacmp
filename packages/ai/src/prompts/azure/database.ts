@@ -83,6 +83,8 @@ await items.listByPrefix('dev#')             // itens cujo id começa com o pref
 
 **read-modify-write (ler → computar → gravar): use \`put(id, fields)\` SEM \`ifNotExists\`, ou \`update(id, fields)\`.** \`ifNotExists: true\` faz o write virar NO-OP quando o item já existe — se você já leu o item com \`get\` e está gravando o estado novo (ex: atualizar recorde/placar, incrementar contador), NUNCA use \`ifNotExists\`, senão só a primeira gravação persiste.
 
+**CONTADOR / acumulador (gamesPlayed, total, clicks, views): use \`await items.increment(id, 'campo')\`** — ele lê o valor atual e soma atomicamente (cria com o valor se não existir). O prompt pode dizer "ADD" ou "incremente" (linguagem DynamoDB) — no helper isso é SEMPRE \`increment()\`, NUNCA grave um valor fixo tipo \`{ gamesPlayed: 1 }\` (isso zera a contagem a cada write).
+
 Exemplo completo (CRUD + create com id gerado):
 \`\`\`typescript
 import { table } from './tables';
