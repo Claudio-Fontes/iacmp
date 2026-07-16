@@ -16,11 +16,19 @@ describe('validateHandlerCloudSdk — dois mundos em synth-time (caso main1)', (
   const write = (name: string, content: string) =>
     fs.writeFileSync(path.join(dir, 'src', name), content);
 
-  test('projeto AWS com S3 (sem shim) sintetizado para azure → erro com orientação', () => {
-    write('getUploadUrl.ts', "import { S3Client } from '@aws-sdk/client-s3';");
+  test('projeto AWS com S3 + presigner (cobertos pelo azure-s3-shim) → SEM erro', () => {
+    write('getUploadUrl.ts', [
+      "import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';",
+      "import { getSignedUrl } from '@aws-sdk/s3-request-presigner';",
+    ].join('\n'));
+    expect(validateHandlerCloudSdk(dir, 'azure')).toEqual([]);
+  });
+
+  test('projeto AWS com Secrets Manager (sem shim) sintetizado para azure → erro com orientação', () => {
+    write('getConfig.ts', "import { SecretsManagerClient } from '@aws-sdk/client-secrets-manager';");
     const errs = validateHandlerCloudSdk(dir, 'azure');
     expect(errs.length).toBe(1);
-    expect(errs[0]).toContain('getUploadUrl.ts');
+    expect(errs[0]).toContain('getConfig.ts');
     expect(errs[0]).toContain('iacmp ai --provider azure');
   });
 

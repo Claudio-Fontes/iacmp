@@ -100,9 +100,13 @@ export function validateHandlerSql(cwd: string): string[] {
  * provider original) — aqui barra o deploy CRUZADO, em 2s, com orientação.
  */
 // Pacotes @aws-sdk que o deploy Azure TRADUZ via shim no empacotamento
-// (esbuild alias → azure-dynamo-shim): projeto AWS com DynamoDB deployado na
-// Azure FUNCIONA. Fora desta lista não há shim — quebra só em runtime.
-const AZURE_SHIMMED_AWS_SDK = new Set(['@aws-sdk/client-dynamodb', '@aws-sdk/lib-dynamodb']);
+// (esbuild alias → azure-dynamo-shim / azure-s3-shim): projeto AWS com
+// DynamoDB ou S3 deployado na Azure FUNCIONA. Fora desta lista não há shim —
+// quebra só em runtime.
+const AZURE_SHIMMED_AWS_SDK = new Set([
+  '@aws-sdk/client-dynamodb', '@aws-sdk/lib-dynamodb',
+  '@aws-sdk/client-s3', '@aws-sdk/s3-request-presigner',
+]);
 
 export function validateHandlerCloudSdk(cwd: string, provider: string): string[] {
   const errors: string[] = [];
@@ -138,8 +142,8 @@ export function validateHandlerCloudSdk(cwd: string, provider: string): string[]
     errors.push(
       `handlers usam SDK sem tradução para ${provider.toUpperCase()}: ${detail}. ` +
       (provider === 'azure'
-        ? `O deploy Azure só traduz DynamoDB via shim (@aws-sdk/client-dynamodb, @aws-sdk/lib-dynamodb) — ` +
-          `os demais pacotes @aws-sdk quebram em runtime (ex: S3 presigner → "Region is missing"). `
+        ? `O deploy Azure traduz via shim apenas DynamoDB e S3 (${[...AZURE_SHIMMED_AWS_SDK].join(', ')}) — ` +
+          `os demais pacotes @aws-sdk quebram em runtime. `
         : `O deploy AWS não traduz pacotes @azure/*. `) +
       `Para este cenário em ${provider.toUpperCase()}, gere o projeto para essa cloud (iacmp ai --provider ${provider}) — ` +
       `os handlers virão com o SDK nativo de ${provider === 'azure' ? 'Azure' : 'AWS'} (projeto gerado para ${otherCloud} continua funcionando lá).`,

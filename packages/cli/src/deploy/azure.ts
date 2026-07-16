@@ -188,13 +188,17 @@ function buildFunctionBundle(
     path.resolve(__dirname, 'deploy/azure-dynamo-shim.js'),
   ];
   const shimPath = shimCandidates.find(p => fs.existsSync(p)) ?? shimCandidates[0];
-  let dataTablesNodeModulePaths: string[] = [];
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const dtPkgPath = require.resolve('@azure/data-tables/package.json') as string;
-    dataTablesNodeModulePaths = [path.resolve(path.dirname(dtPkgPath), '..', '..', 'node_modules')];
-  } catch {
-    // pacote não encontrado — esbuild vai falhar se o shim referenciar @azure/data-tables
+  const s3ShimPath = shimPath.replace('azure-dynamo-shim', 'azure-s3-shim');
+  const azureSdkNodePaths: string[] = [];
+  for (const pkg of ['@azure/data-tables', '@azure/storage-blob']) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const pkgPath = require.resolve(`${pkg}/package.json`) as string;
+      const nm = path.resolve(path.dirname(pkgPath), '..', '..', 'node_modules');
+      if (!azureSdkNodePaths.includes(nm)) azureSdkNodePaths.push(nm);
+    } catch {
+      // pacote não encontrado — esbuild vai falhar se o shim o referenciar
+    }
   }
 
   esbuild.buildSync({
@@ -208,8 +212,10 @@ function buildFunctionBundle(
     alias: {
       '@aws-sdk/client-dynamodb': shimPath,
       '@aws-sdk/lib-dynamodb': shimPath,
+      '@aws-sdk/client-s3': s3ShimPath,
+      '@aws-sdk/s3-request-presigner': s3ShimPath,
     },
-    nodePaths: dataTablesNodeModulePaths,
+    nodePaths: azureSdkNodePaths,
     banner: { js: `const __iacmp_meta_url = require('url').pathToFileURL(__filename).href;` },
     define: { 'import.meta.url': '__iacmp_meta_url' },
     logLevel: 'silent',

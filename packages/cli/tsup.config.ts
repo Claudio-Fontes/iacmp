@@ -30,7 +30,7 @@ const common = {
 export default defineConfig([
   {
     ...common,
-    entry: ['src/index.ts', 'src/help.ts', 'src/commands/**/*.ts', 'src/deploy/azure-dynamo-shim.ts'],
+    entry: ['src/index.ts', 'src/help.ts', 'src/commands/**/*.ts', 'src/deploy/azure-dynamo-shim.ts', 'src/deploy/azure-s3-shim.ts'],
     outDir: 'dist',
     clean: true,
     // @iacmp/registry foi inlinado, mas seu client.ts lê registry.json via
