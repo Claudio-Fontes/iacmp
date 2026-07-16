@@ -79,6 +79,8 @@ await items.list()                           // todos os itens da partição
 await items.listByPrefix('dev#')             // itens cujo id começa com o prefixo (chaves compostas env#nome)
 \`\`\`
 
+**A CHAVE volta SEMPRE como \`item.id\`** — em get/list/listByPrefix o objeto tem \`item.id\` = a chave que você gravou (ex: 'dev#nova_feature'), NUNCA \`item.flagKey\`/\`item.counterKey\`/\`item.slug\`. Para extrair partes de uma chave composta, use \`item.id\` (ex: \`item.id.split('#')[1]\`). NÃO invente um campo com o nome da chave — ele não existe a menos que você o tenha gravado explicitamente nos fields.
+
 Exemplo completo (CRUD + create com id gerado):
 \`\`\`typescript
 import { table } from './tables';
