@@ -66,10 +66,16 @@ export function synthesizeMonitoring(construct: BaseConstruct, ctx: SynthContext
       // Microsoft.Web/sites (FC1); Compute.Container vira Microsoft.App/containerApps.
       // As métricas de erro/latência têm nomes distintos em cada namespace.
       const isFunctionApp = alarmTarget?.type === 'Function.Lambda';
+      // Function App FC1 (Flex Consumption) expõe SÓ métricas de execução/recurso
+      // — NÃO tem Http5xx/Requests/AverageResponseTime (essas são do App Service
+      // clássico). Métricas reais: OnDemandFunctionExecutionCount, CpuPercentage,
+      // MemoryWorkingSet, InstanceCount. Erro/invocação → contagem de execução
+      // (o alarme monitora atividade da função; erro HTTP não é métrica no FC1).
       const funcMetricMap: Record<string, string> = {
-        Errors: 'Http5xx', p99: 'AverageResponseTime', Latency: 'AverageResponseTime',
-        RequestDuration: 'AverageResponseTime', Invocations: 'FunctionExecutionCount',
-        Count: 'Requests', ThrottledRequests: 'Http429',
+        Errors: 'OnDemandFunctionExecutionCount', Invocations: 'OnDemandFunctionExecutionCount',
+        Count: 'OnDemandFunctionExecutionCount', ThrottledRequests: 'OnDemandFunctionExecutionCount',
+        Duration: 'CpuPercentage', p99: 'CpuPercentage', Latency: 'CpuPercentage', RequestDuration: 'CpuPercentage',
+        ConcurrentExecutions: 'InstanceCount',
       };
       const containerMetricMap: Record<string, string> = {
         Errors: 'Requests', p99: 'Requests', Latency: 'Requests',
@@ -102,8 +108,12 @@ export function synthesizeMonitoring(construct: BaseConstruct, ctx: SynthContext
       const alarmCriteriaType = 'Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria';
       const rawMetricName = props.metricName as string;
       const metricNameMap = isFunctionApp ? funcMetricMap : containerMetricMap;
-      const azureMetricName = metricNameMap[rawMetricName] ?? (isFunctionApp ? 'Http5xx' : 'Requests');
-      resources.push({ sym, type: 'Microsoft.Insights/metricAlerts', apiVersion: '2018-03-01', name: construct.id, location: "'global'", condition: alarmCondition, tags: tag(construct.id), properties: { description: `Alarm for ${props.metricName}`, severity: 2, enabled: true, scopes: alarmScopes, evaluationFrequency: evalFreq, windowSize: windowSizeVal, criteria: { 'odata.type': alarmCriteriaType, allOf: [{ name: 'criterion1', criterionType: 'StaticThresholdCriterion', metricName: azureMetricName, metricNamespace: alarmMetricNamespace, operator: operatorMap[(props.comparisonOperator as string) ?? 'GreaterThanThreshold'] ?? 'GreaterThan', threshold: props.threshold as number, timeAggregation: (props.statistic as string) ?? 'Average', dimensions: [] }] }, actions: alarmActionList } });
+      const azureMetricName = metricNameMap[rawMetricName] ?? (isFunctionApp ? 'OnDemandFunctionExecutionCount' : 'Requests');
+      // timeAggregation do Azure aceita SÓ [Average, Minimum, Maximum, Total, Count].
+      // O 'Sum' do prompt (convenção CloudWatch/AWS) vira 'Total'.
+      const aggMap: Record<string, string> = { Sum: 'Total', Average: 'Average', Minimum: 'Minimum', Maximum: 'Maximum', Count: 'Count', SampleCount: 'Count' };
+      const timeAgg = aggMap[(props.statistic as string) ?? 'Average'] ?? 'Average';
+      resources.push({ sym, type: 'Microsoft.Insights/metricAlerts', apiVersion: '2018-03-01', name: construct.id, location: "'global'", condition: alarmCondition, tags: tag(construct.id), properties: { description: `Alarm for ${props.metricName}`, severity: 2, enabled: true, scopes: alarmScopes, evaluationFrequency: evalFreq, windowSize: windowSizeVal, criteria: { 'odata.type': alarmCriteriaType, allOf: [{ name: 'criterion1', criterionType: 'StaticThresholdCriterion', metricName: azureMetricName, metricNamespace: alarmMetricNamespace, operator: operatorMap[(props.comparisonOperator as string) ?? 'GreaterThanThreshold'] ?? 'GreaterThan', threshold: props.threshold as number, timeAggregation: timeAgg, dimensions: [] }] }, actions: alarmActionList } });
       break;
     }
 

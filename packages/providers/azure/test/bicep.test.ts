@@ -791,9 +791,10 @@ describe('Monitoring.Alarm — alvo Function App FC1 cross-stack (gap 18)', () =
     } as never);
     const all = [computeStack, monStack];
     const mon = emitBicep(monStack, { accountTier: 'free', allStacks: all });
-    // namespace e métrica de Function App (não Container Apps / Requests)
+    // namespace e métrica REAIS do Function App FC1 (não Container Apps / Requests,
+    // e não Http5xx — que não existe no FC1)
     expect(mon).toContain("metricNamespace: 'Microsoft.Web/sites'");
-    expect(mon).toContain("metricName: 'Http5xx'");
+    expect(mon).toContain("metricName: 'OnDemandFunctionExecutionCount'");
     // scope via param cross-stack, não o placeholder vazio
     expect(mon).toContain('param CheckerFnId string');
     expect(mon).toContain('CheckerFnId');
