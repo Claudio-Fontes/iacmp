@@ -43,17 +43,19 @@ describe('buildAzureTablesHelperCorrection — força handlers a usarem ./tables
   });
 });
 
-describe('buildAzureSdkCorrection — shim de DynamoDB SDK no Azure', () => {
-  test('handler com @aws-sdk/client-dynamodb + lib-dynamodb num projeto DynamoDB → NÃO corrige (shim cobre)', () => {
+describe('buildAzureSdkCorrection — dois mundos separados (ZERO @aws-sdk no Azure)', () => {
+  test('handler com @aws-sdk/client-dynamodb + lib-dynamodb → CORRIGE (dois mundos: usa ./tables, não shim)', () => {
     const files = [
       dynamoStack,
       { path: 'src/createItem.ts', content: `import { DynamoDBClient } from '@aws-sdk/client-dynamodb';\nimport { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';` },
     ];
-    // deploy-validado TESTE12: esses handlers rodam no Azure via azure-dynamo-shim
-    expect(buildAzureSdkCorrection(files)).toBeNull();
+    // regra do usuário: Azure é Azure, nenhum @aws-sdk — o caminho é o helper ./tables
+    const msg = buildAzureSdkCorrection(files);
+    expect(msg).not.toBeNull();
+    expect(msg).toContain('src/createItem.ts');
   });
 
-  test('handler com @aws-sdk/client-s3 (não-shimmado) → corrige', () => {
+  test('handler com @aws-sdk/client-s3 → corrige', () => {
     const files = [
       dynamoStack,
       { path: 'src/upload.ts', content: `import { S3Client } from '@aws-sdk/client-s3';` },
@@ -68,9 +70,17 @@ describe('buildAzureSdkCorrection — shim de DynamoDB SDK no Azure', () => {
       sqlStack,
       { path: 'src/list.ts', content: `import { DynamoDBClient } from '@aws-sdk/client-dynamodb';` },
     ];
-    // num projeto SQL o SDK certo é pg — o dynamo SDK é shimmado p/ Tables, errado aqui
     const msg = buildAzureSdkCorrection(files);
     expect(msg).not.toBeNull();
+  });
+
+  test('handler com @aws-sdk/client-dynamodb SEM Database.DynamoDB (tabela fantasma) → corrige', () => {
+    // caso sc3az (sqs-worker): o modelo gravava em DynamoDB sem declarar a tabela
+    const files = [
+      { path: 'stacks/messaging/q.ts', content: `new Messaging.Queue(stack, 'TaskQueue', {})` },
+      { path: 'src/proc.ts', content: `import { DynamoDBClient } from '@aws-sdk/client-dynamodb';` },
+    ];
+    expect(buildAzureSdkCorrection(files)).not.toBeNull();
   });
 
   test('handler 100% Azure SDK → não corrige', () => {

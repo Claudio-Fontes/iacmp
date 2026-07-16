@@ -23,19 +23,13 @@ export const REVIEW_PROMPT = (fileCount: number): string =>
   `8. DYNAMODB UPDATE — ExpressionAttributeNames OBRIGATÓRIO: o handler de update usa o padrão \`#f0 = :v0\` (com ExpressionAttributeNames mapeando os alias)? Se usar \`SET fieldName = :fieldName\` direto (sem alias #), CORRIJA — \`item\`, \`name\`, \`value\`, \`status\` e outros são palavras reservadas e quebram em runtime.\n\n` +
   `Se encontrar QUALQUER defeito, retorne o JSON COMPLETO CORRIGIDO com os ${fileCount} arquivo(s) (todos, não só os corrigidos). Se estiver tudo perfeito, retorne exatamente o mesmo JSON. Responda APENAS com o JSON, sem texto antes ou depois.`;
 
-// SDKs AWS interceptados pelo shim no deploy Azure (deploy/azure.ts esbuild alias
-// → azure-dynamo-shim.ts, que redireciona para @azure/data-tables). Handlers que
-// usam SÓ esses módulos FUNCIONAM no Azure sem reescrita — validado em TESTE12
-// (CRUD completo com DynamoDBDocumentClient rodando sobre Azure Tables). NÃO os
-// trate como "SDK errado": rejeitá-los força re-prompt inútil e oscilação (p11/p17).
-const SHIMMED_AWS_SDK = ['@aws-sdk/client-dynamodb', '@aws-sdk/lib-dynamodb'];
-
-// True se o handler importa algum @aws-sdk/* que NÃO é coberto pelo shim (ex:
-// client-s3, client-sqs, client-sns, client-kinesis, s3-request-presigner) —
-// esses não rodam no Azure e precisam do SDK Azure nativo.
-function usesUnshimmedAwsSdk(content: string): boolean {
-  const modules = [...content.matchAll(/@aws-sdk\/[\w-]+/g)].map(m => m[0]);
-  return modules.some(m => !SHIMMED_AWS_SDK.includes(m));
+// DOIS MUNDOS SEPARADOS (regra do usuário): no Azure, NENHUM @aws-sdk é aceito.
+// O shim (azure-dynamo-shim) foi a decisão ANTIGA — hoje o caminho é o helper
+// nativo src/tables.ts (@azure/data-tables). Qualquer @aws-sdk num handler Azure
+// é erro e deve virar o SDK Azure nativo (DynamoDB→./tables, S3→storage-blob,
+// SQS→service-bus, secret→env var).
+function usesAwsSdk(content: string): boolean {
+  return /@aws-sdk\//.test(content);
 }
 
 // Dicas Azure POR SERVIÇO — o exemplo principal (sdkExample) é focado no
@@ -85,14 +79,9 @@ export function buildAzureSdkCorrection(files: GeneratedFile[]): string | null {
   const sqlOnly = stacksBlob.includes('Database.SQL') && !hasDynamo;
   const blobOnly = stacksBlob.includes('Storage.Bucket') && !hasDynamo && !stacksBlob.includes('Database.SQL');
   const handlerFiles = files.filter(f => (f.path.startsWith('src/') || f.path.endsWith('.ts')) && !f.path.startsWith('stacks/'));
-  const awsSdkFiles = handlerFiles.filter(f => {
-    if (usesUnshimmedAwsSdk(f.content)) return true; // S3/SQS/SNS/Kinesis → sem shim, sempre errado no Azure
-    // Só o par shimmado (client/lib-dynamodb): OK apenas se o datastore É DynamoDB.
-    // Num projeto SQL/blob o shim redirecionaria para Azure Tables (Cosmos), não
-    // para o Postgres/Blob — então continua sendo o SDK errado.
-    if (f.content.includes('@aws-sdk/')) return !hasDynamo;
-    return false;
-  });
+  // Dois mundos separados: QUALQUER @aws-sdk num handler Azure é erro (inclui
+  // client/lib-dynamodb — o caminho é o helper ./tables, não o shim).
+  const awsSdkFiles = handlerFiles.filter(f => usesAwsSdk(f.content));
   // data-tables/cosmos só é correto com Database.DynamoDB — em SQL (→pg) ou
   // blob (→storage-blob) é o SDK errado.
   const wrongTableFiles = (sqlOnly || blobOnly)
