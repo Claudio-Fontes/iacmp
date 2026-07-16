@@ -122,22 +122,31 @@ export function orderByDependency(templates: TemplateRef[]): TemplateRef[] {
   const exportsByPath = new Map<string, Set<string>>();
   const importsByPath = new Map<string, Set<string>>();
 
+  // Imports "soft" (params Azure COM default) — carregam dado obrigatório
+  // (ConnectionString/Name/SecretValue) que o deploy injeta com o output
+  // homônimo; NÃO há 2º passo para env var de Function App, então a ORDEM
+  // importa (senão a env fica vazia). Viram aresta de ordenação, mas se
+  // criarem ciclo são descartadas (fallback), diferente dos hard (que falham).
+  const softImportsByPath = new Map<string, Set<string>>();
+
   for (const t of templates) {
     const exportNames = new Set<string>();
     const importNames = new Set<string>();
+    const softImportNames = new Set<string>();
     if (t.filePath.endsWith('.bicep')) {
-      // Azure: cross-stack = `param X <tipo>` SEM default (o deploy injeta com o
-      // output homônimo de outra stack). `output X ...` é o lado exportador.
-      // Mesma semântica do Export/ImportValue do CFN, dialeto Bicep.
+      // Azure: cross-stack = `param X <tipo>` (o deploy injeta com o output
+      // homônimo de outra stack). `output X ...` é o lado exportador.
       try {
         const content = fs.readFileSync(t.filePath, 'utf-8');
         for (const line of content.split('\n')) {
-          // Apenas params SEM default são dependências hard — obrigam a stack
-          // exportadora a ser deployada primeiro. Params com default (ex: = '')
-          // são "soft": o deploy injeta no 2º passo sem criar ciclo de dependência.
-          // Regex: param NAME TYPE  (sem nada depois do tipo = sem default)
-          const param = line.match(/^param\s+(\w+)\s+\w+\s*$/);
-          if (param) importNames.add(param[1]);
+          // param SEM default = dependência HARD (falha o deploy se faltar).
+          const hardParam = line.match(/^param\s+(\w+)\s+\w+\s*$/);
+          if (hardParam) importNames.add(hardParam[1]);
+          // param COM default (ex: = '') = dependência SOFT de ORDEM.
+          else {
+            const softParam = line.match(/^param\s+(\w+)\s+\w+\s*=/);
+            if (softParam) softImportNames.add(softParam[1]);
+          }
           const output = line.match(/^output\s+(\w+)\s/);
           if (output) exportNames.add(output[1]);
         }
@@ -158,8 +167,64 @@ export function orderByDependency(templates: TemplateRef[]): TemplateRef[] {
     }
     exportsByPath.set(t.filePath, exportNames);
     importsByPath.set(t.filePath, importNames);
+    softImportsByPath.set(t.filePath, softImportNames);
   }
 
+  // 1ª tentativa: ordena com hard + soft edges (a ordem correta inclui a soft).
+  const withSoft = topoSort(templates, exportsByPath, importsByPath, softImportsByPath);
+  if (withSoft) return withSoft;
+  // Ciclo por causa de soft edges → descarta as soft e ordena só com as hard
+  // (comportamento antigo: soft vira "melhor esforço", não bloqueia).
+  const hardOnly = topoSort(templates, exportsByPath, importsByPath, new Map());
+  if (hardOnly) return hardOnly;
+  // Ciclo mesmo só com hard → erro real (mensagem abaixo).
+  return orderByDependencyStrict(templates, exportsByPath, importsByPath);
+}
+
+// Kahn's sobre hard+soft edges. Retorna a ordem, ou null se houver ciclo.
+function topoSort(
+  templates: TemplateRef[],
+  exportsByPath: Map<string, Set<string>>,
+  importsByPath: Map<string, Set<string>>,
+  softImportsByPath: Map<string, Set<string>>,
+): TemplateRef[] | null {
+  const indegree = new Map<string, number>(templates.map(t => [t.filePath, 0]));
+  const edges = new Map<string, string[]>(templates.map(t => [t.filePath, []]));
+  for (const importer of templates) {
+    const needed = new Set<string>([
+      ...(importsByPath.get(importer.filePath) ?? []),
+      ...(softImportsByPath.get(importer.filePath) ?? []),
+    ]);
+    if (needed.size === 0) continue;
+    for (const exporter of templates) {
+      if (exporter.filePath === importer.filePath) continue;
+      const provided = exportsByPath.get(exporter.filePath)!;
+      if ([...needed].some(name => provided.has(name))) {
+        edges.get(exporter.filePath)!.push(importer.filePath);
+        indegree.set(importer.filePath, (indegree.get(importer.filePath) ?? 0) + 1);
+      }
+    }
+  }
+  const byPath = new Map(templates.map(t => [t.filePath, t]));
+  const queue = templates.filter(t => indegree.get(t.filePath) === 0);
+  const ordered: TemplateRef[] = [];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    ordered.push(current);
+    for (const nextPath of edges.get(current.filePath) ?? []) {
+      indegree.set(nextPath, indegree.get(nextPath)! - 1);
+      if (indegree.get(nextPath) === 0) queue.push(byPath.get(nextPath)!);
+    }
+  }
+  return ordered.length === templates.length ? ordered : null;
+}
+
+// Versão estrita (só hard) que LANÇA em ciclo — preserva a mensagem de erro rica.
+function orderByDependencyStrict(
+  templates: TemplateRef[],
+  exportsByPath: Map<string, Set<string>>,
+  importsByPath: Map<string, Set<string>>,
+): TemplateRef[] {
   // Kahn's algorithm: aresta exportador → importador (exportador deploya primeiro).
   const indegree = new Map<string, number>(templates.map(t => [t.filePath, 0]));
   const edges = new Map<string, string[]>(templates.map(t => [t.filePath, []]));

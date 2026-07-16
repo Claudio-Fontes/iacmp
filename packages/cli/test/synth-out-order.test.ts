@@ -40,6 +40,17 @@ describe('orderByDependency', () => {
     expect(orderByDependency([a, b]).map(t => t.fileName)).toEqual(['a.json', 'b.json']);
   });
 
+  test('Azure: database (exporta) vem antes do compute que importa via param COM default (bug do 19)', () => {
+    // compute listado ANTES; consome FlagsTableConnectionString com default vazio
+    // (soft). Sem ordenar, o compute deploya 1º e a env fica vazia → 500.
+    const compute = writeBicep('compute.bicep',
+      "param FlagsTableConnectionString string = ''\nparam FlagsTableName string = ''\nresource f 'X' = {}");
+    const database = writeBicep('database.bicep',
+      "resource t 'Y' = {}\noutput FlagsTableConnectionString string = 'x'\noutput FlagsTableName string = 'FlagsTable'");
+    const ordered = orderByDependency([compute, database]);
+    expect(ordered.map(t => t.fileName)).toEqual(['database.bicep', 'compute.bicep']);
+  });
+
   test('template terraform (.tf.json) sem Outputs CFN não quebra — sem dependências conhecidas', () => {
     const tfPath = path.join(dir, 'main.tf.json');
     fs.writeFileSync(tfPath, JSON.stringify({ resource: { aws_s3_bucket: { x: {} } } }));
