@@ -602,12 +602,16 @@ function autoInitProject() {
   const created = [];
 
   if (!hasConfig) {
+    // Chaves _drRegion/_azureDrRegion = DR "comentado" (JSON não tem comentário):
+    // a ferramenta ignora chaves com _; renomear (tirar o _) ativa o recurso.
     fs.writeFileSync(iacmpConfig, JSON.stringify({
       name: projectName,
       provider: iacProvider,
       region: 'us-east-1',
+      _drRegion: 'us-west-2 (DR na AWS — renomeie para drRegion para ativar)',
       resourceGroup: `${projectName}-rg`,
       azureRegion: 'eastus2',
+      _azureDrRegion: 'centralus (DR na Azure — renomeie para azureDrRegion; RA-GRS usa o par fixo da região)',
     }, null, 2) + '\n', 'utf-8');
     created.push('iacmp.json');
   }
