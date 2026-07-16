@@ -68,4 +68,6 @@ export async function handler(event: any) {
   return { statusCode: 200, body: '' };
 }
 \`\`\`
+
+**REGRA — DR (disaster recovery) de Storage no Azure:** quando o usuário pedir bucket de DR/failover regional, use \`replication: 'geo'\` no Storage.Bucket — vira RA-GRS: a PLATAFORMA replica para a região pareada (par fixo do Azure, não configurável) e expõe um endpoint secundário somente-leitura (output \`ref('MeuBucket','SecondaryEndpoint')\`). NÃO crie um segundo Storage.Bucket manual para DR — na Azure a replicação geo é nativa da conta. Adicione em warnings que o failover de leitura usa o endpoint \`-secondary\` e que a região do par é definida pelo Azure (não pelo azureDrRegion).
 `;

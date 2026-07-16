@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';
 import chalk from 'chalk';
-import { listTemplates, countResources, orderByDependency, providerOutDir, AZURE_MAIN_FILE, AZURE_MAIN_STACK } from '../synth-out';
+import { listTemplates, countResources, orderByDependency, providerOutDir, awsTemplateRegionMarker, AZURE_MAIN_FILE, AZURE_MAIN_STACK } from '../synth-out';
 import { errMessage, loadIacmpConfig, resolveProvider, IacmpConfig } from '../utils';
 import { commandExists } from './doctor';
 import { getExecutor, printPlan, runCommands, listApimServices, purgeApimSoftDeleted, DestroyContext } from '../deploy';
@@ -200,9 +200,19 @@ export default class Destroy extends Command {
     }
 
     for (const t of templates) {
+      // Stack AWS marcada com region: 'dr' vive na drRegion do iacmp.json.
+      let stackRegion = region;
+      if (provider === 'aws' && awsTemplateRegionMarker(t.filePath) === 'dr') {
+        if (!config.drRegion) {
+          this.error(`Stack "${t.stackName}" está marcada para a região de DR, mas o iacmp.json não tem "drRegion".`);
+        }
+        stackRegion = config.drRegion;
+      }
+      const stackCtx = { ...baseCtx, region: stackRegion };
+
       // Em modo real (não dry-run), pular stacks que não estão deployadas para evitar erro "not found"
       if (!dryRun && executor.describeStatus) {
-        const status = executor.describeStatus(physicalStackName(t.stackName), baseCtx);
+        const status = executor.describeStatus(physicalStackName(t.stackName), stackCtx);
         if (!status.deployed) {
           this.log(`Stack: ${t.stackName} ${chalk.yellow('(não deployada — ignorada)')}`);
           this.log('');
@@ -210,8 +220,8 @@ export default class Destroy extends Command {
         }
       }
 
-      this.log(`Stack: ${t.stackName}`);
-      const ctx: DestroyContext = { ...baseCtx, stackName: physicalStackName(t.stackName) };
+      this.log(`Stack: ${t.stackName}${stackRegion !== region ? ` [DR: ${stackRegion}]` : ''}`);
+      const ctx: DestroyContext = { ...stackCtx, stackName: physicalStackName(t.stackName) };
 
       let commands;
       try {

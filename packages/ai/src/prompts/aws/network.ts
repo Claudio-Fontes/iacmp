@@ -47,5 +47,26 @@ export default stack;
 \`\`\`
 NUNCA separe Storage.Bucket e Network.CDN em arquivos/stacks diferentes quando usar bucketRef — o synth vai falhar com "Ref/Fn::GetAtt para recurso inexistente".
 
+**REGRA — DR (disaster recovery) com CloudFront Origin Group:** quando o usuário pedir failover para uma região de DR:
+1. O iacmp.json PRECISA ter \`"drRegion"\` (ex: "us-west-2"). O bucket de DR vive numa stack SEPARADA marcada com \`new Stack('nome-dr', { region: 'dr' })\` — o deploy manda essa stack para a drRegion automaticamente.
+2. O bucket de DR precisa de \`bucketName\` explícito e determinístico (S3 é global — use sufixo \\\${AWS::AccountId}) e \`publicAccess: true\` (a origem cross-região não usa OAC).
+3. No Network.CDN, a origem de DR usa \`bucketName\` + \`region: 'dr'\` (NÃO bucketRef — não existe referência cross-região), e \`failover\` liga as duas origens:
+\`\`\`typescript
+// stacks/storage/site-dr-stack.ts — stack de DR (deployada na drRegion)
+const drStack = new Stack('site-dr', { region: 'dr' });
+new Storage.Bucket(drStack, 'SiteBucketDr', { bucketName: 'meuapp-site-dr-\${AWS::AccountId}', publicAccess: true });
+
+// stacks/network/site-stack.ts — bucket primário + CDN com failover
+new Storage.Bucket(stack, 'SiteBucket', {});
+new Network.CDN(stack, 'SiteCDN', {
+  origins: [
+    { id: 'primary', domainName: '', bucketRef: 'SiteBucket' },
+    { id: 'dr', domainName: '', bucketName: 'meuapp-site-dr-\${AWS::AccountId}', region: 'dr' },
+  ],
+  failover: { primary: 'primary', secondary: 'dr' },  // 403/404/5xx/timeout → DR na mesma request
+});
+\`\`\`
+Adicione em nextSteps que o conteúdo precisa ser publicado NOS DOIS buckets (aws s3 sync para cada um, com --region na cópia de DR).
+
 **REGRA — Database.SQL defaults:** NÃO escreva \`backupRetentionDays\` nem \`storageEncrypted\` — o synth DERIVA esses valores do Account Tier do projeto automaticamente (free → 0/false, standard → 7/true). Só inclua essas props se o usuário pedir um valor específico que sobrescreva o default. Para RDS use \`engine: 'postgres'\` e \`instanceType: 'db.t3.micro'\`; NÃO use \`instances\` (é exclusivo de clusters Aurora).
 `;

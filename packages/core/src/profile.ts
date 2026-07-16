@@ -10,6 +10,8 @@ export type AccountTier = 'free' | 'standard';
 export interface EnvironmentProfile {
   accountTier: AccountTier;
   region?: string;
+  /** Região de DR (AWS) — resolve stacks region:'dr' e origens cross-região do CDN. */
+  drRegion?: string;
   /** AZs explícitas da região, quando o usuário quer fixá-las. */
   availabilityZones?: string[];
 }

@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';
 import chalk from 'chalk';
-import { listTemplates, countResources, orderByDependency, providerOutDir, AZURE_MAIN_FILE, AZURE_MAIN_STACK } from '../synth-out';
+import { listTemplates, countResources, orderByDependency, providerOutDir, awsTemplateRegionMarker, AZURE_MAIN_FILE, AZURE_MAIN_STACK } from '../synth-out';
 import { errMessage, loadIacmpConfig, resolveProvider, IacmpConfig } from '../utils';
 import { commandExists } from './doctor';
 import { getExecutor, printPlan, runCommands, formatCommand, resourceGroupExists, getAzureStackOutputs, findExistingRetainedResources, deleteResourceAndWait, DeployContext } from '../deploy';
@@ -249,7 +249,19 @@ export default class Deploy extends Command {
 
     for (const t of templates) {
       const resourceCount = countResources(t.filePath, provider);
-      this.log(`Stack: ${t.stackName} — ${resourceCount} recurso(s)`);
+
+      // Stack AWS marcada com region: 'dr' deploya na drRegion do iacmp.json
+      // (ex: bucket de DR do CloudFront Origin Group em outra região).
+      let stackRegion = region;
+      if (provider === 'aws' && awsTemplateRegionMarker(t.filePath) === 'dr') {
+        if (!config.drRegion) {
+          this.error(`Stack "${t.stackName}" está marcada para a região de DR, mas o iacmp.json não tem "drRegion". Configure (ex: "drRegion": "us-west-2").`);
+        }
+        stackRegion = config.drRegion;
+        this.log(`Stack: ${t.stackName} — ${resourceCount} recurso(s) [DR: ${stackRegion}]`);
+      } else {
+        this.log(`Stack: ${t.stackName} — ${resourceCount} recurso(s)`);
+      }
 
       // Recursos com DeletionPolicy Retain/Snapshot (bancos de dados, etc.)
       // sobrevivem à destruição da stack — uma stack anterior destruída pode
@@ -259,7 +271,7 @@ export default class Deploy extends Command {
       // conflito depois de tentar criar o changeset, com um erro confuso
       // (ResourceExistenceCheck).
       if (provider === 'aws' && !dryRun) {
-        const conflicts = findExistingRetainedResources(t.filePath, region, physicalStackName(t.stackName));
+        const conflicts = findExistingRetainedResources(t.filePath, stackRegion, physicalStackName(t.stackName));
         if (conflicts.length > 0) {
           const list = conflicts.map((c) => `${c.typeName} "${c.identifier}"`).join(', ');
           this.log(chalk.red(
@@ -287,13 +299,14 @@ export default class Deploy extends Command {
             continue;
           }
           for (const c of conflicts) {
-            await deleteResourceAndWait(c.typeName, c.identifier, region);
+            await deleteResourceAndWait(c.typeName, c.identifier, stackRegion);
           }
         }
       }
 
       const ctx: DeployContext = {
         ...baseCtx,
+        region: stackRegion,
         stackName: physicalStackName(t.stackName),
         templatePath: t.filePath,
         ...(provider === 'azure' && Object.keys(azureOutputAccumulator).length > 0

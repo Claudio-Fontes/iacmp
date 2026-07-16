@@ -1072,3 +1072,69 @@ describe('AWSProvider', () => {
     expect(tpl.Resources.PRole.Properties.Policies[0].PolicyDocument.Statement[0].Resource).toEqual([{ 'Fn::GetAtt': ['TaskQueue', 'Arn'] }]);
   });
 });
+
+describe('DR — CloudFront Origin Group + stack em região de DR', () => {
+  const provider = new AWSProvider();
+
+  function drScenario() {
+    const drStack = new Stack('site-dr', { region: 'dr' });
+    new Storage.Bucket(drStack, 'SiteBucketDr', { bucketName: 'app-site-dr-${AWS::AccountId}', publicAccess: true });
+    const stack = new Stack('site');
+    new Storage.Bucket(stack, 'SiteBucket', {});
+    new Network.CDN(stack, 'SiteCDN', {
+      origins: [
+        { id: 'primary', domainName: '', bucketRef: 'SiteBucket' },
+        { id: 'dr', domainName: '', bucketName: 'app-site-dr-${AWS::AccountId}', region: 'dr' },
+      ],
+      failover: { primary: 'primary', secondary: 'dr' },
+    });
+    return { stack, drStack };
+  }
+
+  const profile = { accountTier: 'free' as const, region: 'us-east-1', drRegion: 'us-west-2' };
+
+  test('failover emite OriginGroups e o cache behavior aponta pro grupo', () => {
+    const { stack, drStack } = drScenario();
+    const tpl = provider.synthesize(stack, [stack, drStack], profile) as any;
+    const cfg = tpl.Resources.SiteCDN.Properties.DistributionConfig;
+    expect(cfg.OriginGroups.Quantity).toBe(1);
+    const group = cfg.OriginGroups.Items[0];
+    expect(group.Members.Items).toEqual([{ OriginId: 'primary' }, { OriginId: 'dr' }]);
+    expect(group.FailoverCriteria.StatusCodes.Items).toContain(502);
+    expect(cfg.DefaultCacheBehavior.TargetOriginId).toBe('SiteCDN-failover');
+  });
+
+  test('origem de DR resolve o domínio determinístico com a drRegion', () => {
+    const { stack, drStack } = drScenario();
+    const tpl = provider.synthesize(stack, [stack, drStack], profile) as any;
+    const origins = tpl.Resources.SiteCDN.Properties.DistributionConfig.Origins;
+    const dr = origins.find((o: any) => o.Id === 'dr');
+    expect(dr.DomainName).toEqual({ 'Fn::Sub': 'app-site-dr-${AWS::AccountId}.s3.us-west-2.amazonaws.com' });
+    expect(dr.CustomOriginConfig.OriginProtocolPolicy).toBe('https-only');
+  });
+
+  test('stack region:dr recebe Metadata.Iacmp.region e bucket público com nome via Sub', () => {
+    const { stack, drStack } = drScenario();
+    const tpl = provider.synthesize(drStack, [stack, drStack], profile) as any;
+    expect(tpl.Metadata.Iacmp.region).toBe('dr');
+    const bucket = tpl.Resources.SiteBucketDr;
+    expect(bucket.Properties.BucketName).toEqual({ 'Fn::Sub': 'app-site-dr-${AWS::AccountId}' });
+    expect(bucket.Properties.PublicAccessBlockConfiguration.BlockPublicPolicy).toBe(false);
+    expect(tpl.Resources.SiteBucketDrPolicy.Properties.PolicyDocument.Statement[0].Action).toBe('s3:GetObject');
+  });
+
+  test('stack region:dr SEM drRegion no config → erro orientando', () => {
+    const { drStack, stack } = drScenario();
+    expect(() => provider.synthesize(drStack, [stack, drStack], { accountTier: 'free' })).toThrow(/drRegion/);
+  });
+
+  test('failover apontando para origem inexistente → erro claro', () => {
+    const stack = new Stack('site');
+    new Storage.Bucket(stack, 'B', {});
+    new Network.CDN(stack, 'CDN', {
+      origins: [{ id: 'only', domainName: '', bucketRef: 'B' }],
+      failover: { primary: 'only', secondary: 'ghost' },
+    });
+    expect(() => provider.synthesize(stack, [stack], profile)).toThrow(/failover\.secondary/);
+  });
+});

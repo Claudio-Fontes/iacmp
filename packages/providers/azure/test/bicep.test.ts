@@ -923,3 +923,21 @@ describe('validateResourceName — comprimento máximo por tipo (name too long n
     expect(errs).toEqual([]);
   });
 });
+
+describe('Storage.Bucket replication geo — RA-GRS (bucket de DR idiomático)', () => {
+  test("replication: 'geo' → sku Standard_RAGRS + output SecondaryEndpoint", () => {
+    const s = new Stack('st');
+    (s as any).addConstruct({ id: 'SiteBucket', type: 'Storage.Bucket', props: { replication: 'geo' } });
+    const bicep = emitBicep(s, { accountTier: 'free', allStacks: [s] });
+    expect(bicep).toContain("name: 'Standard_RAGRS'");
+    expect(bicep).toMatch(/output SiteBucketSecondaryEndpoint string = siteBucket\.properties\.secondaryEndpoints\.blob/);
+  });
+
+  test('sem replication → Standard_LRS e sem endpoint secundário', () => {
+    const s = new Stack('st');
+    (s as any).addConstruct({ id: 'SiteBucket', type: 'Storage.Bucket', props: {} });
+    const bicep = emitBicep(s, { accountTier: 'free', allStacks: [s] });
+    expect(bicep).toContain("name: 'Standard_LRS'");
+    expect(bicep).not.toContain('SecondaryEndpoint');
+  });
+});

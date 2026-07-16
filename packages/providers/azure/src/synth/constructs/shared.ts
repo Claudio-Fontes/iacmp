@@ -71,7 +71,7 @@ export const AZURE_ATTR_MAP: Record<string, Record<string, string>> = {
   'Network.VPC':           { VpcId: 'id' },
   'Network.Subnet':        { SubnetId: 'id' },
   'Network.SecurityGroup': { GroupId: 'id' },
-  'Storage.Bucket':        { Arn: 'id', Name: 'name', ConnectionString: '__blob_connection_string__' },
+  'Storage.Bucket':        { Arn: 'id', Name: 'name', ConnectionString: '__blob_connection_string__', SecondaryEndpoint: 'properties.secondaryEndpoints.blob' },
   'Function.Lambda':       { Arn: 'id', Fqdn: 'properties.defaultHostName' },
   'Database.SQL':          { Endpoint: 'properties.fullyQualifiedDomainName', SecretArn: 'id', Password: 'id', Username: 'id' },
   'Database.DocumentDB':   { Endpoint: 'properties.documentEndpoint', SecretArn: 'id', ConnectionString: '__mongo_connection_string__' },

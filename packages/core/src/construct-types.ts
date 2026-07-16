@@ -447,7 +447,7 @@ export const CONSTRUCT_TYPES: Record<ConstructType, ConstructTypeInfo> = {
         gcp: 'Cloud Storage',
       },
     },
-    attributes: ['Arn', 'Name', 'ConnectionString'],
+    attributes: ['Arn', 'Name', 'ConnectionString', 'SecondaryEndpoint'],
   },
   'Storage.FileSystem': {
     layer: 'storage',

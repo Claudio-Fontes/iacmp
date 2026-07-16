@@ -353,6 +353,21 @@ export function synthNetwork(
         throw new Error(`Network.CDN "${construct.id}" requer pelo menos uma entrada em origins.`);
       }
 
+      // Failover nativo do CloudFront (Origin Group): primária falha com
+      // 403/404/5xx/timeout → a MESMA request é atendida pela secundária (DR).
+      const failover = props.failover as { primary?: string; secondary?: string; statusCodes?: number[] } | undefined;
+      const failoverGroupId = `${construct.id}-failover`;
+      if (failover) {
+        const originIds = new Set(origins.map(o => o.id as string));
+        for (const member of ['primary', 'secondary'] as const) {
+          if (!failover[member] || !originIds.has(failover[member]!)) {
+            throw new Error(
+              `Network.CDN "${construct.id}": failover.${member} '${failover[member] ?? ''}' não corresponde a nenhum origins[].id (${[...originIds].join(', ')}).`,
+            );
+          }
+        }
+      }
+
       const entries: Array<[string, CloudFormationResource]> = [];
 
       // Detecta origins S3 (com bucketRef) para usar OAC em vez de CustomOriginConfig
@@ -422,6 +437,25 @@ export function synthNetwork(
                   OriginAccessControlId: resourceRef(`${logicalId}OAC${bucketRef}`, 'Id'),
                 };
               }
+              // Origem S3 em OUTRA região (bucket de DR): não há ImportValue
+              // cross-região — o domínio é determinístico via bucketName explícito.
+              // region: 'dr' resolve para o drRegion do iacmp.json.
+              if (o.bucketName) {
+                const rawRegion = o.region as string | undefined;
+                const region = rawRegion === 'dr' ? ctx.profile.drRegion : rawRegion ?? ctx.profile.region;
+                if (rawRegion === 'dr' && !ctx.profile.drRegion) {
+                  throw new Error(
+                    `Network.CDN "${construct.id}": origem '${o.id}' usa region: 'dr' mas o iacmp.json não tem "drRegion". Configure (ex: "drRegion": "us-west-2").`,
+                  );
+                }
+                return {
+                  Id: o.id as string,
+                  // Fn::Sub resolve ${AWS::AccountId} se o bucketName o usar
+                  DomainName: { 'Fn::Sub': `${o.bucketName as string}.s3.${region}.amazonaws.com` },
+                  OriginPath: (o.path as string) ?? '',
+                  CustomOriginConfig: { HTTPPort: 80, HTTPSPort: 443, OriginProtocolPolicy: 'https-only' },
+                };
+              }
               return {
                 Id: o.id as string,
                 DomainName: o.domainName as string,
@@ -433,8 +467,23 @@ export function synthNetwork(
                 },
               };
             }),
+            ...(failover ? {
+              OriginGroups: {
+                Quantity: 1,
+                Items: [{
+                  Id: failoverGroupId,
+                  FailoverCriteria: {
+                    StatusCodes: (() => {
+                      const codes = failover.statusCodes ?? [403, 404, 500, 502, 503, 504];
+                      return { Quantity: codes.length, Items: codes };
+                    })(),
+                  },
+                  Members: { Quantity: 2, Items: [{ OriginId: failover.primary }, { OriginId: failover.secondary }] },
+                }],
+              },
+            } : {}),
             DefaultCacheBehavior: {
-              TargetOriginId: origins[0].id as string,
+              TargetOriginId: failover ? failoverGroupId : origins[0].id as string,
               ViewerProtocolPolicy: 'redirect-to-https',
               AllowedMethods: ['GET', 'HEAD', 'OPTIONS'],
               CachedMethods: ['GET', 'HEAD'],
@@ -443,7 +492,7 @@ export function synthNetwork(
             },
             CacheBehaviors: cachePolicies.map(cp => ({
               PathPattern: cp.pathPattern as string,
-              TargetOriginId: origins[0].id as string,
+              TargetOriginId: failover ? failoverGroupId : origins[0].id as string,
               ViewerProtocolPolicy: 'redirect-to-https',
               DefaultTTL: cp.ttlSeconds ?? 86400,
               MaxTTL: (cp.ttlSeconds as number ?? 86400) * 2,

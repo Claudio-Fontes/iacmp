@@ -11,6 +11,10 @@ export function synthesizeStorage(construct: BaseConstruct, ctx: SynthContext): 
     case 'Storage.Bucket': {
       const safePfx = construct.id.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 11) || 'st';
       const storageNameExpr = expr(`'${safePfx}\${uniqueString(resourceGroup().id)}'`);
+      // replication: 'geo' → RA-GRS: a plataforma replica para a região PAREADA
+      // (par fixo do Azure, não configurável) e expõe endpoint secundário
+      // somente-leitura — o equivalente idiomático (e free) do bucket de DR.
+      const geoReplication = props.replication === 'geo';
       resources.push({
         sym,
         type: 'Microsoft.Storage/storageAccounts',
@@ -18,7 +22,7 @@ export function synthesizeStorage(construct: BaseConstruct, ctx: SynthContext): 
         name: storageNameExpr,
         location: 'location',
         kind: 'StorageV2',
-        sku: { name: 'Standard_LRS' },
+        sku: { name: geoReplication ? 'Standard_RAGRS' : 'Standard_LRS' },
         tags: tag(construct.id),
         properties: {
           allowBlobPublicAccess: (props.publicAccess as boolean) ?? false,
@@ -53,6 +57,10 @@ export function synthesizeStorage(construct: BaseConstruct, ctx: SynthContext): 
       outputs.push({ name: outputName(construct.id, 'Id'), type: 'string', value: `${sym}.id` });
       outputs.push({ name: crossParamName(construct.id, 'Name'), type: 'string', value: `${sym}.name` });
       outputs.push({ name: crossParamName(construct.id, 'ConnectionString'), type: 'string', value: `'DefaultEndpointsProtocol=https;AccountName=\${${sym}.name};AccountKey=\${${sym}.listKeys().keys[0].value};EndpointSuffix=core.windows.net'` });
+      if (geoReplication) {
+        // Endpoint de leitura da região pareada (RA-GRS) — o "bucket de DR".
+        outputs.push({ name: crossParamName(construct.id, 'SecondaryEndpoint'), type: 'string', value: `${sym}.properties.secondaryEndpoints.blob` });
+      }
       const eventNotifications = (props.eventNotifications as Array<Record<string, unknown>>) ?? [];
       if (eventNotifications.length > 0) {
         const topicSym = `${sym}EventTopic`;

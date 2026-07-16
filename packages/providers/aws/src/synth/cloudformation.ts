@@ -466,6 +466,14 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
 export function synthesize(stack: Stack, allStacks?: Stack[], profile: EnvironmentProfile = DEFAULT_PROFILE, projectName?: string): CloudFormationTemplate {
   const graph = buildGraph(stack, allStacks, profile, projectName);
   const template = emitCloudFormation(graph);
+  // Stack marcada com region: 'dr' → o deploy resolve para o drRegion do
+  // iacmp.json (recursos regionais, ex: bucket de DR, vivem em outra região).
+  if (stack.region === 'dr') {
+    if (!profile.drRegion) {
+      throw new Error(`Stack "${stack.name}" tem region: 'dr' mas o iacmp.json não tem "drRegion". Configure (ex: "drRegion": "us-west-2").`);
+    }
+    template.Metadata = { ...(template.Metadata ?? {}), Iacmp: { region: 'dr' } };
+  }
   validateResourceReferences(template.Resources);
   validateNoNullValues(template.Resources);
   return template;

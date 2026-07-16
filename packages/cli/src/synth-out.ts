@@ -95,6 +95,19 @@ export function savedTemplatePath(cwd: string, provider: string, stackName: stri
   return fs.existsSync(p) ? p : null;
 }
 
+/**
+ * AWS: marcador de região do template (Metadata.Iacmp.region). Stacks com
+ * region: 'dr' deployam/destroem na drRegion do iacmp.json.
+ */
+export function awsTemplateRegionMarker(filePath: string): string | null {
+  try {
+    const json = JSON.parse(fs.readFileSync(filePath, 'utf-8')) as { Metadata?: { Iacmp?: { region?: string } } };
+    return json.Metadata?.Iacmp?.region ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function collectImportValues(node: unknown, found: Set<string>): void {
   if (Array.isArray(node)) {
     for (const item of node) collectImportValues(item, found);

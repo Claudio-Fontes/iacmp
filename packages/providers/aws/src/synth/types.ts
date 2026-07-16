@@ -10,6 +10,8 @@ export interface CloudFormationResource {
 export interface CloudFormationTemplate {
   AWSTemplateFormatVersion: string;
   Description: string;
+  /** Iacmp.region: 'dr' marca a stack para deploy na drRegion do iacmp.json. */
+  Metadata?: { Iacmp?: { region?: string } };
   Resources: Record<string, CloudFormationResource>;
   Outputs?: Record<string, { Value: unknown; Export: { Name: string } }>;
 }

@@ -14,7 +14,7 @@ describe('CONSTRUCT_TYPES.attributes — fonte única de verdade (Fase 2 item 2)
     expect(canonico('Messaging.Queue')).toEqual(['Arn', 'QueueUrl', 'QueueArn', 'ConnectionString']);
     expect(canonico('Messaging.Topic')).toEqual(['Arn', 'TopicArn', 'ConnectionString']);
     expect(canonico('Secret.Vault')).toEqual(['SecretArn', 'Arn', 'VaultUri', 'Name', 'SecretValue', 'SecretString']);
-    expect(canonico('Storage.Bucket')).toEqual(['Arn', 'Name', 'ConnectionString']);
+    expect(canonico('Storage.Bucket')).toEqual(['Arn', 'Name', 'ConnectionString', 'SecondaryEndpoint']);
     expect(canonico('Compute.Container')).toEqual(['Arn', 'Fqdn', 'DnsName']);
     expect(canonico('Function.Lambda')).toEqual(['Arn', 'Fqdn', 'Name']);
   });

@@ -12,6 +12,8 @@ export interface StorageBucketProps {
   websiteHosting?: boolean;
   bucketName?: string;
   location?: string;
+  /** 'geo' → replicação para a região pareada (Azure: RA-GRS com endpoint secundário de leitura; AWS ignora — DR lá é bucket em stack region:'dr'). */
+  replication?: 'geo';
   lifecycleRules?: Array<{
     prefix?: string;
     expireAfterDays?: number;

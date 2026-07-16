@@ -20,7 +20,11 @@ export function synthStorage(
         Type: 'AWS::S3::Bucket',
         DeletionPolicy: 'Retain',
         Properties: {
-          ...(props.bucketName ? { BucketName: props.bucketName as string } : {}),
+          ...(props.bucketName ? {
+            BucketName: (props.bucketName as string).includes('${')
+              ? { 'Fn::Sub': props.bucketName as string }
+              : props.bucketName as string,
+          } : {}),
           VersioningConfiguration: props.versioning ? { Status: 'Enabled' } : { Status: 'Suspended' },
           PublicAccessBlockConfiguration: {
             BlockPublicAcls: !isPublic,
@@ -100,8 +104,9 @@ export function synthStorage(
         bucketRes.DependsOn = dependsOn;
       }
 
-      // BucketPolicy de leitura pública para website hosting
-      if (isWebsite) {
+      // BucketPolicy de leitura pública — website hosting OU publicAccess
+      // explícito (ex: bucket de DR lido pelo CloudFront de outra região, sem OAC)
+      if (isPublic) {
         entries.push([`${logicalId}Policy`, {
           Type: 'AWS::S3::BucketPolicy',
           Properties: {

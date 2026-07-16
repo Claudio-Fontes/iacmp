@@ -26,8 +26,12 @@ export interface IacmpConfig {
   name?: string;
   provider?: string;
   region?: string;
+  /** Região de DR na AWS — stacks marcadas com region: 'dr' deployam aqui. */
+  drRegion?: string;
   resourceGroup?: string;
   azureRegion?: string;
+  /** Região de DR na Azure — reservada para replicação com região livre (ORS); RA-GRS usa o par fixo da plataforma. */
+  azureDrRegion?: string;
   accountTier?: AccountTier;
   availabilityZones?: string[];
   projectId?: string;
@@ -56,6 +60,7 @@ export function profileFromConfig(config: IacmpConfig | null): EnvironmentProfil
   return {
     accountTier: (config?.accountTier === 'standard' ? 'standard' : 'free') as AccountTier,
     region: config?.region,
+    drRegion: config?.drRegion,
     availabilityZones: config?.availabilityZones,
   };
 }

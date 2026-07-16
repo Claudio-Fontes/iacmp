@@ -102,7 +102,17 @@ export interface NetworkCDNProps {
     path?: string;
     protocol?: 'http-only' | 'https-only' | 'match-viewer';
     bucketRef?: string;
+    /** Bucket em OUTRA região (DR): nome físico determinístico (aceita ${AWS::AccountId}). */
+    bucketName?: string;
+    /** Região da origem: 'dr' resolve para o drRegion do iacmp.json, ou uma região literal. */
+    region?: string;
   }>;
+  /** Failover nativo (Origin Group): primária falha (403/404/5xx/timeout) → secundária responde a MESMA request. */
+  failover?: {
+    primary: string;
+    secondary: string;
+    statusCodes?: number[];
+  };
   defaultRootObject?: string;
   priceClass?: 'PriceClass_100' | 'PriceClass_200' | 'PriceClass_All';
   httpVersion?: 'http1.1' | 'http2' | 'http2and3';
