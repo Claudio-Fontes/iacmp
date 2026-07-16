@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';
 import chalk from 'chalk';
-import { listTemplates, countResources, orderByDependency } from '../synth-out';
+import { listTemplates, countResources, orderByDependency, providerOutDir, AZURE_MAIN_FILE, AZURE_MAIN_STACK } from '../synth-out';
 import { errMessage, loadIacmpConfig, resolveProvider, IacmpConfig } from '../utils';
 import { commandExists } from './doctor';
 import { getExecutor, printPlan, runCommands, DestroyContext } from '../deploy';
@@ -147,6 +147,41 @@ export default class Destroy extends Command {
 
     if (!dryRun && !commandExists(executor.requiredBinary)) {
       this.error(`${executor.requiredBinary} não encontrado no PATH. Rode: iacmp doctor --fix (ou instale manualmente) e tente novamente.`);
+    }
+
+    // Deployment único Azure (_main.bicep): destrói UMA deployment stack — a
+    // "main", que rastreia todos os recursos dos módulos.
+    if (provider === 'azure' && fs.existsSync(path.join(providerOutDir(cwd, 'azure'), AZURE_MAIN_FILE))) {
+      if (flags.stack) {
+        this.error(
+          'Este projeto usa deployment único no Azure (_main.bicep) — --stack não se aplica: ' +
+          'o destroy remove a stack "main" inteira. Rode sem --stack.',
+        );
+      }
+      const mainStackName = physicalStackName(AZURE_MAIN_STACK);
+      if (!dryRun && executor.describeStatus && !executor.describeStatus(mainStackName, baseCtx).deployed) {
+        this.log(`Stack "${AZURE_MAIN_STACK}" (deployment único) não está deployada — nada a destruir.`);
+        return;
+      }
+      this.log(`Stack: ${AZURE_MAIN_STACK} (deployment único — remove todos os módulos)`);
+      const ctx: DestroyContext = { ...baseCtx, stackName: mainStackName };
+      let commands;
+      try {
+        commands = await executor.planDestroy(ctx);
+      } catch (err) {
+        this.error(errMessage(err));
+      }
+      if (dryRun) {
+        printPlan(commands);
+      } else {
+        try {
+          await runCommands(commands);
+        } catch (err) {
+          this.error(errMessage(err));
+        }
+      }
+      this.log(chalk.green('\nDestroy concluído.'));
+      return;
     }
 
     for (const t of templates) {

@@ -9,7 +9,7 @@ import { TerraformProvider } from '@iacmp/provider-terraform';
 import { Stack, tsCompilerOptions } from '@iacmp/core';
 import { loadIacmpConfig, resolveProvider, profileFromConfig } from '../utils';
 import { loadPlugins } from '@iacmp/plugin-sdk';
-import { synthRoot, providerOutDir, templateExt, listTemplates, orderByDependency } from '../synth-out';
+import { synthRoot, providerOutDir, templateExt, listTemplates, orderByDependency, generateAzureMainBicep, AZURE_MAIN_FILE, TemplateRef } from '../synth-out';
 import {
   LoadedStack,
   validateHandlerFiles,
@@ -372,7 +372,12 @@ export default class Synth extends Command {
     // o contexto correto para colocar os constructs interdependentes na mesma stack.
     if (provider === 'aws' || provider === 'azure') {
       try {
-        orderByDependency(listTemplates(cwd, provider));
+        const ordered = orderByDependency(listTemplates(cwd, provider));
+        // Azure: gera o _main.bicep (deployment único — stacks viram módulos,
+        // amarrados por referência simbólica; o ARM resolve a ordem sozinho).
+        if (provider === 'azure' && ordered.length > 0) {
+          this.writeAzureMain(cwd, ordered);
+        }
       } catch (err) {
         this.error((err as Error).message);
       }
@@ -385,6 +390,33 @@ export default class Synth extends Command {
       const rg = config.resourceGroup ?? (config.name ? `${config.name}-rg` : undefined);
       this.validateAzureTemplates(cwd, rg, flags.stack);
     }
+  }
+
+  /**
+   * Escreve o _main.bicep (deployment único) e a meta agregada das Function Apps
+   * (o zip deploy lê `<template>.iacmp-meta.json` do template que foi deployado).
+   */
+  private writeAzureMain(cwd: string, ordered: TemplateRef[]): void {
+    const dir = providerOutDir(cwd, 'azure');
+    const mainPath = path.join(dir, AZURE_MAIN_FILE);
+    fs.writeFileSync(mainPath, generateAzureMainBicep(ordered));
+
+    const functions = ordered.flatMap(t => {
+      const metaPath = t.filePath.replace(/\.bicep$/, '.iacmp-meta.json');
+      if (!fs.existsSync(metaPath)) return [];
+      try {
+        return (JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as { functions?: unknown[] }).functions ?? [];
+      } catch {
+        return [];
+      }
+    });
+    const mainMetaPath = mainPath.replace(/\.bicep$/, '.iacmp-meta.json');
+    if (functions.length > 0) {
+      fs.writeFileSync(mainMetaPath, JSON.stringify({ functions }, null, 2));
+    } else if (fs.existsSync(mainMetaPath)) {
+      fs.rmSync(mainMetaPath);
+    }
+    this.log(`Sintetizado: ${mainPath} (deployment único — módulos com referência simbólica)`);
   }
 
   /**
@@ -444,9 +476,15 @@ export default class Synth extends Command {
     const dir = providerOutDir(cwd, 'azure');
     if (!fs.existsSync(dir)) return;
 
-    const files = fs.readdirSync(dir).filter(
-      f => f.endsWith('.bicep') && !f.startsWith('_') && (!stack || f === `${stack}.bicep`),
-    );
+    // Deployment único: valida só o _main.bicep — `az bicep build` compila os
+    // módulos recursivamente (cobre a sintaxe de TODAS as stacks numa chamada)
+    // e o validate remoto passa de N chamadas (~4-5s cada) para UMA.
+    const hasMain = fs.existsSync(path.join(dir, AZURE_MAIN_FILE));
+    const files = hasMain
+      ? [AZURE_MAIN_FILE]
+      : fs.readdirSync(dir).filter(
+          f => f.endsWith('.bicep') && !f.startsWith('_') && (!stack || f === `${stack}.bicep`),
+        );
     if (files.length === 0) return;
 
     // Estágio 1: compilação Bicep (detecta erros de sintaxe sem precisar de RG)

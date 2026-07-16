@@ -290,6 +290,148 @@ function orderByDependencyStrict(
   return ordered;
 }
 
+// ── Azure: deployment único com módulos (_main.bicep) ───────────────────────
+// Cada stack vira um `module` de um main.bicep gerado; as referências
+// cross-stack viram simbólicas (`mod.outputs.X`) e o PRÓPRIO ARM resolve a
+// ordem (e paraleliza módulos independentes). Isso elimina o acumulador de
+// outputs, a injeção manual de params e a classe de bug "env vazia por ordem
+// errada" (589e4b4) — no Azure, multi-deployment por stack era um AWS-ismo.
+// O arquivo começa com "_" de propósito: não é uma stack (isStackFile o exclui).
+
+export const AZURE_MAIN_FILE = '_main.bicep';
+/** Nome LÓGICO da deployment stack única (físico = `<projeto>-main`). */
+export const AZURE_MAIN_STACK = 'main';
+
+/** Caminho do _main.bicep de um projeto, ou null se não existe (layout legado). */
+export function azureMainPath(cwd: string): string | null {
+  const dir = resolveTemplateDir(cwd, 'azure');
+  if (!dir) return null;
+  const p = path.join(dir, AZURE_MAIN_FILE);
+  return fs.existsSync(p) ? p : null;
+}
+
+// sharedCaeId nunca vira param do main (2º passo): injetar o próprio CAE na
+// stack que o criou faria `empty(sharedCaeId)` virar false → o CAE sairia do
+// template → ARM tentaria deletá-lo com Container Apps attachados
+// (DeploymentStackDeleteResourcesFailed). A ordem dos módulos já resolve: o
+// primeiro cria o CAE, os seguintes recebem via referência simbólica.
+const AZURE_MAIN_NEVER_LIFT = new Set(['sharedCaeId']);
+
+interface ParsedBicepModule {
+  ref: TemplateRef;
+  sym: string;
+  /** Params sem default — dependência obrigatória (senha ou output de outra stack). */
+  hardParams: string[];
+  /** Params com default; os `string = ''` são candidatos a 2º passo (lift). */
+  softParams: { name: string; isEmptyStringDefault: boolean }[];
+  outputs: { name: string; type: string }[];
+}
+
+function parseBicepModule(t: TemplateRef): ParsedBicepModule {
+  const content = fs.readFileSync(t.filePath, 'utf-8');
+  const hardParams: string[] = [];
+  const softParams: { name: string; isEmptyStringDefault: boolean }[] = [];
+  const outputs: { name: string; type: string }[] = [];
+  for (const line of content.split('\n')) {
+    const hard = line.match(/^param\s+(\w+)\s+\w+\s*$/);
+    if (hard) { hardParams.push(hard[1]); continue; }
+    const soft = line.match(/^param\s+(\w+)\s+(\w+)\s*=\s*(.*)$/);
+    if (soft) {
+      softParams.push({ name: soft[1], isEmptyStringDefault: soft[2] === 'string' && soft[3].trim() === "''" });
+      continue;
+    }
+    const out = line.match(/^output\s+(\w+)\s+(\w+)\s*=/);
+    if (out) outputs.push({ name: out[1], type: out[2] });
+  }
+  return { ref: t, sym: `stk_${t.stackName.replace(/[^a-zA-Z0-9]/g, '_')}`, hardParams, softParams, outputs };
+}
+
+/**
+ * Gera o conteúdo do _main.bicep a partir das stacks ORDENADAS (orderByDependency).
+ * Regras de amarração (espelham a semântica do deploy multi-stack legado):
+ *  - param `*password` → param @secure `adminPassword` do main (uma senha por deploy);
+ *  - param hard → output homônimo do último módulo ANTERIOR que o exporta
+ *    (erro de synth se nenhum exporta — antes isso só falhava no deploy);
+ *  - param soft com exportador anterior → referência simbólica direta;
+ *  - param soft `= ''` cujo exportador vem DEPOIS (ciclo real, ex: Event Grid
+ *    precisa do FQDN da function) → vira param do main com default '' e o
+ *    deploy faz o 2º passo injetando o output;
+ *  - outputs de todos os módulos são re-exportados (zip deploy e 2º passo leem
+ *    os outputs da stack única) — nome duplicado: o último módulo vence.
+ */
+export function generateAzureMainBicep(ordered: TemplateRef[]): string {
+  const mods = ordered.map(parseBicepModule);
+  const exportedAnywhere = new Set<string>();
+  for (const m of mods) for (const o of m.outputs) exportedAnywhere.add(o.name.toLowerCase());
+
+  // outputs disponíveis "até aqui" (lowercase → último exportador anterior)
+  const exported = new Map<string, { sym: string; name: string; type: string }>();
+  const lifted: string[] = [];
+  let needsAdminPassword = false;
+  const moduleBlocks: string[] = [];
+
+  for (const m of mods) {
+    const wired: string[] = [];
+    for (const p of m.hardParams) {
+      if (/password$/i.test(p)) {
+        needsAdminPassword = true;
+        wired.push(`    ${p}: adminPassword`);
+        continue;
+      }
+      const src = exported.get(p.toLowerCase());
+      if (!src) {
+        throw new Error(
+          `_main.bicep: a stack "${m.ref.stackName}" precisa do parâmetro obrigatório "${p}", ` +
+          `mas nenhuma stack anterior exporta um output com esse nome.\n` +
+          `Fix: garanta que a stack dona do recurso declara \`output ${p}\` — ou coloque os ` +
+          `constructs interdependentes na mesma stack.`,
+        );
+      }
+      wired.push(`    ${p}: ${src.sym}.outputs.${src.name}`);
+    }
+    for (const sp of m.softParams) {
+      const src = exported.get(sp.name.toLowerCase());
+      if (src) {
+        wired.push(`    ${sp.name}: ${src.sym}.outputs.${src.name}`);
+        continue;
+      }
+      if (sp.isEmptyStringDefault && !AZURE_MAIN_NEVER_LIFT.has(sp.name) && exportedAnywhere.has(sp.name.toLowerCase())) {
+        if (!lifted.includes(sp.name)) lifted.push(sp.name);
+        wired.push(`    ${sp.name}: ${sp.name}`);
+      }
+      // sem exportador em lugar nenhum: o default do módulo vale (ex: location)
+    }
+    moduleBlocks.push([
+      `module ${m.sym} '${m.ref.fileName}' = {`,
+      `  name: '${m.ref.stackName}'`,
+      ...(wired.length > 0 ? ['  params: {', ...wired, '  }'] : []),
+      '}',
+    ].join('\n'));
+    for (const o of m.outputs) exported.set(o.name.toLowerCase(), { sym: m.sym, name: o.name, type: o.type });
+  }
+
+  const header = [
+    '// Gerado por iacmp synth — NÃO editar.',
+    '// Deployment único: cada stack é um módulo; as referências simbólicas',
+    '// (mod.outputs.X) fazem o ARM ordenar e paralelizar o deploy sozinho.',
+  ];
+  const params: string[] = [];
+  if (needsAdminPassword) params.push('@secure()\nparam adminPassword string');
+  for (const name of lifted) {
+    params.push(`// 2º passo: o deploy injeta quando o output homônimo ficar disponível.\nparam ${name} string = ''`);
+  }
+  const outputLines = [...exported.values()].map(
+    o => `output ${o.name} ${o.type} = ${o.sym}.outputs.${o.name}`,
+  );
+
+  return [
+    header.join('\n'),
+    ...params,
+    ...moduleBlocks,
+    ...(outputLines.length > 0 ? [outputLines.join('\n')] : []),
+  ].join('\n\n') + '\n';
+}
+
 /** Conta recursos em um template sintetizado, de forma agnóstica de provider. */
 export function countResources(filePath: string, provider: string): number {
   let content: string;

@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';
 import chalk from 'chalk';
-import { listTemplates, countResources, orderByDependency } from '../synth-out';
+import { listTemplates, countResources, orderByDependency, providerOutDir, AZURE_MAIN_FILE, AZURE_MAIN_STACK } from '../synth-out';
 import { errMessage, loadIacmpConfig, resolveProvider, IacmpConfig } from '../utils';
 import { commandExists } from './doctor';
 import { getExecutor, printPlan, runCommands, formatCommand, resourceGroupExists, getAzureStackOutputs, findExistingRetainedResources, deleteResourceAndWait, DeployContext } from '../deploy';
@@ -110,14 +110,23 @@ export default class Deploy extends Command {
 
     this.log(`Provider: ${provider}${dryRun ? ' (dry-run)' : ''}\n`);
 
+    // Deployment único (_main.bicep): as stacks são módulos de UM template — o
+    // ARM resolve ordem e cross-refs sozinho (referência simbólica), sem
+    // acumulador de outputs nem injeção manual de params entre stacks.
+    const azureMainPath = provider === 'azure'
+      ? path.join(providerOutDir(cwd, 'azure'), AZURE_MAIN_FILE)
+      : null;
+    const azureMainMode = azureMainPath !== null && fs.existsSync(azureMainPath);
+
     // Acumula outputs de stacks Azure deployadas para injetar como params na próxima.
+    // (Só no layout LEGADO multi-deployment — o modo _main.bicep não precisa.)
     // Pré-popula com outputs de stacks já deployadas no RG (necessário para --stack,
     // que pula stacks anteriores e precisa do sharedCaeId etc já disponível).
     // EXCEÇÃO: nunca pré-popula outputs da própria stack sendo re-deployada — evita
     // injetar sharedCaeId da stack como input dela mesma, o que removeria o CAE do
     // template (if empty(sharedCaeId)) e causaria DeploymentStackDeleteResourcesFailed.
     const azureOutputAccumulator: Record<string, string> = {};
-    if (provider === 'azure' && config.resourceGroup && !dryRun) {
+    if (provider === 'azure' && !azureMainMode && config.resourceGroup && !dryRun) {
       const physicalName = (n: string) => config.name ? `${config.name}-${n}` : n;
       for (const t of allTemplates) {
         if (flags.stack && t.stackName === flags.stack) continue;
@@ -141,6 +150,77 @@ export default class Deploy extends Command {
       projectId: config.projectId,
       dryRun,
     };
+
+    if (azureMainMode) {
+      if (flags.stack) {
+        this.error(
+          'Este projeto usa deployment único no Azure (_main.bicep) — --stack não se aplica: ' +
+          'o ARM ordena e deploya os módulos juntos. Rode "iacmp deploy --provider azure" sem --stack.',
+        );
+      }
+      for (const t of templates) {
+        this.log(`Stack: ${t.stackName} — ${countResources(t.filePath, provider)} recurso(s) (módulo)`);
+      }
+      this.log('');
+      const mainStackName = physicalStackName(AZURE_MAIN_STACK);
+      // Outputs de um deploy anterior: satisfazem params de 2º passo (ex: FQDN de
+      // Event Grid) já na 1ª passada de um RE-deploy.
+      const before = dryRun ? {} : getAzureStackOutputs(mainStackName, config.resourceGroup!);
+      const ctx: DeployContext = {
+        ...baseCtx,
+        stackName: mainStackName,
+        templatePath: azureMainPath!,
+        ...(Object.keys(before).length > 0 ? { outputParams: { ...before } } : {}),
+      };
+      let commands;
+      try {
+        commands = await executor.planDeploy(ctx);
+      } catch (err) {
+        this.error(errMessage(err));
+      }
+      if (dryRun) {
+        printPlan(commands);
+        this.log(chalk.green('\nDeploy concluído.'));
+        return;
+      }
+      try {
+        await runCommands(commands, { executor, ctx });
+      } catch (err) {
+        this.error(errMessage(err));
+      }
+
+      // 2º passo: params do main com default '' (ciclos reais, ex: Event Grid
+      // precisa do FQDN da function que só existe pós-deploy) agora satisfeitos
+      // pelos outputs re-exportados. Só roda se o valor NÃO existia antes do
+      // 1º passo (senão já foi injetado lá).
+      const after = getAzureStackOutputs(mainStackName, config.resourceGroup!);
+      const afterLower = new Map(Object.entries(after).map(([k, v]) => [k.toLowerCase(), v]));
+      const beforeLower = new Map(Object.entries(before).map(([k, v]) => [k.toLowerCase(), v]));
+      const satisfied: string[] = [];
+      for (const line of fs.readFileSync(azureMainPath!, 'utf-8').split('\n')) {
+        const m = line.match(/^param\s+(\w+)\s+string\s*=\s*''\s*$/);
+        if (!m) continue;
+        const value = afterLower.get(m[1].toLowerCase());
+        if (value && value !== beforeLower.get(m[1].toLowerCase())) satisfied.push(m[1]);
+      }
+      if (satisfied.length > 0) {
+        this.log(`\n2º passo (params agora disponíveis: ${satisfied.join(', ')})`);
+        const ctx2: DeployContext = { ...ctx, outputParams: { ...after } };
+        let commands2;
+        try {
+          commands2 = await executor.planDeploy(ctx2);
+        } catch (err) {
+          this.error(errMessage(err));
+        }
+        try {
+          await runCommands(commands2, { executor, ctx: ctx2 });
+        } catch (err) {
+          this.error(errMessage(err));
+        }
+      }
+      this.log(chalk.green('\nDeploy concluído.'));
+      return;
+    }
 
     if (provider === 'terraform') {
       // Terraform opera no diretório inteiro — uma única chamada, sem loop por stack.
