@@ -816,3 +816,53 @@ describe('Monitoring.Alarm — alvo Function App FC1 cross-stack (gap 18)', () =
     expect(out).toContain("metricName: 'Requests'");
   });
 });
+
+describe('validateAzureResources — rede de segurança offline (o que az validate não pega)', () => {
+  const { validateAzureResources } = require('../src') as typeof import('../src');
+
+  const alert = (crit: Record<string, unknown>) => [{
+    sym: 'a', type: 'Microsoft.Insights/metricAlerts', apiVersion: '2018-03-01',
+    properties: { criteria: { allOf: [{ name: 'c1', ...crit }] } },
+  }] as never;
+
+  test('métrica inexistente no namespace Function App → erro (Http5xx não existe no FC1)', () => {
+    const errs = validateAzureResources(alert({ metricName: 'Http5xx', metricNamespace: 'Microsoft.Web/sites', timeAggregation: 'Total', operator: 'GreaterThan' }));
+    expect(errs.length).toBe(1);
+    expect(errs[0]).toMatch(/Http5xx.*não existe/);
+  });
+
+  test('métrica REAL do FC1 → ok', () => {
+    const errs = validateAzureResources(alert({ metricName: 'OnDemandFunctionExecutionCount', metricNamespace: 'Microsoft.Web/sites', timeAggregation: 'Total', operator: 'GreaterThanOrEqual' }));
+    expect(errs).toEqual([]);
+  });
+
+  test('timeAggregation Sum (CloudWatch) → erro (Azure quer Total)', () => {
+    const errs = validateAzureResources(alert({ metricName: 'Requests', metricNamespace: 'Microsoft.App/containerApps', timeAggregation: 'Sum', operator: 'GreaterThan' }));
+    expect(errs.some(e => /Sum.*inválido/.test(e))).toBe(true);
+  });
+
+  test('operator inválido → erro', () => {
+    const errs = validateAzureResources(alert({ metricName: 'Requests', metricNamespace: 'Microsoft.App/containerApps', timeAggregation: 'Total', operator: 'GreaterThanThreshold' }));
+    expect(errs.some(e => /operator.*inválido/.test(e))).toBe(true);
+  });
+
+  test('namespace desconhecido → não valida métrica (confia no synth)', () => {
+    const errs = validateAzureResources(alert({ metricName: 'QualquerCoisa', metricNamespace: 'Microsoft.Storage/storageAccounts', timeAggregation: 'Average', operator: 'GreaterThan' }));
+    expect(errs).toEqual([]);
+  });
+
+  test('recursos sem metricAlert → sem erros', () => {
+    expect(validateAzureResources([{ sym: 's', type: 'Microsoft.Web/sites', apiVersion: '2023-12-01', properties: {} }] as never)).toEqual([]);
+  });
+
+  test('emitBicep LANÇA se um alarme sair com métrica inválida (rede de segurança de ponta a ponta)', () => {
+    // força um Custom.Resource com métrica inexistente — o synth normal já gera
+    // válido, mas isto prova que a validação barra em synth-time se algo escapar.
+    const s = new Stack('mon');
+    (s as any).addConstruct({ id: 'BadAlarm', type: 'Custom.Resource', props: { arm: {
+      type: 'Microsoft.Insights/metricAlerts', apiVersion: '2018-03-01',
+      properties: { criteria: { allOf: [{ name: 'c1', metricName: 'Http5xx', metricNamespace: 'Microsoft.Web/sites', timeAggregation: 'Total', operator: 'GreaterThan' }] } },
+    } } });
+    expect(() => emitBicep(s, { accountTier: 'free', allStacks: [s] })).toThrow(/Http5xx.*não existe|Validação Azure/);
+  });
+});

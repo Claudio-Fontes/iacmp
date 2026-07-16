@@ -7,6 +7,7 @@ import {
   crossParamName, resolveValue,
   BicepResource, BicepOutput, SynthContext,
 } from './constructs/shared';
+import { validateAzureResources } from './validation';
 
 import { synthesizeCompute } from './constructs/compute';
 import { synthesizeStorage } from './constructs/storage';
@@ -362,6 +363,15 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
     if (type === 'secureString') { params.push({ name, type: 'string', secure: true }); continue; }
     if (type === 'string:optional') { params.push({ name, type: 'string', default: '' }); continue; }
     params.push({ name, type });
+  }
+
+  // Rede de segurança offline: valida os recursos gerados contra o catálogo de
+  // conhecimento Azure (métricas por namespace, enums de alarme) — pega em
+  // synth-time (2s) a classe de erro que o `az validate` não vê e que só o ARM
+  // reprovaria depois de ~15min de deploy.
+  const semanticErrors = validateAzureResources(resources);
+  if (semanticErrors.length > 0) {
+    throw new Error(`Validação Azure (synth) falhou:\n- ${semanticErrors.join('\n- ')}`);
   }
 
   return renderBicep(params, resources, outputs);
