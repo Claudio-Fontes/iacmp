@@ -52,12 +52,16 @@ export function ensureProjectInitialized(cwd: string, options: BootstrapOptions 
       name: projectName,
       provider,
       region: 'us-east-1',
+      // DR opcional "comentado": JSON não tem comentário — chaves com _ são
+      // ignoradas pela ferramenta; renomear (tirar o _) ativa o recurso.
+      _drRegion: 'us-west-2 (DR na AWS — renomeie para drRegion para ativar)',
       language: 'typescript',
       accountTier: 'free',
     };
     if (provider === 'azure') {
       config['resourceGroup'] = `${projectName}-rg`;
       config['azureRegion'] = 'eastus2';
+      config['_azureDrRegion'] = 'centralus (DR na Azure — renomeie para azureDrRegion; RA-GRS usa o par fixo da região)';
     }
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');
     created.push('iacmp.json');

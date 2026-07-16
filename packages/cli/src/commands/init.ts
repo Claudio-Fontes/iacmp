@@ -484,8 +484,12 @@ export default class Init extends Command {
       name: projectName,
       provider: flags.provider,
       region: 'us-east-1',
+      // DR opcional "comentado": JSON não tem comentário — chaves com _ são
+      // ignoradas pela ferramenta; renomear (tirar o _) ativa o recurso.
+      _drRegion: 'us-west-2 (DR na AWS — renomeie para drRegion para ativar)',
       resourceGroup: `${projectName}-rg`,
       azureRegion: flags.azureRegion ?? 'eastus2',
+      _azureDrRegion: 'centralus (DR na Azure — renomeie para azureDrRegion; RA-GRS usa o par fixo da região)',
       language: flags.language,
       accountTier,
     };
