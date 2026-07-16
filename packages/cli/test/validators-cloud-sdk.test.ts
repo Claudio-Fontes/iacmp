@@ -16,12 +16,31 @@ describe('validateHandlerCloudSdk — dois mundos em synth-time (caso main1)', (
   const write = (name: string, content: string) =>
     fs.writeFileSync(path.join(dir, 'src', name), content);
 
-  test('projeto AWS (@aws-sdk) sintetizado para azure → erro com orientação', () => {
+  test('projeto AWS com S3 (sem shim) sintetizado para azure → erro com orientação', () => {
     write('getUploadUrl.ts', "import { S3Client } from '@aws-sdk/client-s3';");
     const errs = validateHandlerCloudSdk(dir, 'azure');
     expect(errs.length).toBe(1);
     expect(errs[0]).toContain('getUploadUrl.ts');
     expect(errs[0]).toContain('iacmp ai --provider azure');
+  });
+
+  test('projeto AWS com DynamoDB (coberto pelo shim) sintetizado para azure → SEM erro (fluxo que funciona)', () => {
+    write('createItem.ts', [
+      "import { DynamoDBClient } from '@aws-sdk/client-dynamodb';",
+      "import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';",
+    ].join('\n'));
+    expect(validateHandlerCloudSdk(dir, 'azure')).toEqual([]);
+  });
+
+  test('mistura: dynamo (shim ok) + sqs (sem shim) → erro só cita o sqs', () => {
+    write('worker.ts', [
+      "import { DynamoDBClient } from '@aws-sdk/client-dynamodb';",
+      "import { SQSClient } from '@aws-sdk/client-sqs';",
+    ].join('\n'));
+    const errs = validateHandlerCloudSdk(dir, 'azure');
+    expect(errs.length).toBe(1);
+    expect(errs[0]).toContain('@aws-sdk/client-sqs');
+    expect(errs[0]).not.toContain('client-dynamodb (');
   });
 
   test('projeto Azure (@azure/*) sintetizado para aws → erro espelho', () => {

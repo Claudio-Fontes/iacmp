@@ -99,15 +99,16 @@ export function validateHandlerSql(cwd: string): string[] {
  * O guard de geração não cobre isso (na geração o SDK era o certo para o
  * provider original) — aqui barra o deploy CRUZADO, em 2s, com orientação.
  */
+// Pacotes @aws-sdk que o deploy Azure TRADUZ via shim no empacotamento
+// (esbuild alias → azure-dynamo-shim): projeto AWS com DynamoDB deployado na
+// Azure FUNCIONA. Fora desta lista não há shim — quebra só em runtime.
+const AZURE_SHIMMED_AWS_SDK = new Set(['@aws-sdk/client-dynamodb', '@aws-sdk/lib-dynamodb']);
+
 export function validateHandlerCloudSdk(cwd: string, provider: string): string[] {
   const errors: string[] = [];
   if (provider !== 'aws' && provider !== 'azure') return errors;
   const srcDir = path.join(cwd, 'src');
   if (!fs.existsSync(srcDir)) return errors;
-
-  const wrongSdk = provider === 'azure' ? /@aws-sdk\// : /@azure\//;
-  const sdkLabel = provider === 'azure' ? '@aws-sdk' : '@azure';
-  const otherCloud = provider === 'azure' ? 'AWS' : 'Azure';
 
   const files: string[] = [];
   const walk = (dir: string) => {
@@ -119,13 +120,29 @@ export function validateHandlerCloudSdk(cwd: string, provider: string): string[]
   };
   walk(srcDir);
 
-  const offenders = files.filter(f => wrongSdk.test(fs.readFileSync(f, 'utf-8')));
-  if (offenders.length > 0) {
+  const offenders = new Map<string, Set<string>>(); // pacote → arquivos
+  for (const f of files) {
+    const content = fs.readFileSync(f, 'utf-8');
+    const pkgRe = provider === 'azure' ? /@aws-sdk\/[\w-]+/g : /@azure\/[\w-]+/g;
+    for (const m of content.match(pkgRe) ?? []) {
+      if (provider === 'azure' && AZURE_SHIMMED_AWS_SDK.has(m)) continue; // shim cobre
+      if (!offenders.has(m)) offenders.set(m, new Set());
+      offenders.get(m)!.add(path.relative(cwd, f));
+    }
+  }
+  if (offenders.size > 0) {
+    const detail = [...offenders.entries()]
+      .map(([pkg, fls]) => `${pkg} (${[...fls].join(', ')})`)
+      .join('; ');
+    const otherCloud = provider === 'azure' ? 'AWS' : 'Azure';
     errors.push(
-      `handlers usam ${sdkLabel} (${offenders.map(f => path.relative(cwd, f)).join(', ')}) — ` +
-      `este projeto foi gerado para ${otherCloud} e os handlers são nativos de lá. ` +
-      `Dois mundos separados: para rodar em ${provider.toUpperCase()}, gere o projeto para essa cloud ` +
-      `(iacmp ai --provider ${provider}) em vez de deployar handlers da outra.`,
+      `handlers usam SDK sem tradução para ${provider.toUpperCase()}: ${detail}. ` +
+      (provider === 'azure'
+        ? `O deploy Azure só traduz DynamoDB via shim (@aws-sdk/client-dynamodb, @aws-sdk/lib-dynamodb) — ` +
+          `os demais pacotes @aws-sdk quebram em runtime (ex: S3 presigner → "Region is missing"). `
+        : `O deploy AWS não traduz pacotes @azure/*. `) +
+      `Para este cenário em ${provider.toUpperCase()}, gere o projeto para essa cloud (iacmp ai --provider ${provider}) — ` +
+      `os handlers virão com o SDK nativo de ${provider === 'azure' ? 'Azure' : 'AWS'} (projeto gerado para ${otherCloud} continua funcionando lá).`,
     );
   }
   return errors;
