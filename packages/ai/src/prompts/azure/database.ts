@@ -71,7 +71,7 @@ const items = table('items');       // 'items' = partição fixa desta "tabela l
 
 await items.get(id)                          // → objeto com .id, ou null se não existe (nunca lança 404)
 await items.put(id, { name, price })         // cria/sobrescreve
-await items.put(id, { ... }, { ifNotExists: true })  // → false se já existe (não sobrescreve) — use p/ slug único, etc.
+await items.put(id, { ... }, { ifNotExists: true })  // → false se já existe. SÓ p/ "criar se não existe" (slug único). NUNCA em read-modify-write!
 await items.update(id, { price: 9 })         // mescla campos (Merge)
 await items.increment(id, 'clicks')          // contador atômico (+1); increment(id,'x',5,{seed}) cria se não existe
 await items.del(id)                          // apaga (idempotente)
@@ -80,6 +80,8 @@ await items.listByPrefix('dev#')             // itens cujo id começa com o pref
 \`\`\`
 
 **A CHAVE volta SEMPRE como \`item.id\`** — em get/list/listByPrefix o objeto tem \`item.id\` = a chave que você gravou (ex: 'dev#nova_feature'), NUNCA \`item.flagKey\`/\`item.counterKey\`/\`item.slug\`. Para extrair partes de uma chave composta, use \`item.id\` (ex: \`item.id.split('#')[1]\`). NÃO invente um campo com o nome da chave — ele não existe a menos que você o tenha gravado explicitamente nos fields.
+
+**read-modify-write (ler → computar → gravar): use \`put(id, fields)\` SEM \`ifNotExists\`, ou \`update(id, fields)\`.** \`ifNotExists: true\` faz o write virar NO-OP quando o item já existe — se você já leu o item com \`get\` e está gravando o estado novo (ex: atualizar recorde/placar, incrementar contador), NUNCA use \`ifNotExists\`, senão só a primeira gravação persiste.
 
 Exemplo completo (CRUD + create com id gerado):
 \`\`\`typescript
