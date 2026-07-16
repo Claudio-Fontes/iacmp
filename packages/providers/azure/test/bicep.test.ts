@@ -1,4 +1,4 @@
-import { Stack, Compute, Storage, Network, Database, Fn, Messaging, Cache, ref, CONSTRUCT_TYPES } from '@iacmp/core';
+import { Stack, Compute, Storage, Network, Database, Fn, Messaging, Cache, Monitoring, ref, CONSTRUCT_TYPES } from '@iacmp/core';
 import { AzureProvider, emitBicep } from '../src';
 import { AZURE_ATTR_MAP, bv, expr } from '../src/synth/constructs/shared';
 
@@ -776,5 +776,42 @@ describe('Validação semântica no Azure (Fase 2 item 1 — prepareStacksForSyn
     new Network.SecurityGroup(stack, 'SG', { vpcId: 'vnetEmOutraStack', ingressRules: [] });
     // unit test de fragmento: sem o universo, não dá para validar — não lança
     expect(() => emitBicep(stack, { accountTier: 'free' })).not.toThrow();
+  });
+});
+
+describe('Monitoring.Alarm — alvo Function App FC1 cross-stack (gap 18)', () => {
+  test('alarme sobre Fn.Lambda em outra stack → Microsoft.Web/sites + Http5xx + param cross-stack', () => {
+    const computeStack = new Stack('compute');
+    new Fn.Lambda(computeStack, 'CheckerFn', { runtime: 'nodejs20', handler: 'dist/checker.handler', code: '.' });
+    const monStack = new Stack('monitoring');
+    new Monitoring.Alarm(monStack, 'SiteDownAlarm', {
+      metricName: 'Errors', threshold: 1, evaluationPeriods: 1, periodSeconds: 300,
+      comparisonOperator: 'GreaterThanOrEqualToThreshold', statistic: 'Sum',
+      dimensions: { FunctionName: ref('CheckerFn', 'Name') },
+    } as never);
+    const all = [computeStack, monStack];
+    const mon = emitBicep(monStack, { accountTier: 'free', allStacks: all });
+    // namespace e métrica de Function App (não Container Apps / Requests)
+    expect(mon).toContain("metricNamespace: 'Microsoft.Web/sites'");
+    expect(mon).toContain("metricName: 'Http5xx'");
+    // scope via param cross-stack, não o placeholder vazio
+    expect(mon).toContain('param CheckerFnId string');
+    expect(mon).toContain('CheckerFnId');
+    expect(mon).not.toContain("metricNamespace: 'Microsoft.App/containerApps'");
+    // a stack produtora exporta o output homônimo (fecha a cadeia cross-stack)
+    const compute = emitBicep(computeStack, { accountTier: 'free', allStacks: all });
+    expect(compute).toContain('output CheckerFnId string');
+  });
+
+  test('alarme sobre Compute.Container → Microsoft.App/containerApps (mantém o caminho antigo)', () => {
+    const appStack = new Stack('app');
+    new Compute.Container(appStack, 'ApiContainer', { image: 'nginx:latest', subnetIds: ['subnet-a', 'subnet-b'] });
+    const monStack = new Stack('mon');
+    new Monitoring.Alarm(monStack, 'ErrAlarm', {
+      metricName: 'Errors', threshold: 1, evaluationPeriods: 1, periodSeconds: 300,
+    } as never);
+    const out = emitBicep(monStack, { accountTier: 'free', allStacks: [appStack, monStack] });
+    expect(out).toContain("metricNamespace: 'Microsoft.App/containerApps'");
+    expect(out).toContain("metricName: 'Requests'");
   });
 });

@@ -21,11 +21,16 @@ export function synthesizeMonitoring(construct: BaseConstruct, ctx: SynthContext
             const target = ctx.idx.get(ref.constructId);
             if (target && (target.type === 'Function.Lambda' || target.type === 'Compute.Container')) {
               const tSym = toSym(ref.constructId);
+              // Function.Lambda = Microsoft.Web/sites (host defaultHostName);
+              // Compute.Container = Container App (host configuration.ingress.fqdn).
+              const host = target.type === 'Function.Lambda'
+                ? expr(`\${${tSym}.properties.defaultHostName}`)
+                : expr(`\${${tSym}.properties.configuration.ingress.fqdn}`);
               azureFunctionReceivers.push({
                 name: `fn-${ref.constructId}`,
                 functionAppResourceId: expr(`${tSym}.id`),
                 functionName: ref.constructId,
-                httpTriggerUrl: expr(`'https://\${${tSym}.properties.configuration.ingress.fqdn}/api/alert'`),
+                httpTriggerUrl: expr(`'https://${host}/api/alert'`),
                 useCommonAlertSchema: true,
               });
             }
@@ -46,31 +51,58 @@ export function synthesizeMonitoring(construct: BaseConstruct, ctx: SynthContext
       const evalPeriods = (props.evaluationPeriods as number) ?? 1;
       const evalFreq = toInterval(periodSecs);
       const windowSizeVal = toInterval(periodSecs * evalPeriods);
-      const lambdaConstruct = [...ctx.idx.values()].find(c => c.type === 'Function.Lambda' || c.type === 'Compute.Container');
-      let alarmScopes: unknown[];
-      let alarmCriteriaType: string;
-      let alarmMetricNamespace: string;
-      let alarmCondition: string | undefined;
-      if (lambdaConstruct) {
-        const lSym = toSym(lambdaConstruct.id);
-        alarmScopes = [expr(`${lSym}.id`)];
-        alarmCriteriaType = 'Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria';
-        alarmMetricNamespace = 'Microsoft.App/containerApps';
-      } else {
-        const alarmScopeParam = `${sym}ScopeId`;
-        crossParams.set(alarmScopeParam, 'string:optional');
-        alarmScopes = [expr(alarmScopeParam)];
-        alarmCriteriaType = 'Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria';
-        alarmMetricNamespace = 'Microsoft.App/containerApps';
-        alarmCondition = `${alarmScopeParam} != ''`;
-      }
-      const metricNameMap: Record<string, string> = {
+      // Alvo do alarme: preferir o recurso apontado pela dimension (ex:
+      // dimensions.FunctionName: ref('CheckerFn','Name')); senão, a 1ª
+      // Function/Container do PROJETO. Usa globalIdx — o alvo quase sempre está
+      // em OUTRA stack (compute) que não a de monitoring.
+      const dims = (props.dimensions as Record<string, unknown>) ?? {};
+      const dimTargetId = Object.values(dims)
+        .map(v => (isRef(v as Record<string, unknown>) ? (v as { constructId: string }).constructId : v))
+        .find((v): v is string => typeof v === 'string' && ctx.globalIdx.has(v));
+      const alarmTarget = (dimTargetId ? ctx.globalIdx.get(dimTargetId) : undefined)
+        ?? [...ctx.globalIdx.values()].find(c => c.type === 'Function.Lambda' || c.type === 'Compute.Container');
+
+      // Namespace + métrica dependem do TIPO do alvo. Function.Lambda vira
+      // Microsoft.Web/sites (FC1); Compute.Container vira Microsoft.App/containerApps.
+      // As métricas de erro/latência têm nomes distintos em cada namespace.
+      const isFunctionApp = alarmTarget?.type === 'Function.Lambda';
+      const funcMetricMap: Record<string, string> = {
+        Errors: 'Http5xx', p99: 'AverageResponseTime', Latency: 'AverageResponseTime',
+        RequestDuration: 'AverageResponseTime', Invocations: 'FunctionExecutionCount',
+        Count: 'Requests', ThrottledRequests: 'Http429',
+      };
+      const containerMetricMap: Record<string, string> = {
         Errors: 'Requests', p99: 'Requests', Latency: 'Requests',
         ThrottledRequests: 'Requests', Duration: 'TotalCpuUsage', Invocations: 'Requests',
         ConcurrentExecutions: 'Replicas', Count: 'Requests', RequestDuration: 'Requests',
       };
+
+      let alarmScopes: unknown[];
+      let alarmMetricNamespace: string;
+      let alarmCondition: string | undefined;
+      if (alarmTarget) {
+        alarmMetricNamespace = isFunctionApp ? 'Microsoft.Web/sites' : 'Microsoft.App/containerApps';
+        if (ctx.idx.has(alarmTarget.id)) {
+          // mesma stack → símbolo local
+          alarmScopes = [expr(`${toSym(alarmTarget.id)}.id`)];
+        } else {
+          // outra stack → param cross-stack, casado com o output 'Id' que a
+          // Function/Container exporta (outputName(id,'Id') = crossParamName).
+          const idParam = crossParamName(alarmTarget.id, 'Id');
+          crossParams.set(idParam, 'string');
+          alarmScopes = [expr(idParam)];
+        }
+      } else {
+        const alarmScopeParam = `${sym}ScopeId`;
+        crossParams.set(alarmScopeParam, 'string:optional');
+        alarmScopes = [expr(alarmScopeParam)];
+        alarmMetricNamespace = 'Microsoft.App/containerApps';
+        alarmCondition = `${alarmScopeParam} != ''`;
+      }
+      const alarmCriteriaType = 'Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria';
       const rawMetricName = props.metricName as string;
-      const azureMetricName = metricNameMap[rawMetricName] ?? (alarmMetricNamespace === 'Microsoft.App/containerApps' ? 'Requests' : rawMetricName);
+      const metricNameMap = isFunctionApp ? funcMetricMap : containerMetricMap;
+      const azureMetricName = metricNameMap[rawMetricName] ?? (isFunctionApp ? 'Http5xx' : 'Requests');
       resources.push({ sym, type: 'Microsoft.Insights/metricAlerts', apiVersion: '2018-03-01', name: construct.id, location: "'global'", condition: alarmCondition, tags: tag(construct.id), properties: { description: `Alarm for ${props.metricName}`, severity: 2, enabled: true, scopes: alarmScopes, evaluationFrequency: evalFreq, windowSize: windowSizeVal, criteria: { 'odata.type': alarmCriteriaType, allOf: [{ name: 'criterion1', criterionType: 'StaticThresholdCriterion', metricName: azureMetricName, metricNamespace: alarmMetricNamespace, operator: operatorMap[(props.comparisonOperator as string) ?? 'GreaterThanThreshold'] ?? 'GreaterThan', threshold: props.threshold as number, timeAggregation: (props.statistic as string) ?? 'Average', dimensions: [] }] }, actions: alarmActionList } });
       break;
     }
