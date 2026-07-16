@@ -27,13 +27,26 @@ function client(): TableClient {
   return TableClient.fromConnectionString(conn, name);
 }
 
-// Entidade -> item de negócio: expõe rowKey como \\\`id\\\`, remove OData/metadados.
+// rowKey do Azure/Cosmos Table PROÍBE os caracteres # / \\ ? (e controle). Chaves
+// compostas comuns (ex: 'page_view#2026-07-16', 'dev#flag') usam '#' e dariam
+// OutOfRangeInput. Codifica de forma REVERSÍVEL e per-char (preserva prefixo, então
+// listByPrefix continua funcionando) — o handler usa a chave que quiser, sem saber
+// das regras do Azure.
+const ENC: Record<string, string> = { '~': '~~', '#': '~H', '/': '~S', '?': '~Q', '\\\\': '~B' };
+function encKey(id: string): string {
+  return String(id).replace(/[~#/?\\\\]/g, c => ENC[c]);
+}
+function decKey(k: string): string {
+  return k.replace(/~(.)/g, (_m, c) => (c === '~' ? '~' : c === 'H' ? '#' : c === 'S' ? '/' : c === 'Q' ? '?' : c === 'B' ? '\\\\' : '~' + c));
+}
+
+// Entidade -> item de negócio: expõe rowKey (decodificado) como \\\`id\\\`, remove OData.
 function toItem(e: Record<string, unknown>): Item {
   const out: Item = {};
   for (const [k, v] of Object.entries(e)) {
     if (k === 'partitionKey' || k === 'etag' || k === 'timestamp') continue;
     if (k.indexOf('odata.') === 0) continue;
-    if (k === 'rowKey') { out.id = v; continue; }
+    if (k === 'rowKey') { out.id = decKey(String(v)); continue; }
     out[k] = v;
   }
   return out;
@@ -61,7 +74,7 @@ export function table(partition = 'items') {
     // Item (com \\\`id\\\`) ou null se não existir — NUNCA lança 404.
     async get(id: string): Promise<Item | null> {
       try {
-        const e = await c.getEntity(partition, String(id));
+        const e = await c.getEntity(partition, encKey(id));
         return toItem(e as Record<string, unknown>);
       } catch (err) {
         if (statusOf(err) === 404) return null;
@@ -70,7 +83,7 @@ export function table(partition = 'items') {
     },
     // Cria/sobrescreve. ifNotExists:true → retorna false se já existir (não sobrescreve).
     async put(id: string, item: Item, opts?: { ifNotExists?: boolean }): Promise<boolean> {
-      const entity = { partitionKey: partition, rowKey: String(id), ...fields(item) };
+      const entity = { partitionKey: partition, rowKey: encKey(id), ...fields(item) };
       if (opts && opts.ifNotExists) {
         try { await c.createEntity(entity); return true; }
         catch (err) { if (statusOf(err) === 409) return false; throw err; }
@@ -80,18 +93,18 @@ export function table(partition = 'items') {
     },
     // Mescla os campos informados no item existente (Merge — preserva os demais).
     async update(id: string, patch: Item): Promise<void> {
-      await c.updateEntity({ partitionKey: partition, rowKey: String(id), ...fields(patch) }, 'Merge');
+      await c.updateEntity({ partitionKey: partition, rowKey: encKey(id), ...fields(patch) }, 'Merge');
     },
     // Incrementa um campo numérico (read-modify-write). Cria o item se não existir.
     async increment(id: string, field: string, by = 1, seed: Item = {}): Promise<number> {
       const cur = await this.get(id);
       const next = Number((cur ? cur[field] : undefined) ?? 0) + by;
       const base = cur ? fields(cur) : fields(seed);
-      await c.upsertEntity({ partitionKey: partition, rowKey: String(id), ...base, [field]: next }, 'Merge');
+      await c.upsertEntity({ partitionKey: partition, rowKey: encKey(id), ...base, [field]: next }, 'Merge');
       return next;
     },
     async del(id: string): Promise<void> {
-      try { await c.deleteEntity(partition, String(id)); }
+      try { await c.deleteEntity(partition, encKey(id)); }
       catch (err) { if (statusOf(err) !== 404) throw err; }
     },
     // Todos os itens da partição.
@@ -102,9 +115,10 @@ export function table(partition = 'items') {
     },
     // Itens cujo id (rowKey) começa com o prefixo (ex: 'dev#', 'page_view#').
     async listByPrefix(prefix: string): Promise<Item[]> {
-      const upper = prefix + '\\uffff';
+      const encPrefix = encKey(prefix);
+      const upper = encPrefix + '\\uffff';
       const out: Item[] = [];
-      for await (const e of c.listEntities({ queryOptions: { filter: odata\`RowKey ge \${prefix} and RowKey lt \${upper}\` } })) {
+      for await (const e of c.listEntities({ queryOptions: { filter: odata\`RowKey ge \${encPrefix} and RowKey lt \${upper}\` } })) {
         out.push(toItem(e as Record<string, unknown>));
       }
       return out;

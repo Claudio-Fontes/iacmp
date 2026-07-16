@@ -52,4 +52,29 @@ describe('AZURE_TABLES_HELPER — resolve as 3 armadilhas do @azure/data-tables'
     expect(AZURE_TABLES_HELPER).not.toContain('@aws-sdk');
     expect(AZURE_TABLES_HELPER).toContain("from '@azure/data-tables'");
   });
+
+  test('codifica rowKey (# / ? \\ são proibidos no Azure Table) — todos os writes usam encKey', () => {
+    // # em chave composta ('page_view#data', 'dev#flag') dá OutOfRangeInput no Azure
+    expect(AZURE_TABLES_HELPER).toContain('function encKey');
+    expect(AZURE_TABLES_HELPER).toContain('function decKey');
+    // get/put/update/increment/del + listByPrefix passam pela codificação
+    const encWrites = (AZURE_TABLES_HELPER.match(/rowKey: encKey\(id\)/g) || []).length;
+    expect(encWrites).toBeGreaterThanOrEqual(3); // put, update, increment
+    expect(AZURE_TABLES_HELPER).toContain('getEntity(partition, encKey(id))');
+    expect(AZURE_TABLES_HELPER).toContain('deleteEntity(partition, encKey(id))');
+    expect(AZURE_TABLES_HELPER).toContain('encKey(prefix)');
+  });
+
+  test('encode/decode é reversível e remove chars proibidos (lógica replicada do helper)', () => {
+    const ENC: Record<string, string> = { '~': '~~', '#': '~H', '/': '~S', '?': '~Q', '\\': '~B' };
+    const encKey = (id: string) => String(id).replace(/[~#/?\\]/g, c => ENC[c]);
+    const decKey = (k: string) => k.replace(/~(.)/g, (_m, c) => (c === '~' ? '~' : c === 'H' ? '#' : c === 'S' ? '/' : c === 'Q' ? '?' : c === 'B' ? '\\' : '~' + c));
+    for (const k of ['page_view#2026-07-16', 'dev#flag', 'a/b?c', 'x\\y', 'ja~esc', 'simples']) {
+      const e = encKey(k);
+      expect(decKey(e)).toBe(k);            // round-trip
+      expect(/[#/?\\]/.test(e)).toBe(false); // sem char proibido no rowKey codificado
+    }
+    // preserva prefixo (listByPrefix funciona): enc(prefix+resto) começa com enc(prefix)
+    expect(encKey('dev#flag').startsWith(encKey('dev#'))).toBe(true);
+  });
 });
