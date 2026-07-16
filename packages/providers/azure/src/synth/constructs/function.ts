@@ -315,7 +315,10 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
         resources.push({ sym: `${sym}AuthorizerBackend`, type: 'Microsoft.ApiManagement/service/backends', apiVersion: '2023-05-01-preview', parent: sym, name: 'authorizer-backend', properties: { description: `Function App authorizer backend (${authorizerLambdaId})`, url: authUrl, protocol: 'http' } });
       }
 
-      outputs.push({ name: outputName(construct.id, 'Url'), type: 'string', value: `${sym}.properties.gatewayUrl` });
+      // Url inclui o path base da API (paridade com AWS, cujo ApiUrl inclui o
+      // stage /prod) — sem ele o consumidor toma 404 do APIM ("Resource not found").
+      const apiBasePath = (props.path as string) || 'api';
+      outputs.push({ name: outputName(construct.id, 'Url'), type: 'string', value: `'\${${sym}.properties.gatewayUrl}/${apiBasePath}'` });
       break;
     }
 

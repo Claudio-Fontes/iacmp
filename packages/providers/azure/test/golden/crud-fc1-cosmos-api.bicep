@@ -112,4 +112,4 @@ resource itemsApiPolicy1 'Microsoft.ApiManagement/service/apis/operations/polici
   }
 }
 
-output ItemsApiUrl string = itemsApi.properties.gatewayUrl
+output ItemsApiUrl string = '${itemsApi.properties.gatewayUrl}/api'
