@@ -36,12 +36,19 @@ async function runWithPolling(
     const child = spawn(cmd.bin, cmd.args, { cwd: cmd.cwd, stdio: 'inherit' });
 
     let pollActive = true;
+    const startedAt = Date.now();
     const timer = setInterval(() => {
       if (!pollActive) return;
       executor.pollStatus!(stackName, ctx)
         .then((status) => {
           if (status && pollActive) {
-            process.stdout.write(`\r${chalk.dim(`[${stackName}]`)} ${status}   `);
+            const elapsed = Math.round((Date.now() - startedAt) / 1000);
+            // APIM/Cosmos seguram o delete no ARM por vários minutos DEPOIS de
+            // sumirem do portal (soft-delete interno) — sem a dica, parece travado.
+            const hint = /deleting/i.test(status) && elapsed > 120
+              ? chalk.dim(' (normal: APIM/Cosmos levam 5-10min para o ARM confirmar, mesmo com o RG já vazio)')
+              : '';
+            process.stdout.write(`\r${chalk.dim(`[${stackName}]`)} ${status} ${chalk.dim(`${elapsed}s`)}${hint}   `);
           }
         })
         .catch(() => { /* polling silencioso — erro não propaga */ });

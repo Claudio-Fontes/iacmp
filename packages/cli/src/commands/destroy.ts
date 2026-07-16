@@ -6,7 +6,7 @@ import chalk from 'chalk';
 import { listTemplates, countResources, orderByDependency, providerOutDir, AZURE_MAIN_FILE, AZURE_MAIN_STACK } from '../synth-out';
 import { errMessage, loadIacmpConfig, resolveProvider, IacmpConfig } from '../utils';
 import { commandExists } from './doctor';
-import { getExecutor, printPlan, runCommands, DestroyContext } from '../deploy';
+import { getExecutor, printPlan, runCommands, listApimServices, purgeApimSoftDeleted, DestroyContext } from '../deploy';
 
 export default class Destroy extends Command {
   static description = 'Destroi a infraestrutura do provider configurado';
@@ -149,6 +149,20 @@ export default class Destroy extends Command {
       this.error(`${executor.requiredBinary} não encontrado no PATH. Rode: iacmp doctor --fix (ou instale manualmente) e tente novamente.`);
     }
 
+    // APIM vai pra soft-delete (48h) no destroy: ocupa o nome (re-deploy colide)
+    // e a quota. Captura os vivos ANTES do delete para purgar depois em background.
+    const apimsToPurge = provider === 'azure' && !dryRun && config.resourceGroup
+      ? listApimServices(config.resourceGroup)
+      : [];
+    const firePurge = () => {
+      if (apimsToPurge.length === 0) return;
+      purgeApimSoftDeleted(apimsToPurge);
+      this.log(chalk.dim(
+        `Purga do APIM soft-deleted disparada em background: ${apimsToPurge.map(a => a.name).join(', ')} ` +
+        `(libera o nome para re-deploy — sem isso ficaria 48h na lixeira do Azure).`,
+      ));
+    };
+
     // Deployment único Azure (_main.bicep): destrói UMA deployment stack — a
     // "main", que rastreia todos os recursos dos módulos.
     if (provider === 'azure' && fs.existsSync(path.join(providerOutDir(cwd, 'azure'), AZURE_MAIN_FILE))) {
@@ -179,6 +193,7 @@ export default class Destroy extends Command {
         } catch (err) {
           this.error(errMessage(err));
         }
+        firePurge();
       }
       this.log(chalk.green('\nDestroy concluído.'));
       return;
@@ -217,6 +232,7 @@ export default class Destroy extends Command {
       this.log('');
     }
 
+    if (!dryRun) firePurge();
     this.log(chalk.green('Destroy concluído.'));
   }
 }

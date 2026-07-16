@@ -76,6 +76,40 @@ export function getAzureStackOutputs(stackName: string, resourceGroup: string): 
   }
 }
 
+/**
+ * APIMs vivos no RG — capturar ANTES do destroy (depois só existe o soft-deleted).
+ * O delete de APIM o move para soft-delete (48h): ocupa o NOME (re-deploy do
+ * mesmo projeto colide) e segura o ARM por minutos após o RG esvaziar.
+ */
+export function listApimServices(resourceGroup: string): { name: string; location: string }[] {
+  try {
+    const raw = execFileSync('az', [
+      'apim', 'list', '--resource-group', resourceGroup,
+      '--query', '[].{name:name,location:location}', '--output', 'json',
+    ], { stdio: 'pipe' }).toString().trim();
+    return raw ? (JSON.parse(raw) as { name: string; location: string }[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Dispara a purga dos APIMs soft-deleted em processo DESTACADO (fire-and-forget):
+ * `az apim deletedservice purge` não tem --no-wait e bloqueia minutos — não vale
+ * segurar o destroy por isso. Se a purga falhar, o soft-delete expira em 48h.
+ */
+export function purgeApimSoftDeleted(services: { name: string; location: string }[]): void {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { spawn } = require('child_process') as typeof import('child_process');
+  for (const s of services) {
+    const child = spawn('az', [
+      'apim', 'deletedservice', 'purge',
+      '--service-name', s.name, '--location', s.location,
+    ], { detached: true, stdio: 'ignore' });
+    child.unref();
+  }
+}
+
 /** `az group exists` — leitura simples, sem efeito colateral. Usado antes do deploy para decidir se precisa criar o resource group. */
 export function resourceGroupExists(resourceGroup: string): boolean {
   try {
