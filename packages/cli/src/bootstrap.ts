@@ -203,6 +203,47 @@ resources:   [ref('UsuariosTable', 'Arn')]
 - \`ref()\` é um objeto interno — NUNCA chame \`.toString()\` nele
 - \`environment\` com recurso: SEMPRE \`ref()\` ou \`table.name\` — nunca string literal
 
+## Handlers Lambda (OBRIGATÓRIO quando houver Fn.Lambda)
+
+Toda stack com \`Fn.Lambda\` exige o handler correspondente em \`src/handlers/<nome>/index.ts\`.
+O código do handler deve ser **completo e funcional** — nunca deixe TODOs ou stubs.
+
+**Estrutura obrigatória:**
+\`\`\`
+src/
+  handlers/
+    <nome-da-lambda>/
+      index.ts    ← handler completo com toda a lógica
+\`\`\`
+
+**Para CRUD com DynamoDB** — gere sempre as 5 operações no mesmo arquivo:
+\`\`\`typescript
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand, DeleteCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
+
+const client = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+const TABLE = process.env.TABLE_NAME!;
+
+export async function handler(event: any) {
+  const { httpMethod, pathParameters, body } = event;
+  const id = pathParameters?.id;
+
+  switch (httpMethod) {
+    case 'GET':
+      if (id) { /* GetItem */ }
+      else     { /* Scan / List */ }
+    case 'POST':   /* PutItem com crypto.randomUUID() */ break;
+    case 'PUT':    /* UpdateItem */ break;
+    case 'DELETE': /* DeleteItem */ break;
+    default: return { statusCode: 405, body: 'Method Not Allowed' };
+  }
+}
+\`\`\`
+
+- ID gerado pelo backend: \`crypto.randomUUID()\` — nunca leia \`body.id\`
+- Sempre use \`DynamoDBDocumentClient\` de \`@aws-sdk/lib-dynamodb\`
+- Retorne sempre \`{ statusCode, body: JSON.stringify(...) }\`
+
 ## Restrições
 
 - NUNCA pergunte sobre formato de IaC, framework ou ferramenta — é sempre iacmp
