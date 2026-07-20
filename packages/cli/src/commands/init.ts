@@ -263,7 +263,12 @@ function helloHandlerContent(): string {
 `;
 }
 
-function packageJson(projectName: string, coreRef: string): string {
+function packageJson(projectName: string, coreRef: string, provider: string): string {
+  const awsSdkDeps = provider === 'aws' || provider === 'terraform' ? {
+    '@aws-sdk/client-dynamodb': '*',
+    '@aws-sdk/lib-dynamodb': '*',
+    '@aws-sdk/client-s3': '*',
+  } : {};
   return JSON.stringify({
     name: projectName,
     version: '0.1.0',
@@ -281,6 +286,7 @@ function packageJson(projectName: string, coreRef: string): string {
       '@types/node': '^22',
       'tsx': '*',
       typescript: '~5.5.0',
+      ...awsSdkDeps,
     },
   }, null, 2) + '\n';
 }
@@ -290,26 +296,19 @@ function tsConfig(hasAppCode: boolean): string {
     compilerOptions: {
       target: 'ES2022',
       module: 'CommonJS',
-      moduleResolution: 'bundler',
+      moduleResolution: 'node',
       lib: ['es2022'],
       types: ['node'],
-      strict: true,
-      noImplicitAny: true,
-      strictNullChecks: true,
-      noImplicitReturns: true,
+      strict: false,
+      noImplicitAny: false,
+      esModuleInterop: true,
       experimentalDecorators: true,
       strictPropertyInitialization: false,
       skipLibCheck: true,
       outDir: 'dist',
-      // src/ é o código de aplicação (handlers de Fn.Lambda) — é o único
-      // que precisa de JS compilado de verdade (vai pro zip da Lambda).
-      // stacks/ e test/ não entram aqui: stacks/ é carregada via ts-node
-      // por `iacmp synth`/`deploy`, e test/ via ts-jest — nenhum dos dois
-      // passa por `tsc`, então não tem por que poluir dist/ com eles.
-      rootDir: hasAppCode ? 'src' : '.',
-      // @iacmp/core é resolvido via node_modules após `npm install`
+      rootDir: 'src',
     },
-    ...(hasAppCode ? { include: ['src/**/*'] } : {}),
+    include: ['src/**/*'],
     exclude: ['node_modules', 'dist'],
   }, null, 2) + '\n';
 }
@@ -324,6 +323,9 @@ function claudeMd(projectName: string): string {
 > **REGRA ABSOLUTA:** Este projeto usa **exclusivamente o iacmp CLI** com constructs TypeScript do \`@iacmp/core\`.
 > NUNCA pergunte "qual formato de IaC?", "Terraform ou CloudFormation?", "qual framework?".
 > A resposta é sempre: **iacmp + TypeScript**. Vá direto à geração.
+>
+> **REGRA ABSOLUTA — Fn.Lambda:** \`code\` SEMPRE aponta para \`dist/handlers/<nome>\` (nunca \`src/\`).
+> O Lambda executa JS compilado. \`src/\` tem TypeScript — não funciona na AWS nem na Azure.
 
 ## O que é iacmp
 
@@ -372,6 +374,31 @@ Cada camada em sua própria subpasta dentro de \`stacks/\`:
 - Sempre exporte a stack como default: \`export default stack;\`
 - Nomes derivados do domínio do usuário — nunca copie nomes de exemplo
 - Não invente propriedades que não existem no catálogo do @iacmp/core
+- \`Database.DynamoDB\`: \`partitionKey\` e \`sortKey\` são **strings** (nome do atributo), nunca objetos
+  - CORRETO: \`partitionKey: 'id'\`
+  - ERRADO: \`partitionKey: { name: 'id', type: 'S' }\`  ← não existe essa forma
+
+## Fn.ApiGateway — rotas (OBRIGATÓRIO)
+
+Rotas **sempre** usam \`lambdaId\` (string com o id do construct) — **NUNCA** \`function: referência\`:
+
+\`\`\`typescript
+// CORRETO
+new Fn.ApiGateway(stack, 'ProdutosApi', {
+  name: 'produtos-api',
+  type: 'HTTP',
+  routes: [
+    { method: 'POST',   path: '/produtos',     lambdaId: 'ProdutosFn' },
+    { method: 'GET',    path: '/produtos',     lambdaId: 'ProdutosFn' },
+    { method: 'GET',    path: '/produtos/{id}',lambdaId: 'ProdutosFn' },
+    { method: 'PUT',    path: '/produtos/{id}',lambdaId: 'ProdutosFn' },
+    { method: 'DELETE', path: '/produtos/{id}',lambdaId: 'ProdutosFn' },
+  ],
+});
+
+// ERRADO — "function" não existe na interface
+routes: [{ method: 'GET', path: '/x', function: minhaFn }]  // ← NUNCA faça isso
+\`\`\`
 
 ## Referências cross-stack
 
@@ -397,15 +424,24 @@ resources:   [ref('UsuariosTable', 'Arn')]
 
 ## Handlers Lambda (OBRIGATÓRIO quando houver Fn.Lambda)
 
-Toda stack com \`Fn.Lambda\` exige o handler correspondente em \`src/handlers/<nome>/index.ts\`.
-O código do handler deve ser **completo e funcional** — nunca deixe TODOs ou stubs.
+Toda stack com \`Fn.Lambda\` exige:
+1. Handler em \`src/handlers/<nome>/index.ts\` — código completo, nunca TODOs
+2. Propriedade \`code: 'dist/handlers/<nome>'\` na stack (aponta para o compilado, não para src/)
 
 **Estrutura obrigatória:**
 \`\`\`
-src/
-  handlers/
-    <nome-da-lambda>/
-      index.ts    ← handler completo com toda a lógica
+src/handlers/<nome-da-lambda>/index.ts   ← escreva aqui
+dist/handlers/<nome-da-lambda>/index.js  ← gerado por npm run build (não edite)
+\`\`\`
+
+**Na stack TypeScript:**
+\`\`\`typescript
+new Fn.Lambda(stack, 'MinhaFn', {
+  runtime: 'nodejs20',
+  handler: 'index.handler',
+  code: 'dist/handlers/minha-fn',   // ← SEMPRE dist/, nunca src/
+  ...
+});
 \`\`\`
 
 **Para CRUD com DynamoDB** — gere sempre as 5 operações no mesmo arquivo:
@@ -417,17 +453,17 @@ const client = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const TABLE = process.env.TABLE_NAME!;
 
 export async function handler(event: any) {
-  const { httpMethod, pathParameters, body } = event;
-  const id = pathParameters?.id;
+  // HTTP API v2 usa requestContext.http.method; REST API v1 usa httpMethod
+  const httpMethod = event.httpMethod ?? event.requestContext?.http?.method;
+  const id = event.pathParameters?.id;
+  const body = event.body ? JSON.parse(event.body) : {};
 
   switch (httpMethod) {
-    case 'GET':
-      if (id) { /* GetItem */ }
-      else     { /* Scan / List */ }
+    case 'GET':    /* GetItem se id, Scan se não */ break;
     case 'POST':   /* PutItem com crypto.randomUUID() */ break;
     case 'PUT':    /* UpdateItem */ break;
     case 'DELETE': /* DeleteItem */ break;
-    default: return { statusCode: 405, body: 'Method Not Allowed' };
+    default: return { statusCode: 405, body: JSON.stringify({ error: 'Method Not Allowed' }) };
   }
 }
 \`\`\`
@@ -436,9 +472,83 @@ export async function handler(event: any) {
 - Sempre use \`DynamoDBDocumentClient\` de \`@aws-sdk/lib-dynamodb\`
 - Retorne sempre \`{ statusCode, body: JSON.stringify(...) }\`
 
+## Build antes do deploy (OBRIGATÓRIO quando houver Fn.Lambda)
+
+O deploy empacota o código compilado de \`dist/\` — sem build a Lambda sobe vazia ou falha.
+
+\`\`\`bash
+npm install @aws-sdk/client-dynamodb @aws-sdk/lib-dynamodb  # se usar DynamoDB
+npm run build          # compila src/ → dist/
+iacmp deploy --provider aws
+iacmp deploy --provider azure
+\`\`\`
+
+**Sempre rode \`npm run build\` antes de qualquer deploy** (AWS ou Azure).
+
+## Policy stack (OBRIGATÓRIO em todo projeto com Fn.Lambda)
+
+Todo projeto com \`Fn.Lambda\` **deve** ter \`stacks/policy/<nome>-policy-stack.ts\` com \`Policy.IAM\`:
+
+\`\`\`typescript
+import { Stack, Policy } from '@iacmp/core';
+import { produtosTable } from '../database/produtos-table-stack';
+
+const stack = new Stack('ProdutosPolicyStack');
+
+new Policy.IAM(stack, 'ProdutosPolicy', {
+  attachTo: 'ProdutosFn',       // ← id do construct da Lambda (string)
+  attachType: 'lambda',          // ← sempre 'lambda' para Fn.Lambda
+  statements: [
+    {
+      effect: 'Allow',
+      actions: [
+        'dynamodb:GetItem', 'dynamodb:PutItem',
+        'dynamodb:UpdateItem', 'dynamodb:DeleteItem', 'dynamodb:Scan',
+      ],
+      resources: [produtosTable.arn],
+    },
+  ],
+});
+
+export default stack;
+\`\`\`
+
+- **NUNCA** use \`principal\` — não existe na interface. Use \`attachTo\` + \`attachType\`
+- Para sub-resources (ex: objetos dentro de S3): use **string com o id do construct** — NUNCA concatene ref
+  - CORRETO: \`resources: ['MeuBucket/*']\` — o synth resolve para \`<arn>/*\`
+  - ERRADO: \`resources: [\\\`\${bucket.arn}/*\\\`]\` — concatenação de ref quebra no synth
+
+Sem policy stack a Lambda não tem permissão para acessar outros serviços — **sempre crie**.
+
+## Messaging.Queue — props corretas
+
+\`\`\`typescript
+import { Stack, Messaging } from '@iacmp/core';
+
+const stack = new Stack('FilaStack');
+
+const dlq = new Messaging.Queue(stack, 'MinhaDLQ', {
+  messageRetentionSeconds: 345600,  // ← não é retentionPeriod
+});
+
+const queue = new Messaging.Queue(stack, 'MinhaFila', {
+  visibilityTimeoutSeconds: 120,    // ← não é visibilityTimeout; deve ser >= timeout da Lambda
+  messageRetentionSeconds: 345600,
+  dlqArn: dlq.arn,                  // ← não é deadLetterQueue.queueId
+  maxReceiveCount: 3,
+});
+\`\`\`
+
+- URL da fila: \`queue.queueUrl\` (não \`queue.url\`)
+- SQS Worker é **AWS-only** — não tem shim no deploy Azure (validador bloqueia corretamente)
+
 ## Restrições
 
 - NUNCA pergunte sobre formato de IaC, framework ou ferramenta — é sempre iacmp
+- NUNCA use \`code: 'src/...\` em Fn.Lambda — **sempre** \`code: 'dist/handlers/<nome>'\`
+- NUNCA use \`function: referência\` em rotas — **sempre** \`lambdaId: 'ConstructId'\`
+- NUNCA use \`principal\` em Policy.IAM — **sempre** \`attachTo\` + \`attachType\`
+- NUNCA concatene ref com string em \`resources\` — use string com id do construct (ex: \`'MeuBucket/*'\`)
 - NUNCA modifique \`package.json\`, \`tsconfig.json\`, \`.env\` ou \`iacmp.json\`
 - NUNCA use aws-cdk-lib, constructs ou qualquer pacote fora do @iacmp/core
 - NUNCA deixe código incompleto (sem \`// TODO\` ou placeholders)
@@ -676,7 +786,7 @@ export default class Init extends Command {
           return '^1.0.0';
         }
       })();
-      fs.writeFileSync(path.join(projectDir, 'package.json'), packageJson(projectName, coreRef));
+      fs.writeFileSync(path.join(projectDir, 'package.json'), packageJson(projectName, coreRef, flags.provider));
 
       // tsconfig.json
       const hasAppCode = !!template.extraFiles?.some(f => f.path.startsWith('src/'));
