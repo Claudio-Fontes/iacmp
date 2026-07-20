@@ -36,14 +36,28 @@ export function ensureProjectInitialized(cwd: string, options: BootstrapOptions 
   const created: string[] = [];
   const configPath = path.join(cwd, 'iacmp.json');
 
-  // Projeto já inicializado → no-op (respeita configuração existente).
   const hasConfig = fs.existsSync(configPath);
   const hasCore = fs.existsSync(path.join(cwd, 'node_modules', '@iacmp', 'core'));
-  if (hasConfig && hasCore) {
-    return { bootstrapped: false, created };
-  }
 
   const projectName = sanitizeName(path.basename(cwd));
+
+  // .claude/ — gerado mesmo em projetos já inicializados (idempotente: não sobrescreve)
+  const claudeDir = path.join(cwd, '.claude');
+  if (!fs.existsSync(path.join(claudeDir, 'CLAUDE.md'))) {
+    fs.mkdirSync(claudeDir, { recursive: true });
+    fs.writeFileSync(path.join(claudeDir, 'CLAUDE.md'), bootstrapClaudeMd(projectName));
+    created.push('.claude/CLAUDE.md');
+  }
+  if (!fs.existsSync(path.join(claudeDir, 'settings.local.json'))) {
+    fs.mkdirSync(claudeDir, { recursive: true });
+    fs.writeFileSync(path.join(claudeDir, 'settings.local.json'), bootstrapClaudeSettings(cwd));
+    created.push('.claude/settings.local.json');
+  }
+
+  // Projeto já inicializado → no-op para o resto.
+  if (hasConfig && hasCore) {
+    return { bootstrapped: created.length > 0, created };
+  }
 
   // 1. iacmp.json — accountTier free é o default seguro; o usuário muda para
   //    standard editando o arquivo quando a conta suportar (RDS cripto/backup).
@@ -106,19 +120,6 @@ export function ensureProjectInitialized(cwd: string, options: BootstrapOptions 
       stdio: 'pipe',
     });
     created.push(`deps: @iacmp/core${coreSpec.startsWith('@') ? '' : ' (local)'}, tsx, typescript, @types/node`);
-  }
-
-  // .claude/ — CLAUDE.md com instruções para uso via Claude Code
-  const claudeDir = path.join(cwd, '.claude');
-  if (!fs.existsSync(path.join(claudeDir, 'CLAUDE.md'))) {
-    fs.mkdirSync(claudeDir, { recursive: true });
-    fs.writeFileSync(path.join(claudeDir, 'CLAUDE.md'), bootstrapClaudeMd(projectName));
-    created.push('.claude/CLAUDE.md');
-  }
-  if (!fs.existsSync(path.join(claudeDir, 'settings.local.json'))) {
-    fs.mkdirSync(claudeDir, { recursive: true });
-    fs.writeFileSync(path.join(claudeDir, 'settings.local.json'), bootstrapClaudeSettings(cwd));
-    created.push('.claude/settings.local.json');
   }
 
   return { bootstrapped: true, created };
