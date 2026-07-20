@@ -41,13 +41,14 @@ export function ensureProjectInitialized(cwd: string, options: BootstrapOptions 
 
   const projectName = sanitizeName(path.basename(cwd));
 
-  // .claude/ — gerado mesmo em projetos já inicializados (idempotente: não sobrescreve)
-  const claudeDir = path.join(cwd, '.claude');
-  if (!fs.existsSync(path.join(claudeDir, 'CLAUDE.md'))) {
-    fs.mkdirSync(claudeDir, { recursive: true });
-    fs.writeFileSync(path.join(claudeDir, 'CLAUDE.md'), bootstrapClaudeMd(projectName));
-    created.push('.claude/CLAUDE.md');
+  // CLAUDE.md na raiz — lido pelo Claude Code com prioridade alta (idempotente)
+  if (!fs.existsSync(path.join(cwd, 'CLAUDE.md'))) {
+    fs.writeFileSync(path.join(cwd, 'CLAUDE.md'), bootstrapClaudeMd(projectName));
+    created.push('CLAUDE.md');
   }
+
+  // .claude/settings.local.json — permissões para Claude Code (idempotente)
+  const claudeDir = path.join(cwd, '.claude');
   if (!fs.existsSync(path.join(claudeDir, 'settings.local.json'))) {
     fs.mkdirSync(claudeDir, { recursive: true });
     fs.writeFileSync(path.join(claudeDir, 'settings.local.json'), bootstrapClaudeSettings(cwd));

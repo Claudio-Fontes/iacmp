@@ -669,10 +669,12 @@ export default class Init extends Command {
       fs.writeFileSync(path.join(stacksDir, 'exemplo_stack.py'), PYTHON_PLACEHOLDER);
     }
 
-    // .claude/ — CLAUDE.md com instruções para uso via Claude Code + settings.local.json
+    // CLAUDE.md na raiz — lido pelo Claude Code com prioridade alta
+    fs.writeFileSync(path.join(projectDir, 'CLAUDE.md'), claudeMd(projectName));
+
+    // .claude/ — settings.local.json com permissões
     const claudeDir = path.join(projectDir, '.claude');
     fs.mkdirSync(claudeDir, { recursive: true });
-    fs.writeFileSync(path.join(claudeDir, 'CLAUDE.md'), claudeMd(projectName));
     if (!fs.existsSync(path.join(claudeDir, 'settings.local.json'))) {
       fs.writeFileSync(path.join(claudeDir, 'settings.local.json'), claudeSettings(projectDir));
     }
@@ -700,7 +702,7 @@ export default class Init extends Command {
     this.log(`\nProjeto '${projectName}' inicializado${templateLabel}.\n`);
     this.log(`  ${rel}/iacmp.json`);
     this.log(`  ${rel}/.env`);
-    this.log(`  ${rel}/.claude/CLAUDE.md`);
+    this.log(`  ${rel}/CLAUDE.md`);
     if (flags.language === 'typescript') {
       this.log(`  ${rel}/package.json`);
       this.log(`  ${rel}/tsconfig.json`);
