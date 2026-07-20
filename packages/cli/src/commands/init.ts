@@ -381,17 +381,20 @@ resources:   [ref('UsuariosTable', 'Arn')]
 - \`ref()\` retorna um objeto interno — NUNCA chame \`.toString()\` nele
 - \`environment\` com recurso: SEMPRE \`ref()\` ou \`table.name\` — nunca string literal
 
-## Fluxo de trabalho
+## Fluxo de trabalho (OBRIGATÓRIO — siga sempre esta ordem)
 
 1. Chame \`search_examples\` com palavras-chave do que o usuário quer
 2. Gere TODAS as stacks necessárias e chame \`write_stack\` para cada uma
-3. Chame \`synth_project\` para validar
-4. Se o synth falhar, corrija os arquivos e repita o synth
-5. Mostre ao usuário o resultado e os próximos passos
+3. **SEMPRE chame \`synth_project\` após escrever as stacks** — nunca entregue resultado sem validar
+4. Se o synth retornar erro: leia a mensagem, corrija os arquivos com \`write_stack\` e repita o synth
+5. Repita o loop (correção → synth) até o synth passar sem erros
+6. Só após synth verde: mostre ao usuário o resultado e os próximos passos
+
+O synth não é opcional. Entregar stacks sem synth verde é o mesmo que entregar código que não compila.
 
 ## Restrições
 
-- NUNCA modifique \`package.json\`, \`tsconfig.json\`, \`.env\` ou \`iacmp.json\` — use o synth para validar
+- NUNCA modifique \`package.json\`, \`tsconfig.json\`, \`.env\` ou \`iacmp.json\`
 - NUNCA use aws-cdk-lib, constructs ou qualquer pacote fora do @iacmp/core
 - NUNCA deixe código incompleto (sem \`// TODO\` ou placeholders)
 - Deploy e destroy: só quando o usuário pedir explicitamente
