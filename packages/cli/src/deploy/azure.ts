@@ -156,7 +156,18 @@ function buildFunctionBundle(
   const modulePath = handlerPath.replace(/\.[^./]+$/, '');
   const stem = modulePath.replace(/^(\.\/)?(dist|src)\//, '');
 
+  // fn.code (ex: 'src/handlers/itens') aponta direto para a pasta do handler
+  const codeStem = fn.code ? fn.code.replace(/^(\.\/)?(dist|src)\//, '') : null;
+
   const srcEntry = [
+    // preferência: usar fn.code como diretório base
+    ...(codeStem ? [
+      path.join(cwd, 'src', codeStem, 'index.ts'),
+      path.join(cwd, 'src', codeStem, 'index.js'),
+      path.join(cwd, codeStem, 'index.ts'),
+      path.join(cwd, codeStem, 'index.js'),
+    ] : []),
+    // fallback: derivar o caminho pelo handler
     path.join(cwd, 'src', `${stem}.ts`),
     path.join(cwd, 'src', `${stem}.js`),
     path.join(cwd, 'src', stem, 'index.ts'),
@@ -414,6 +425,7 @@ export const azureExecutor: DeployExecutor = {
             '--src', zipPath,
           ];
         };
+        lazyCmd.retries = 2;
         zipCmds.push(lazyCmd);
       }
     }

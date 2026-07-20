@@ -358,7 +358,7 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
           } else {
             const fqdnParam = crossParamName(targetLambdaId, 'Fqdn');
             crossParams.set(fqdnParam, 'string');
-            targetUrl = expr(`'https://\${${fqdnParam}}/invoke'`);
+            targetUrl = expr(`'https://\${${fqdnParam}}/api/invoke'`);
           }
         }
 

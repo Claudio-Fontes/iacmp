@@ -115,21 +115,32 @@ export async function runCommands(
       const stackName = opts.stackName ?? opts.ctx.stackName;
       await runWithPolling(cmd, opts.executor, stackName, opts.ctx);
     } else {
-      try {
-        execFileSync(cmd.bin, cmd.args, { cwd: cmd.cwd, stdio: 'inherit' });
-      } catch (e) {
+      const maxAttempts = 1 + (cmd.retries ?? 0);
+      let lastErr: Error | undefined;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          execFileSync(cmd.bin, cmd.args, { cwd: cmd.cwd, stdio: 'inherit' });
+          lastErr = undefined;
+          break;
+        } catch (e) {
+          lastErr = e as Error;
+          if (attempt < maxAttempts) {
+            process.stdout.write(`[iacmp] Tentativa ${attempt}/${maxAttempts} falhou — retentando em 10s...\n`);
+            execFileSync('sleep', ['10']);
+          }
+        }
+      }
+      if (lastErr) {
         if (cmd.onError) {
-          // onError pode suprimir o erro (não lança) ou re-lançar com mensagem melhor.
-          cmd.onError(e as Error);
+          cmd.onError(lastErr);
         } else {
           throw new Error(
             `Falha ao executar "${formatCommand(cmd)}" — veja a saída acima. ` +
             `Se for um problema de autenticação, configure a credencial da CLI (${cmd.bin}) e tente novamente, ou rode: iacmp doctor`
           );
         }
-      } finally {
-        cmd.cleanup?.();
       }
+      cmd.cleanup?.();
     }
   }
 }

@@ -27,6 +27,8 @@ export interface NativeCommand {
    * crash com "content already consumed" enquanto deploy stack já está rodando no ARM).
    */
   onError?: (err: Error) => void;
+  /** Número de retentativas após falha (default 0 = sem retry). */
+  retries?: number;
 }
 
 export interface DeployContext {
