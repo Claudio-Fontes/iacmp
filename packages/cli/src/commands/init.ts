@@ -318,6 +318,108 @@ function gitignore(): string {
   return ['node_modules/', 'dist/', 'synth-out/', 'audit/', '*.js.map', '*.d.ts', '.DS_Store', '.env', '.iacmp/', '.iacmp-validate-*/'].join('\n') + '\n';
 }
 
+function claudeMd(projectName: string): string {
+  return `# iacmp — ${projectName}
+
+Este projeto usa o **iacmp CLI** para gerar infraestrutura como código (CloudFormation, Bicep, Terraform) a partir de stacks TypeScript.
+
+## Ferramentas MCP disponíveis
+
+Você tem acesso às ferramentas do servidor \`iacmp\` (MCP). Use-as nesta ordem:
+
+1. \`search_examples\` — busca exemplos validados antes de gerar qualquer stack
+2. \`write_stack\` — escreve arquivos TypeScript de stack no projeto
+3. \`synth_project\` — roda \`iacmp synth\` e valida os templates gerados
+4. \`read_synth_output\` — inspeciona os templates gerados (CloudFormation/Bicep/tf.json)
+5. \`deploy_project\` — faz deploy (só quando o usuário pedir explicitamente)
+6. \`destroy_project\` — destrói (só quando o usuário pedir explicitamente)
+
+## Organização de stacks (OBRIGATÓRIO)
+
+Cada camada fica em sua própria subpasta dentro de \`stacks/\`:
+
+| Pasta | Constructs |
+|---|---|
+| \`stacks/compute/\` | \`Compute.*\`, \`Fn.Lambda\` |
+| \`stacks/database/\` | \`Database.*\`, \`Cache.*\` |
+| \`stacks/storage/\` | \`Storage.*\` |
+| \`stacks/network/\` | \`Network.*\`, \`Fn.ApiGateway\` |
+| \`stacks/messaging/\` | \`Messaging.*\`, \`Events.*\` |
+| \`stacks/policy/\` | \`Policy.IAM\` |
+| \`stacks/security/\` | \`Secret.*\`, \`Certificate.*\` |
+| \`stacks/monitoring/\` | \`Monitoring.*\`, \`Logging.*\` |
+| \`stacks/workflow/\` | \`Workflow.*\` |
+
+## Regras de código
+
+- Import único permitido: \`import { Stack, ... } from '@iacmp/core';\`
+- Inclua \`ref\` no import se usar \`ref()\`: \`import { Stack, Fn, ref } from '@iacmp/core';\`
+- Sempre exporte a stack como default: \`export default stack;\`
+- Nomes derivados do domínio do usuário — nunca copie nomes de exemplo
+- Não invente propriedades que não existem no catálogo do @iacmp/core
+
+## Referências cross-stack
+
+**Padrão preferido — export tipado:**
+\`\`\`typescript
+// stacks/database/usuarios-table-stack.ts
+export const table = new Database.DynamoDB(stack, 'UsuariosTable', { ... });
+
+// stacks/compute/usuarios-lambda-stack.ts
+import { table } from '../database/usuarios-table-stack';
+environment: { TABLE_NAME: table.name }
+// Policy.IAM:
+resources: [table.arn]
+\`\`\`
+
+**Alternativa com ref() — quando não há import entre stacks:**
+\`\`\`typescript
+environment: { TABLE_NAME: ref('UsuariosTable', 'Name') }
+resources:   [ref('UsuariosTable', 'Arn')]
+\`\`\`
+
+- \`ref()\` retorna um objeto interno — NUNCA chame \`.toString()\` nele
+- \`environment\` com recurso: SEMPRE \`ref()\` ou \`table.name\` — nunca string literal
+
+## Fluxo de trabalho
+
+1. Chame \`search_examples\` com palavras-chave do que o usuário quer
+2. Gere TODAS as stacks necessárias e chame \`write_stack\` para cada uma
+3. Chame \`synth_project\` para validar
+4. Se o synth falhar, corrija os arquivos e repita o synth
+5. Mostre ao usuário o resultado e os próximos passos
+
+## Restrições
+
+- NUNCA modifique \`package.json\`, \`tsconfig.json\`, \`.env\` ou \`iacmp.json\` — use o synth para validar
+- NUNCA use aws-cdk-lib, constructs ou qualquer pacote fora do @iacmp/core
+- NUNCA deixe código incompleto (sem \`// TODO\` ou placeholders)
+- Deploy e destroy: só quando o usuário pedir explicitamente
+`;
+}
+
+function claudeSettings(projectDir: string): string {
+  const coreDir = (() => {
+    try {
+      const corePkgJson = require.resolve('@iacmp/core/package.json');
+      return path.dirname(corePkgJson);
+    } catch {
+      return path.join(projectDir, 'node_modules', '@iacmp', 'core');
+    }
+  })();
+  return JSON.stringify({
+    permissions: {
+      allow: [
+        `Read(${coreDir}/src/**)`,
+        `Read(${coreDir}/dist/**)`,
+        'Bash(npm run *)',
+        'Bash(iacmp *)',
+        'Bash(npx iacmp *)',
+      ],
+    },
+  }, null, 2) + '\n';
+}
+
 function dotenv(): string {
   return `# Chave da API Anthropic
 ANTHROPIC_API_KEY=
@@ -560,6 +662,14 @@ export default class Init extends Command {
       fs.writeFileSync(path.join(stacksDir, 'exemplo_stack.py'), PYTHON_PLACEHOLDER);
     }
 
+    // .claude/ — CLAUDE.md com instruções para uso via Claude Code + settings.local.json
+    const claudeDir = path.join(projectDir, '.claude');
+    fs.mkdirSync(claudeDir, { recursive: true });
+    fs.writeFileSync(path.join(claudeDir, 'CLAUDE.md'), claudeMd(projectName));
+    if (!fs.existsSync(path.join(claudeDir, 'settings.local.json'))) {
+      fs.writeFileSync(path.join(claudeDir, 'settings.local.json'), claudeSettings(projectDir));
+    }
+
     // git init
     try {
       execSync('git init', { cwd: projectDir, stdio: 'pipe' });
@@ -583,6 +693,7 @@ export default class Init extends Command {
     this.log(`\nProjeto '${projectName}' inicializado${templateLabel}.\n`);
     this.log(`  ${rel}/iacmp.json`);
     this.log(`  ${rel}/.env`);
+    this.log(`  ${rel}/.claude/CLAUDE.md`);
     if (flags.language === 'typescript') {
       this.log(`  ${rel}/package.json`);
       this.log(`  ${rel}/tsconfig.json`);
