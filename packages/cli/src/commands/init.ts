@@ -321,22 +321,37 @@ function gitignore(): string {
 function claudeMd(projectName: string): string {
   return `# iacmp — ${projectName}
 
-Este projeto usa o **iacmp CLI** para gerar infraestrutura como código (CloudFormation, Bicep, Terraform) a partir de stacks TypeScript.
+> **REGRA ABSOLUTA:** Este projeto usa **exclusivamente o iacmp CLI** com constructs TypeScript do \`@iacmp/core\`.
+> NUNCA pergunte "qual formato de IaC?", "Terraform ou CloudFormation?", "qual framework?".
+> A resposta é sempre: **iacmp + TypeScript**. Vá direto à geração.
 
-## Ferramentas MCP disponíveis
+## O que é iacmp
 
-Você tem acesso às ferramentas do servidor \`iacmp\` (MCP). Use-as nesta ordem:
+O iacmp CLI gera CloudFormation, Bicep ou Terraform a partir de stacks TypeScript usando \`@iacmp/core\`.
+O único trabalho aqui é escrever arquivos \`stacks/**/*.ts\` e validar com \`iacmp synth\`.
 
-1. \`search_examples\` — busca exemplos validados antes de gerar qualquer stack
-2. \`write_stack\` — escreve arquivos TypeScript de stack no projeto
-3. \`synth_project\` — roda \`iacmp synth\` e valida os templates gerados
-4. \`read_synth_output\` — inspeciona os templates gerados (CloudFormation/Bicep/tf.json)
-5. \`deploy_project\` — faz deploy (só quando o usuário pedir explicitamente)
-6. \`destroy_project\` — destrói (só quando o usuário pedir explicitamente)
+## Fluxo de trabalho (OBRIGATÓRIO)
+
+### Com ferramentas MCP do servidor \`iacmp\` disponíveis (modo preferido)
+
+1. \`search_examples <palavras-chave>\` — busca exemplos validados
+2. \`write_stack\` — escreve cada arquivo de stack no projeto
+3. \`synth_project\` — valida; **nunca entregue sem synth verde**
+4. Se falhar: corrija com \`write_stack\` e repita o synth até passar
+5. Só depois mostre o resultado ao usuário
+
+### Sem ferramentas MCP (fallback)
+
+1. Escreva os arquivos diretamente com o tool \`Write\` em \`stacks/**/*.ts\`
+2. Execute: \`iacmp synth\` via Bash para validar
+3. Se falhar: leia o erro, corrija os arquivos e repita o synth
+4. Só depois mostre o resultado ao usuário
+
+O synth não é opcional em nenhum dos dois caminhos.
 
 ## Organização de stacks (OBRIGATÓRIO)
 
-Cada camada fica em sua própria subpasta dentro de \`stacks/\`:
+Cada camada em sua própria subpasta dentro de \`stacks/\`:
 
 | Pasta | Constructs |
 |---|---|
@@ -352,8 +367,8 @@ Cada camada fica em sua própria subpasta dentro de \`stacks/\`:
 
 ## Regras de código
 
-- Import único permitido: \`import { Stack, ... } from '@iacmp/core';\`
-- Inclua \`ref\` no import se usar \`ref()\`: \`import { Stack, Fn, ref } from '@iacmp/core';\`
+- Import único: \`import { Stack, ... } from '@iacmp/core';\`
+- Inclua \`ref\` se usar \`ref()\`: \`import { Stack, Fn, ref } from '@iacmp/core';\`
 - Sempre exporte a stack como default: \`export default stack;\`
 - Nomes derivados do domínio do usuário — nunca copie nomes de exemplo
 - Não invente propriedades que não existem no catálogo do @iacmp/core
@@ -368,7 +383,6 @@ export const table = new Database.DynamoDB(stack, 'UsuariosTable', { ... });
 // stacks/compute/usuarios-lambda-stack.ts
 import { table } from '../database/usuarios-table-stack';
 environment: { TABLE_NAME: table.name }
-// Policy.IAM:
 resources: [table.arn]
 \`\`\`
 
@@ -378,22 +392,12 @@ environment: { TABLE_NAME: ref('UsuariosTable', 'Name') }
 resources:   [ref('UsuariosTable', 'Arn')]
 \`\`\`
 
-- \`ref()\` retorna um objeto interno — NUNCA chame \`.toString()\` nele
+- \`ref()\` é um objeto interno — NUNCA chame \`.toString()\` nele
 - \`environment\` com recurso: SEMPRE \`ref()\` ou \`table.name\` — nunca string literal
-
-## Fluxo de trabalho (OBRIGATÓRIO — siga sempre esta ordem)
-
-1. Chame \`search_examples\` com palavras-chave do que o usuário quer
-2. Gere TODAS as stacks necessárias e chame \`write_stack\` para cada uma
-3. **SEMPRE chame \`synth_project\` após escrever as stacks** — nunca entregue resultado sem validar
-4. Se o synth retornar erro: leia a mensagem, corrija os arquivos com \`write_stack\` e repita o synth
-5. Repita o loop (correção → synth) até o synth passar sem erros
-6. Só após synth verde: mostre ao usuário o resultado e os próximos passos
-
-O synth não é opcional. Entregar stacks sem synth verde é o mesmo que entregar código que não compila.
 
 ## Restrições
 
+- NUNCA pergunte sobre formato de IaC, framework ou ferramenta — é sempre iacmp
 - NUNCA modifique \`package.json\`, \`tsconfig.json\`, \`.env\` ou \`iacmp.json\`
 - NUNCA use aws-cdk-lib, constructs ou qualquer pacote fora do @iacmp/core
 - NUNCA deixe código incompleto (sem \`// TODO\` ou placeholders)
