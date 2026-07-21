@@ -185,7 +185,7 @@ export function synthNetwork(
       return [[logicalId, {
         Type: 'AWS::EC2::SecurityGroup',
         Properties: {
-          GroupDescription: (props.description as string) ?? `Security group ${logicalId}`,
+          GroupDescription: ((props.description as string) ?? `Security group ${logicalId}`).replace(/[^\x00-\x7F]/g, '-'),
           VpcId: props.vpcId ? resolveVpcId(props.vpcId as string, ctx) : undefined,
           SecurityGroupIngress: ingress.map((r, i) => {
             const base = {
@@ -346,7 +346,11 @@ export function synthNetwork(
     }
 
     case 'Network.CDN': {
-      const origins = (props.origins as Array<Record<string, unknown>>) ?? [];
+      const rawOrigins = (props.origins as Array<Record<string, unknown>>) ?? [];
+      // Aceita bucketRef top-level como atalho: trata como origins: [{ id: 'default', domainName: '', bucketRef: value }]
+      const origins = rawOrigins.length === 0 && props.bucketRef
+        ? [{ id: 'default', domainName: '', bucketRef: props.bucketRef }]
+        : rawOrigins;
       const cachePolicies = (props.cachePolicies as Array<Record<string, unknown>>) ?? [];
 
       if (origins.length === 0) {

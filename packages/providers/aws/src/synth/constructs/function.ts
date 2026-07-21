@@ -469,7 +469,7 @@ export function synthFunction(
               Statement: statements.map(s => ({
                 Effect: s.effect as string,
                 Action: s.actions as string[],
-                Resource: ((s.resources as Array<string | Ref>) ?? ['*']).map(r => {
+                Resource: ((s.resources as Array<string | Ref>) ?? ['*']).flatMap(r => {
                   // Quando a Lambda é acionada por um bucket (via eventNotifications) na
                   // mesma stack, referenciar o ARN desse bucket na IAM policy cria um
                   // ciclo CloudFormation: Bucket→Permission→Lambda→PolicyRole→Bucket.
@@ -477,9 +477,21 @@ export function synthFunction(
                   // real (a Lambda::Permission já restringe qual bucket pode invocar).
                   const bucketId = isSamestackS3BucketRef(r, ctx);
                   if (bucketId && ctx.s3TriggerBucketsForLambda.get(props.attachTo as string)?.has(bucketId)) {
-                    return '*';
+                    return ['*'];
                   }
-                  return resolvePolicyResource(r, ctx);
+                  const resolved = resolvePolicyResource(r, ctx);
+                  // S3 exige ARN do bucket para ações bucket-level E ARN/* para
+                  // ações object-level (s3:PutObject, s3:GetObject...). Sempre
+                  // emite os dois quando o resource é um Storage.Bucket.
+                  const refId = isRef(r)
+                    ? (r as Ref).constructId
+                    : typeof r === 'string' && r !== '*'
+                      ? (/^([^./]+)/.exec(r)?.[1])
+                      : undefined;
+                  if (refId && ctx.registry.get(refId)?.type === 'Storage.Bucket') {
+                    return [resolved, { 'Fn::Join': ['', [resolved, '/*']] }];
+                  }
+                  return [resolved];
                 }),
                 ...(s.conditions ? { Condition: s.conditions } : {}),
               })),
