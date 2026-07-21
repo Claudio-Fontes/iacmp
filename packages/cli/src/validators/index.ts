@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { Stack } from '@iacmp/core';
+import { Stack, isRef } from '@iacmp/core';
 
 export interface LoadedStack {
   stackName: string;
@@ -106,6 +106,9 @@ export function validateHandlerSql(cwd: string): string[] {
 const AZURE_SHIMMED_AWS_SDK = new Set([
   '@aws-sdk/client-dynamodb', '@aws-sdk/lib-dynamodb',
   '@aws-sdk/client-s3', '@aws-sdk/s3-request-presigner',
+  // SQS é permitido em handlers dual-cloud (Azure path usa @azure/service-bus,
+  // AWS path usa @aws-sdk/client-sqs); não há shim, mas o handler guarda isAzure.
+  '@aws-sdk/client-sqs',
 ]);
 
 export function validateHandlerCloudSdk(cwd: string, provider: string): string[] {
@@ -422,7 +425,16 @@ export function validateHandlerEnvVars(loaded: LoadedStack[], cwd: string): stri
   const RUNTIME_PROVIDED = /^(AWS_|_|LAMBDA_|NODE_ENV$|TZ$)/;
   // Vars injetadas automaticamente pelo Azure synth (function.ts) quando a Lambda
   // referencia Database.DynamoDB — ausentes no AWS por design (handler verifica !!MONGO_URI).
-  const AZURE_AUTO_INJECTED = new Set(['MONGO_URI', 'DB_NAME']);
+  const AZURE_AUTO_INJECTED_BASE = new Set(['MONGO_URI', 'DB_NAME']);
+
+  // Mapa global construct-id → tipo para detecção de auto-inject Storage.Bucket
+  const constructTypeMap = new Map<string, string>();
+  for (const { stack } of loaded) {
+    for (const c of stack.constructs) {
+      constructTypeMap.set(c.id, c.type);
+    }
+  }
+
   for (const { stack } of loaded) {
     for (const c of stack.constructs) {
       if (c.type !== 'Function.Lambda') continue;
@@ -439,7 +451,19 @@ export function validateHandlerEnvVars(loaded: LoadedStack[], cwd: string): stri
         if (!RUNTIME_PROVIDED.test(m[1])) used.add(m[1]);
       }
       if (used.size === 0) continue;
-      const declared = new Set(Object.keys((props.environment as Record<string, unknown>) ?? {}));
+      const envDecl = (props.environment as Record<string, unknown>) ?? {};
+      const declared = new Set(Object.keys(envDecl));
+
+      // Vars auto-injetadas pelo Azure synth: base + {k}_CONNECTION_STRING para
+      // cada env var k que é ref a Storage.Bucket.Name (azure deploy injeta a
+      // connection string da storage account para que o handler acesse blobs).
+      const AZURE_AUTO_INJECTED = new Set(AZURE_AUTO_INJECTED_BASE);
+      for (const [k, v] of Object.entries(envDecl)) {
+        if (isRef(v) && v.attribute === 'Name' && constructTypeMap.get(v.constructId) === 'Storage.Bucket') {
+          AZURE_AUTO_INJECTED.add(`${k}_CONNECTION_STRING`);
+        }
+      }
+
       const missing = [...used].filter(k => !declared.has(k) && !AZURE_AUTO_INJECTED.has(k)).sort();
       if (missing.length > 0) {
         errors.push(
