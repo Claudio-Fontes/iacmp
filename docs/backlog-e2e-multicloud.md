@@ -50,6 +50,24 @@ Status AWS = bateria jun/jul + re-validações pós-refactors. Status Azure = s�
 
 ## Itens de ferramenta já registrados (fora da matriz)
 
+- **Validação de tier/região no synth e deploy** — `resource-tier-map.ts` + `azure-resource-check.ts` existem mas só são chamados no `iacmp ai`. Integrar no `synth` e no `deploy` (e nos MCP tools `synth_project`/`deploy_project`) para que o check rode independente do flow de entrada.
+
+- **Validador de organização de stacks** (produção + bateria) — synth e `mcp__iacmp__write_stack` devem rejeitar arquivos que misturam domínios (ex: `Fn.Lambda` + `Database.DynamoDB` + `Network.VPC` no mesmo arquivo). Sem esse validador tanto o `iacmp ai` quanto os agentes de bateria geram monólito — a regra do CLAUDE.md não é suficiente porque os exemplos contradizem ela.
+
+- **Exemplos `examples/` são monolíticos** — `examples/webapp/stacks/webapp-stack.ts` tem `Network.VPC` + `Storage.Bucket` no mesmo arquivo. O `iacmp ai` aprende pelo exemplo, não pela regra escrita no CLAUDE.md. Corrigir todos os exemplos para usar stacks separadas por domínio.
+
+- **Template `fullstack` do `iacmp init` é monolítico** — `stackContent` do template `fullstack` em `commands/init.ts` tem VPC + Compute + Database + Storage numa única stack. Refatorar para gerar múltiplos arquivos separados.
+
+- **Convenção de stacks: SEPARADAS por domínio em AMBAS as clouds** — confirmado pelo usuário. Input TypeScript deve ter stacks separadas por domínio (messaging, compute, database, api, network…) tanto no AWS quanto no Azure. O `_main.bicep` é OUTPUT gerado automaticamente pelo synth Azure a partir dessas stacks separadas — não é um input `main.ts` escrito à mão. Os agentes de bateria estavam gerando `stacks/main-stack.ts` monolítico para ambas as clouds — isso é errado e precisa ser corrigido nas instruções dos agentes e no template do `iacmp init`.
+
+- **Performance do deploy Azure** (achados 2026-07-21; o piso APIM ~30-45min e CAE ~15-20min é da plataforma, mas o nosso lado amplifica):
+  1. 2º passo re-deploya o `_main.bicep` inteiro só para preencher FQDN do Event Grid (`deploy.ts:195-223`) — tornar incremental (só o módulo afetado)
+  2. Zip deploy das Functions é sequencial com retry 10s (`azure.ts:421-429`) — paralelizar
+  3. esbuild + zip refeitos a cada deploy sem cache, inclusive no 2º passo (`azure.ts:150-390`) — cachear bundles por hash do fonte
+  4. `waitForStackTerminal` com `Atomics.wait` de 30s bloqueante (`azure.ts:655`) — reduzir granularidade/desbloquear
+
+- **APIM compartilhado (`azureSharedApim`)** — modo em que o projeto referencia um APIM existente (`existing` no Bicep) em vez de criar o próprio: synth emite só APIs/operations/policies como filhos; destroy remove só as APIs do projeto. Elimina o piso de ~30-45min de criação por projeto. Útil em produção (um APIM para vários serviços) e na bateria (ciclos Azure próximos dos AWS). Trade-off na bateria: relaxa o isolamento total e a verificação de conta limpa — decidir política antes de adotar nos ciclos.
+
 - Deploy Azure sem Docker local (blob+SAS) — adiado, ver plano-p4
 - Handlers multi-cloud nível 2 (facade `@iacmp/runtime`) — a jogada estratégica, ver plano-p4
 - Migração GCP/Azure para o grafo (P4) + GCP via Terraform — ver plano-p4

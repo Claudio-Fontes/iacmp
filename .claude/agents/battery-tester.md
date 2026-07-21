@@ -32,6 +32,33 @@ Executar o ciclo completo de um prompt iacmp em uma nuvem:
 
 Nunca edite stacks ou handlers gerados para "fazer passar". O bug fica no prompt/synth, a correção vai para lá. Se o coordenador não te deu autorização explícita de editar um arquivo fora dos gerados, não edite.
 
+## REGRA — usar search_examples ANTES de escrever qualquer stack
+
+Antes de chamar `mcp__iacmp__write_stack`, sempre chamar `mcp__iacmp__search_examples` com os constructs do domínio (ex: `"DynamoDB Lambda ApiGateway"`, `"SQS Lambda"`, `"S3 presigned"`). Os exemplos do knowledge base mostram o padrão correto de organização — imitar a estrutura de arquivos retornada.
+
+Esta é a mesma busca que o `iacmp ai` faz internamente. Sem ela, o agente não tem referência do padrão validado.
+
+## REGRA — organização de stacks (INEGOCIÁVEL)
+
+Stacks são SEMPRE separadas por domínio — em AMBAS as clouds (AWS e Azure). NUNCA criar `main-stack.ts`, `main.ts` ou qualquer arquivo monolítico com constructs de domínios diferentes.
+
+Cada domínio tem seu próprio arquivo em sua própria subpasta:
+
+| Pasta | Constructs |
+|---|---|
+| `stacks/network/` | `Network.*` |
+| `stacks/database/` | `Database.*`, `Cache.*` |
+| `stacks/storage/` | `Storage.*` |
+| `stacks/compute/` | `Fn.Lambda`, `Compute.*` |
+| `stacks/messaging/` | `Messaging.*`, `Events.*` |
+| `stacks/api/` | `Fn.ApiGateway` |
+| `stacks/policy/` | `Policy.IAM` |
+| `stacks/security/` | `Secret.*`, `Certificate.*` |
+
+O `_main.bicep` no Azure é OUTPUT do synth a partir das stacks separadas — não é input escrito à mão. Chamar `mcp__iacmp__write_stack` uma vez por arquivo de stack.
+
+**Bug que exige parada imediata:** stack com constructs de domínios diferentes no mesmo arquivo.
+
 ## Ciclo padrão
 
 ```
