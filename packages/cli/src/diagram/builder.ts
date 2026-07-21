@@ -23,7 +23,7 @@ function safeId(raw: string): string {
   return raw.replace(/[^a-zA-Z0-9_]/g, '_');
 }
 
-function describeProps(c: BaseConstruct): string {
+function describeProps(c: BaseConstruct, provider = 'aws'): string {
   const p = c.props;
   const parts: string[] = [];
 
@@ -47,7 +47,13 @@ function describeProps(c: BaseConstruct): string {
   if (c.type === 'Function.Lambda') {
     if (p.runtime) parts.push(`runtime: ${p.runtime}`);
     if (p.memory) parts.push(`memory: ${p.memory}MB`);
-    if (p.handler) parts.push(`handler: ${p.handler}`);
+    if (provider === 'azure') {
+      parts.push('trigger: HTTP');
+    } else if (provider === 'gcp') {
+      parts.push('trigger: HTTP');
+    } else {
+      if (p.handler) parts.push(`handler: ${p.handler}`);
+    }
   }
   if (c.type === 'Network.SecurityGroup') {
     const ingress = (p.ingressRules as Array<Record<string, unknown>>) ?? [];
@@ -134,7 +140,13 @@ function describeProps(c: BaseConstruct): string {
   }
   if (c.type === 'Database.DynamoDB') {
     if (p.partitionKey) parts.push(`pk: ${p.partitionKey}`);
-    if (p.billingMode) parts.push(p.billingMode as string);
+    if (p.billingMode) {
+      const billingLabel: Record<string, Record<string, string>> = {
+        azure: { PAY_PER_REQUEST: 'serverless', PROVISIONED: 'provisioned' },
+        gcp:   { PAY_PER_REQUEST: 'serverless', PROVISIONED: 'provisioned' },
+      };
+      parts.push(billingLabel[provider]?.[p.billingMode as string] ?? (p.billingMode as string));
+    }
     if (p.streamEnabled) parts.push('streams on');
   }
   if (c.type === 'Cache.Memcached') {
@@ -149,7 +161,10 @@ function describeProps(c: BaseConstruct): string {
   }
   if (c.type === 'Secret.Vault') {
     if (p.rotationDays) parts.push(`rotation: ${p.rotationDays}d`);
-    if (p.kmsKeyId) parts.push('KMS encrypted');
+    if (p.kmsKeyId) {
+      const kmsLabel: Record<string, string> = { azure: 'customer-managed key', gcp: 'CMEK' };
+      parts.push(kmsLabel[provider] ?? 'KMS encrypted');
+    }
   }
   if (c.type === 'Certificate.TLS') {
     if (p.domainName) parts.push(`domain: ${p.domainName}`);
@@ -182,7 +197,7 @@ function buildStackDiagram(name: string, stack: Stack, provider: string): Diagra
       label: c.id,
       constructType: c.type,
       technology,
-      description: describeProps(c),
+      description: describeProps(c, provider),
       props: c.props,
     };
   });
@@ -228,12 +243,13 @@ function buildStackDiagram(name: string, stack: Stack, provider: string): Diagra
   // ApiGateway → Lambda via routes[].lambdaId (mesma stack)
   const apiGateways = stack.constructs.filter(c => c.type === 'Function.ApiGateway');
   for (const gw of apiGateways) {
-    const routes = (gw.props?.routes as Array<{ lambdaId?: string }>) ?? [];
+    const routes = (gw.props?.routes as Array<{ lambdaId?: string; function?: { id?: string } }>) ?? [];
     const gwNode = nodes.find(n => n.label === gw.id);
     if (!gwNode) continue;
     for (const route of routes) {
-      if (!route.lambdaId) continue;
-      const lambdaNode = nodes.find(n => n.label === route.lambdaId);
+      const refId = route.lambdaId ?? route.function?.id;
+      if (!refId) continue;
+      const lambdaNode = nodes.find(n => n.label === refId);
       if (lambdaNode) {
         relationships.push({ sourceId: gwNode.id, targetId: lambdaNode.id, label: 'invokes', inferred: false });
       }
@@ -351,17 +367,18 @@ function inferCrossStackRelationships(
     }
   }
 
-  // ApiGateway cross-stack → Lambda via routes[].lambdaId
+  // ApiGateway cross-stack → Lambda via routes[].lambdaId ou routes[].function.id
   for (const srcStack of builtStacks) {
     for (const srcNode of srcStack.nodes) {
       if (srcNode.constructType !== 'Function.ApiGateway') continue;
-      const routes = (srcNode.props?.routes as Array<{ lambdaId?: string }>) ?? [];
+      const routes = (srcNode.props?.routes as Array<{ lambdaId?: string; function?: { id?: string } }>) ?? [];
       for (const route of routes) {
-        if (!route.lambdaId) continue;
+        const refId = route.lambdaId ?? route.function?.id;
+        if (!refId) continue;
         // Procura lambda com esse label em qualquer stack (exceto a própria, já tratada)
         for (const tgtStack of builtStacks) {
           if (tgtStack.name === srcStack.name) continue;
-          const tgtNode = tgtStack.nodes.find(n => n.label === route.lambdaId);
+          const tgtNode = tgtStack.nodes.find(n => n.label === refId);
           if (tgtNode) {
             relationships.push({ sourceId: srcNode.id, targetId: tgtNode.id, label: 'invokes', inferred: false });
           }

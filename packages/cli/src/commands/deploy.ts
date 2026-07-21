@@ -140,8 +140,11 @@ export default class Deploy extends Command {
     // Sem nome de projeto (config.name vazio ou ausente), comportamento idêntico
     // ao anterior (sem prefixo). O nome LÓGICO (t.stackName, do arquivo) continua
     // sendo usado para display e para filtro --stack.
-    const physicalStackName = (logicalName: string): string =>
-      config.name ? `${config.name}-${logicalName}` : logicalName;
+    const physicalStackName = (logicalName: string): string => {
+      const raw = config.name ? `${config.name}-${logicalName}` : logicalName;
+      // CloudFormation exige [a-zA-Z][-a-zA-Z0-9]* — prefixo 'p-' se começar com dígito
+      return /^\d/.test(raw) ? `p-${raw}` : raw;
+    };
 
     const baseCtx: Omit<DeployContext, 'stackName' | 'templatePath'> = {
       cwd,

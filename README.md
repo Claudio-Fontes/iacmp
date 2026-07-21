@@ -182,6 +182,26 @@ new Fn.Lambda(stack, 'Handler', { runtime: 'nodejs20', handler: 'index.handler',
 export default stack;
 ```
 
+## Teste API CRUD
+API CRUD de itens deployada em AWS e Azure via iacmp.
+
+## Endpoints
+
+### AWS
+
+```bash
+curl -X POST https://qhxe8c9dq1.execute-api.us-east-1.amazonaws.com/itens \
+  -H "Content-Type: application/json" \
+  -d '{"nome": "Produto A", "preco": 99.90}'
+```
+
+### Azure
+
+```bash
+curl -X POST https://itens-api-nuamz4umy63zu.azure-api.net/api/itens \
+  -H "Content-Type: application/json" \
+  -d '{"nome": "Produto A", "preco": 99.90}'
+```
 ## Auditoria
 
 Analisa as stacks e gera relatórios Markdown em `audit/`:
