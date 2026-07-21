@@ -30,17 +30,11 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
         }
         appSettings.push({ name: k, value });
 
-        // Azure: quando a Lambda referencia Database.DynamoDB ou Storage.Bucket
-        // pelo atributo Name, injeta automaticamente a ConnectionString como
-        // {ENV_KEY}_CONNECTION_STRING. Em AWS, IAM cuida da auth — em Azure é
-        // preciso, e é a convenção que os shims (dynamo/s3) usam para achar a
-        // credencial. Usa globalIdx para detectar o tipo mesmo cross-stack.
         if (isRef(v)) {
           const ref = v as Ref;
           const c = ctx.globalIdx.get(ref.constructId) ?? ctx.idx.get(ref.constructId);
-          if ((c?.type === 'Database.DynamoDB' || c?.type === 'Storage.Bucket') && ref.attribute === 'Name') {
+          if (c?.type === 'Storage.Bucket' && ref.attribute === 'Name') {
             const connKey = `${k}_CONNECTION_STRING`;
-            // O valor é sempre um crossParam — o construct pode estar em outra stack
             const connVal = resolveRef({ ...ref, attribute: 'ConnectionString' } as Ref, ctx.idx, crossParams);
             appSettings.push({ name: connKey, value: connVal });
           }

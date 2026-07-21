@@ -85,8 +85,9 @@ const RESOLVE_MAP: Record<string, Record<string, ResolutionEntry>> = {
     'Name': { sameStack: (l) => resourceRef(l, 'Id'), exportSuffix: 'Name' },
   },
   'Database.DynamoDB': {
-    'Arn':  { sameStack: (l) => resourceRef(l, 'Arn'), exportSuffix: 'Arn' },
-    'Name': { sameStack: (l) => resourceRef(l, 'Id'), exportSuffix: 'Name' },
+    'Arn':              { sameStack: (l) => resourceRef(l, 'Arn'), exportSuffix: 'Arn' },
+    'Name':             { sameStack: (l) => resourceRef(l, 'Id'), exportSuffix: 'Name' },
+    'ConnectionString': { sameStack: (_l) => '', exportSuffix: 'ConnectionString' },
   },
   'Network.VPC':           { 'VpcId':   { sameStack: (l) => resourceRef(l, 'Id'), exportSuffix: 'VpcId' } },
   'Network.Subnet':        { 'SubnetId':{ sameStack: (l) => resourceRef(l, 'Id'), exportSuffix: 'SubnetId' } },

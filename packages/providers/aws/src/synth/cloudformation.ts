@@ -303,6 +303,8 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
     }
     if (construct.type === 'Database.DynamoDB') {
       // Nome (Ref) e ARN — para cross-stack (env var TABLE_NAME, policy resources).
+      // ConnectionString = vazio no AWS (DynamoDB usa IAM, não connection string);
+      // handlers verificam se MONGO_URI é truthy para detectar Azure.
       const logicalId = construct.id.replace(/[^a-zA-Z0-9]/g, '');
       outputs[`${logicalId}Name`] = {
         Value: resourceRef(logicalId, 'Id'),
@@ -311,6 +313,10 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
       outputs[`${logicalId}Arn`] = {
         Value: resourceRef(logicalId, 'Arn'),
         Export: { Name: `${prefixStack(stack.name)}-${construct.id}-Arn` },
+      };
+      outputs[`${logicalId}ConnectionString`] = {
+        Value: '',
+        Export: { Name: `${prefixStack(stack.name)}-${construct.id}-ConnectionString` },
       };
     }
     if (construct.type === 'Function.Lambda') {
@@ -438,7 +444,9 @@ export function buildGraph(stack: Stack, allStacks?: Stack[], profile: Environme
       // Para ambos os tipos (REST e HTTP/v2), a invoke URL é construída via Fn::Sub.
       // AWS::ApiGatewayV2::Stage não expõe InvokeUrl como GetAtt — usar Fn::Sub com
       // o Ref da API (que retorna o apiId) e o nome do stage.
-      const urlValue = { 'Fn::Sub': `https://\${${logicalId}}.execute-api.\${AWS::Region}.amazonaws.com/${stageName}` };
+      // HTTP API v2: o $default stage NÃO aparece no path da URL invoke — omitir.
+      const urlStagePath = apigwType === 'REST' ? `/${stageName}` : '';
+      const urlValue = { 'Fn::Sub': `https://\${${logicalId}}.execute-api.\${AWS::Region}.amazonaws.com${urlStagePath}` };
       outputs['ApiUrl'] = {
         Value: urlValue,
         Export: { Name: `${prefixStack(stack.name)}-${construct.id}-ApiUrl` },

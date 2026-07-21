@@ -86,40 +86,47 @@ export function synthesizeDatabase(construct: BaseConstruct, ctx: SynthContext):
     }
 
     case 'Database.DynamoDB': {
+      // Azure: DynamoDB → Cosmos DB MongoDB API (não Table API)
+      const dbName = `${construct.id.toLowerCase()}-db`;
       resources.push({
         sym,
         type: 'Microsoft.DocumentDB/databaseAccounts',
         apiVersion: '2023-04-15',
         name: expr(`'${construct.id.toLowerCase()}-\${uniqueString(resourceGroup().id)}'`),
         location: 'location',
-        kind: 'GlobalDocumentDB',
+        kind: 'MongoDB',
         tags: tag(construct.id),
         properties: {
           databaseAccountOfferType: 'Standard',
-          capabilities: [{ name: 'EnableTable' }],
+          apiProperties: { serverVersion: '4.2' },
           locations: [{ locationName: expr('location'), failoverPriority: 0, isZoneRedundant: false }],
           backupPolicy: { type: 'Periodic', periodicModeProperties: { backupIntervalInMinutes: 1440, backupRetentionIntervalInHours: 168 } },
         },
       });
-      const tableSym = `${sym}Table`;
+      const dbSym = `${sym}Db`;
       resources.push({
-        sym: tableSym,
-        type: 'Microsoft.DocumentDB/databaseAccounts/tables',
+        sym: dbSym,
+        type: 'Microsoft.DocumentDB/databaseAccounts/mongodbDatabases',
         apiVersion: '2023-04-15',
         parent: sym,
-        name: construct.id,
-        properties: {
-          resource: { id: construct.id },
-          options: {},
-        },
+        name: dbName,
+        properties: { resource: { id: dbName }, options: {} },
+      });
+      resources.push({
+        sym: `${sym}Coll`,
+        type: 'Microsoft.DocumentDB/databaseAccounts/mongodbDatabases/collections',
+        apiVersion: '2023-04-15',
+        parent: dbSym,
+        name: construct.id.toLowerCase(),
+        properties: { resource: { id: construct.id.toLowerCase() }, options: {} },
       });
       outputs.push({ name: outputName(construct.id, 'Endpoint'), type: 'string', value: `${sym}.properties.documentEndpoint` });
-      outputs.push({ name: crossParamName(construct.id, 'Name'), type: 'string', value: `'${construct.id}'` });
+      outputs.push({ name: crossParamName(construct.id, 'Name'), type: 'string', value: `'${construct.id.toLowerCase()}'` });
       outputs.push({ name: crossParamName(construct.id, 'Arn'), type: 'string', value: `${sym}.id` });
       outputs.push({
         name: crossParamName(construct.id, 'ConnectionString'),
         type: 'string',
-        value: `'DefaultEndpointsProtocol=https;AccountName=\${${sym}.name};AccountKey=\${${sym}.listKeys().primaryMasterKey};TableEndpoint=https://\${${sym}.name}.table.cosmos.azure.com:443/;'`,
+        value: `${sym}.listConnectionStrings().connectionStrings[0].connectionString`,
       });
       break;
     }

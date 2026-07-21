@@ -109,7 +109,7 @@ export function resolveRef(r: Ref, idx: Map<string, BaseConstruct>, crossParams:
   }
   const sym = toSym(r.constructId);
   if (c.type === 'Database.DynamoDB' && r.attribute === 'ConnectionString') {
-    return expr(`'DefaultEndpointsProtocol=https;AccountName=\${${sym}.name};AccountKey=\${${sym}.listKeys().primaryMasterKey};TableEndpoint=https://\${${sym}.name}.table.cosmos.azure.com:443/;'`);
+    return expr(`${sym}.listConnectionStrings().connectionStrings[0].connectionString`);
   }
   if (c.type === 'Database.DynamoDB' && r.attribute === 'Name') {
     return r.constructId;
