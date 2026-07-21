@@ -420,6 +420,9 @@ export function validateHandlerPgSsl(loaded: LoadedStack[], cwd: string): string
 export function validateHandlerEnvVars(loaded: LoadedStack[], cwd: string): string[] {
   const errors: string[] = [];
   const RUNTIME_PROVIDED = /^(AWS_|_|LAMBDA_|NODE_ENV$|TZ$)/;
+  // Vars injetadas automaticamente pelo Azure synth (function.ts) quando a Lambda
+  // referencia Database.DynamoDB — ausentes no AWS por design (handler verifica !!MONGO_URI).
+  const AZURE_AUTO_INJECTED = new Set(['MONGO_URI', 'DB_NAME']);
   for (const { stack } of loaded) {
     for (const c of stack.constructs) {
       if (c.type !== 'Function.Lambda') continue;
@@ -437,7 +440,7 @@ export function validateHandlerEnvVars(loaded: LoadedStack[], cwd: string): stri
       }
       if (used.size === 0) continue;
       const declared = new Set(Object.keys((props.environment as Record<string, unknown>) ?? {}));
-      const missing = [...used].filter(k => !declared.has(k)).sort();
+      const missing = [...used].filter(k => !declared.has(k) && !AZURE_AUTO_INJECTED.has(k)).sort();
       if (missing.length > 0) {
         errors.push(
           `Fn.Lambda "${c.id}" → ${path.relative(cwd, srcFile)} lê process.env.${missing.join('/')} ` +

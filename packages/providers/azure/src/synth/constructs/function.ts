@@ -33,6 +33,14 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
         if (isRef(v)) {
           const ref = v as Ref;
           const c = ctx.globalIdx.get(ref.constructId) ?? ctx.idx.get(ref.constructId);
+          if (c?.type === 'Database.DynamoDB' && ref.attribute === 'Name') {
+            const alreadyHasMongoUri = appSettings.some(s => s.name === 'MONGO_URI');
+            if (!alreadyHasMongoUri) {
+              const mongoUri = resolveRef({ ...ref, attribute: 'ConnectionString' } as Ref, ctx.idx, crossParams);
+              appSettings.push({ name: 'MONGO_URI', value: mongoUri });
+              appSettings.push({ name: 'DB_NAME', value: resolveRef({ ...ref, attribute: 'Name' } as Ref, ctx.idx, crossParams) });
+            }
+          }
           if (c?.type === 'Storage.Bucket' && ref.attribute === 'Name') {
             const connKey = `${k}_CONNECTION_STRING`;
             const connVal = resolveRef({ ...ref, attribute: 'ConnectionString' } as Ref, ctx.idx, crossParams);
