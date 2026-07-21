@@ -245,13 +245,16 @@ export function synthDatabase(
     }
 
     case 'Database.DynamoDB': {
+      // Normaliza partitionKey/sortKey: aceita string ou objeto {name, type} (gerado erroneamente por IA)
+      const normKey = (v: unknown): string =>
+        typeof v === 'string' ? v : (v as Record<string, unknown>)?.name as string ?? String(v);
       const billingMode = (props.billingMode as string) ?? 'PAY_PER_REQUEST';
       const gsis = (props.globalSecondaryIndexes as Array<Record<string, unknown>>) ?? [];
       const attrDefs = [
-        { AttributeName: props.partitionKey as string, AttributeType: (props.partitionKeyType as string) ?? 'S' },
-        ...(props.sortKey ? [{ AttributeName: props.sortKey as string, AttributeType: (props.sortKeyType as string) ?? 'S' }] : []),
-        ...gsis.map(g => ({ AttributeName: g.partitionKey as string, AttributeType: (g.partitionKeyType as string) ?? 'S' })),
-        ...gsis.filter(g => g.sortKey).map(g => ({ AttributeName: g.sortKey as string, AttributeType: (g.sortKeyType as string) ?? 'S' })),
+        { AttributeName: normKey(props.partitionKey), AttributeType: (props.partitionKeyType as string) ?? 'S' },
+        ...(props.sortKey ? [{ AttributeName: normKey(props.sortKey), AttributeType: (props.sortKeyType as string) ?? 'S' }] : []),
+        ...gsis.map(g => ({ AttributeName: normKey(g.partitionKey), AttributeType: (g.partitionKeyType as string) ?? 'S' })),
+        ...gsis.filter(g => g.sortKey).map(g => ({ AttributeName: normKey(g.sortKey), AttributeType: (g.sortKeyType as string) ?? 'S' })),
       ].filter((v, i, a) => a.findIndex(x => x.AttributeName === v.AttributeName) === i);
 
       return [[logicalId, {
@@ -265,15 +268,15 @@ export function synthDatabase(
           } : {}),
           AttributeDefinitions: attrDefs,
           KeySchema: [
-            { AttributeName: props.partitionKey as string, KeyType: 'HASH' },
-            ...(props.sortKey ? [{ AttributeName: props.sortKey as string, KeyType: 'RANGE' }] : []),
+            { AttributeName: normKey(props.partitionKey), KeyType: 'HASH' },
+            ...(props.sortKey ? [{ AttributeName: normKey(props.sortKey), KeyType: 'RANGE' }] : []),
           ],
           ...(gsis.length > 0 ? {
             GlobalSecondaryIndexes: gsis.map(g => ({
               IndexName: g.name as string,
               KeySchema: [
-                { AttributeName: g.partitionKey as string, KeyType: 'HASH' },
-                ...(g.sortKey ? [{ AttributeName: g.sortKey as string, KeyType: 'RANGE' }] : []),
+                { AttributeName: normKey(g.partitionKey), KeyType: 'HASH' },
+                ...(g.sortKey ? [{ AttributeName: normKey(g.sortKey), KeyType: 'RANGE' }] : []),
               ],
               Projection: { ProjectionType: 'ALL' },
               ...(billingMode === 'PROVISIONED' ? {
