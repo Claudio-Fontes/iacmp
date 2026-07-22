@@ -99,6 +99,11 @@ export function synthCompute(
     }
 
     case 'Compute.Container': {
+      if (props.build) {
+        throw new Error(
+          `Compute.Container "${construct.id}": build de imagem ainda não suportado no provider AWS — use "image".`,
+        );
+      }
       const clusterLogicalId = `${logicalId}Cluster`;
       const tdLogicalId = `${logicalId}TaskDef`;
       const svcLogicalId = `${logicalId}Service`;
