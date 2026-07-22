@@ -127,23 +127,29 @@ describe('AzureProvider (Bicep)', () => {
     expect(out).toContain("'Microsoft.Sql/servers@2023-02-01-preview'");
   });
 
-  test('Function.Lambda nodejs20 → Azure Function App FC1 (Flex Consumption)', () => {
+  test('Function.Lambda nodejs20 → Azure Function App Consumption (Y1/Dynamic, sem serverfarms explícito)', () => {
     const stack = new Stack('test');
     new Fn.Lambda(stack, 'Handler', { runtime: 'nodejs20', handler: 'index.handler', code: 'dist/' });
     const out = synth(stack);
-    // FC1 (Flex Consumption): Function App = Microsoft.Web/sites, NÃO Container App
+    // Consumption (Y1/Dynamic): Function App = Microsoft.Web/sites, NÃO Container App.
+    // NUNCA um Microsoft.Web/serverfarms explícito — validado por deploy real:
+    // subscriptions free-tier/restritas barram QUALQUER PUT direto nesse tipo
+    // (ServerFarmCreationNotAllowed), mesmo Y1/Dynamic. Sem serverFarmId nas
+    // properties, o ARM cria/reaproveita o plano Dynamic compartilhado da região.
     expect(out).toContain("'Microsoft.Web/sites@2023-12-01'");
-    expect(out).toContain("'Microsoft.Web/serverfarms@2023-12-01'");
-    expect(out).toContain("name: 'FC1'");
-    expect(out).toContain("tier: 'FlexConsumption'");
+    expect(out).not.toContain('Microsoft.Web/serverfarms');
+    expect(out).not.toContain('serverFarmId');
+    expect(out).not.toContain('functionAppConfig');
+    expect(out).toContain("reserved: true");
+    expect(out).toContain("linuxFxVersion: 'Node|20'");
     expect(out).not.toContain("'Microsoft.App/containerApps@2023-05-01'");
-    // FC1 aceita 1 Function App por plano — cada Lambda cria o seu próprio plano
+    // Cada Lambda cria seu próprio Microsoft.Web/sites (sem plano dedicado por Lambda)
     const stack2 = new Stack('multi');
     new Fn.Lambda(stack2, 'Fn1', { runtime: 'nodejs20', handler: 'a.handler', code: '.' });
     new Fn.Lambda(stack2, 'Fn2', { runtime: 'nodejs20', handler: 'b.handler', code: '.' });
     const out2 = synth(stack2);
     expect(out2.match(/'Microsoft\.Web\/sites@2023-12-01'/g)?.length).toBe(2);
-    expect(out2.match(/'Microsoft\.Web\/serverfarms@2023-12-01'/g)?.length).toBe(2);
+    expect(out2).not.toContain('Microsoft.Web/serverfarms');
   });
 
   // ── Compute.Container → Container Apps (BCP055 fix) ──────────────────────────
@@ -223,12 +229,12 @@ describe('AzureProvider (Bicep)', () => {
     expect(out).toContain('.properties.configuration.ingress.fqdn');
   });
 
-  test('Compute.Container e Function.Lambda na mesma stack → Container App + Function App FC1', () => {
+  test('Compute.Container e Function.Lambda na mesma stack → Container App + Function App Consumption', () => {
     const stack = new Stack('mixed');
     new Compute.Container(stack, 'AppContainer', { image: 'myapp:latest' });
     new Fn.Lambda(stack, 'Handler', { runtime: 'nodejs20', handler: 'index.handler', code: '.' });
     const out = synth(stack);
-    // Container → 1 Container App + 1 managed environment; Lambda → 1 Function App FC1
+    // Container → 1 Container App + 1 managed environment; Lambda → 1 Function App (Consumption)
     expect(out.match(/'Microsoft\.App\/managedEnvironments@2023-05-01'/g)?.length).toBe(1);
     expect(out.match(/'Microsoft\.App\/containerApps@2023-05-01'/g)?.length).toBe(1);
     expect(out.match(/'Microsoft\.Web\/sites@2023-12-01'/g)?.length).toBe(1);
@@ -692,7 +698,7 @@ describe('Storage.Bucket eventNotifications → Event Grid trigger (p11 Azure, p
     // eventSubscription com filtro BlobCreated
     expect(bicep).toContain("'Microsoft.EventGrid/systemTopics/eventSubscriptions@2022-06-15'");
     expect(bicep).toContain("'Microsoft.Storage.BlobCreated'");
-    // webhook URL referencia o hostname da Function App FC1 (mesmo stack — referência direta)
+    // webhook URL referencia o hostname da Function App (mesmo stack — referência direta)
     expect(bicep).toContain('dataProcessorFn.properties.defaultHostName');
     expect(bicep).toContain('/events');
     // dependsOn garante a Function App criada antes do eventSubscription (evita cold-start na validação)
@@ -844,7 +850,7 @@ describe('Validação semântica no Azure (Fase 2 item 1 — prepareStacksForSyn
   });
 });
 
-describe('Monitoring.Alarm — alvo Function App FC1 cross-stack (gap 18)', () => {
+describe('Monitoring.Alarm — alvo Function App (Consumption) cross-stack (gap 18)', () => {
   test('alarme sobre Fn.Lambda em outra stack → Microsoft.Web/sites + Http5xx + param cross-stack', () => {
     const computeStack = new Stack('compute');
     new Fn.Lambda(computeStack, 'CheckerFn', { runtime: 'nodejs20', handler: 'dist/checker.handler', code: '.' });
@@ -856,10 +862,10 @@ describe('Monitoring.Alarm — alvo Function App FC1 cross-stack (gap 18)', () =
     } as never);
     const all = [computeStack, monStack];
     const mon = emitBicep(monStack, { accountTier: 'free', allStacks: all });
-    // namespace e métrica REAIS do Function App FC1 (não Container Apps / Requests,
-    // e não Http5xx — que não existe no FC1)
+    // namespace e métrica REAIS do Function App em Consumption (App Service
+    // clássico — não Container Apps / Requests)
     expect(mon).toContain("metricNamespace: 'Microsoft.Web/sites'");
-    expect(mon).toContain("metricName: 'OnDemandFunctionExecutionCount'");
+    expect(mon).toContain("metricName: 'Http5xx'");
     // scope via param cross-stack, não o placeholder vazio
     expect(mon).toContain('param CheckerFnId string');
     expect(mon).toContain('CheckerFnId');
@@ -890,14 +896,14 @@ describe('validateAzureResources — rede de segurança offline (o que az valida
     properties: { criteria: { allOf: [{ name: 'c1', ...crit }] } },
   }] as never;
 
-  test('métrica inexistente no namespace Function App → erro (Http5xx não existe no FC1)', () => {
-    const errs = validateAzureResources(alert({ metricName: 'Http5xx', metricNamespace: 'Microsoft.Web/sites', timeAggregation: 'Total', operator: 'GreaterThan' }));
+  test('métrica inexistente no namespace Function App → erro', () => {
+    const errs = validateAzureResources(alert({ metricName: 'OnDemandFunctionExecutionCount', metricNamespace: 'Microsoft.Web/sites', timeAggregation: 'Total', operator: 'GreaterThan' }));
     expect(errs.length).toBe(1);
-    expect(errs[0]).toMatch(/Http5xx.*não existe/);
+    expect(errs[0]).toMatch(/OnDemandFunctionExecutionCount.*não existe/);
   });
 
-  test('métrica REAL do FC1 → ok', () => {
-    const errs = validateAzureResources(alert({ metricName: 'OnDemandFunctionExecutionCount', metricNamespace: 'Microsoft.Web/sites', timeAggregation: 'Total', operator: 'GreaterThanOrEqual' }));
+  test('métrica REAL do App Service (Consumption) → ok', () => {
+    const errs = validateAzureResources(alert({ metricName: 'Http5xx', metricNamespace: 'Microsoft.Web/sites', timeAggregation: 'Total', operator: 'GreaterThanOrEqual' }));
     expect(errs).toEqual([]);
   });
 
@@ -926,9 +932,9 @@ describe('validateAzureResources — rede de segurança offline (o que az valida
     const s = new Stack('mon');
     (s as any).addConstruct({ id: 'BadAlarm', type: 'Custom.Resource', props: { arm: {
       type: 'Microsoft.Insights/metricAlerts', apiVersion: '2018-03-01',
-      properties: { criteria: { allOf: [{ name: 'c1', metricName: 'Http5xx', metricNamespace: 'Microsoft.Web/sites', timeAggregation: 'Total', operator: 'GreaterThan' }] } },
+      properties: { criteria: { allOf: [{ name: 'c1', metricName: 'OnDemandFunctionExecutionCount', metricNamespace: 'Microsoft.Web/sites', timeAggregation: 'Total', operator: 'GreaterThan' }] } },
     } } });
-    expect(() => emitBicep(s, { accountTier: 'free', allStacks: [s] })).toThrow(/Http5xx.*não existe|Validação Azure/);
+    expect(() => emitBicep(s, { accountTier: 'free', allStacks: [s] })).toThrow(/OnDemandFunctionExecutionCount.*não existe|Validação Azure/);
   });
 });
 

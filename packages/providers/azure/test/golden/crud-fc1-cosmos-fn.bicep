@@ -18,34 +18,6 @@ resource sharedFnStorage 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   }
 }
 
-resource sharedFnStorageBlobSvc 'Microsoft.Storage/storageAccounts/blobServices@2023-01-01' = {
-  parent: sharedFnStorage
-  name: 'default'
-  properties: {}
-}
-
-resource createItemFnPlan 'Microsoft.Web/serverfarms@2023-12-01' = {
-  name: 'createitemfn-plan-${uniqueString(resourceGroup().id)}'
-  location: location
-  kind: 'functionapp'
-  sku: {
-    name: 'FC1'
-    tier: 'FlexConsumption'
-  }
-  tags: {
-    Name: 'CreateItemFn'
-  }
-  properties: {
-    reserved: true
-  }
-}
-
-resource createItemFnDeployContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
-  parent: sharedFnStorageBlobSvc
-  name: 'deploy-createitemfn'
-  properties: {}
-}
-
 resource createItemFn 'Microsoft.Web/sites@2023-12-01' = {
   name: 'createitemfn-${uniqueString(resourceGroup().id)}'
   location: location
@@ -56,39 +28,35 @@ resource createItemFn 'Microsoft.Web/sites@2023-12-01' = {
   identity: {
     type: 'SystemAssigned'
   }
-  dependsOn: [
-    createItemFnDeployContainer
-  ]
   properties: {
-    serverFarmId: createItemFnPlan.id
-    functionAppConfig: {
-      deployment: {
-        storage: {
-          type: 'blobContainer'
-          value: '${sharedFnStorage.properties.primaryEndpoints.blob}deploy-createitemfn'
-          authentication: {
-            type: 'SystemAssignedIdentity'
-          }
-        }
-      }
-      scaleAndConcurrency: {
-        maximumInstanceCount: 100
-        instanceMemoryMB: 2048
-      }
-      runtime: {
-        name: 'node'
-        version: '22'
-      }
-    }
+    reserved: true
+    httpsOnly: true
     siteConfig: {
+      linuxFxVersion: 'Node|20'
       appSettings: [
+        {
+          name: 'AzureWebJobsStorage'
+          value: 'DefaultEndpointsProtocol=https;AccountName=${sharedFnStorage.name};AccountKey=${sharedFnStorage.listKeys().keys[0].value};EndpointSuffix=core.windows.net'
+        }
+        {
+          name: 'WEBSITE_CONTENTAZUREFILECONNECTIONSTRING'
+          value: 'DefaultEndpointsProtocol=https;AccountName=${sharedFnStorage.name};AccountKey=${sharedFnStorage.listKeys().keys[0].value};EndpointSuffix=core.windows.net'
+        }
+        {
+          name: 'WEBSITE_CONTENTSHARE'
+          value: 'createitemfn-content'
+        }
         {
           name: 'FUNCTIONS_EXTENSION_VERSION'
           value: '~4'
         }
         {
-          name: 'AzureWebJobsStorage__accountName'
-          value: sharedFnStorage.name
+          name: 'FUNCTIONS_WORKER_RUNTIME'
+          value: 'node'
+        }
+        {
+          name: 'AzureFunctionsWebHost__hostid'
+          value: 'createitemfn-host'
         }
         {
           name: 'TABLE_NAME'
@@ -104,40 +72,7 @@ resource createItemFn 'Microsoft.Web/sites@2023-12-01' = {
         }
       ]
     }
-    httpsOnly: true
   }
-}
-
-resource createItemFnStorageRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: sharedFnStorage
-  name: guid(sharedFnStorage.id, createItemFn.id, 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
-    principalId: createItemFn.identity.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
-
-resource listItemsFnPlan 'Microsoft.Web/serverfarms@2023-12-01' = {
-  name: 'listitemsfn-plan-${uniqueString(resourceGroup().id)}'
-  location: location
-  kind: 'functionapp'
-  sku: {
-    name: 'FC1'
-    tier: 'FlexConsumption'
-  }
-  tags: {
-    Name: 'ListItemsFn'
-  }
-  properties: {
-    reserved: true
-  }
-}
-
-resource listItemsFnDeployContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
-  parent: sharedFnStorageBlobSvc
-  name: 'deploy-listitemsfn'
-  properties: {}
 }
 
 resource listItemsFn 'Microsoft.Web/sites@2023-12-01' = {
@@ -150,39 +85,35 @@ resource listItemsFn 'Microsoft.Web/sites@2023-12-01' = {
   identity: {
     type: 'SystemAssigned'
   }
-  dependsOn: [
-    listItemsFnDeployContainer
-  ]
   properties: {
-    serverFarmId: listItemsFnPlan.id
-    functionAppConfig: {
-      deployment: {
-        storage: {
-          type: 'blobContainer'
-          value: '${sharedFnStorage.properties.primaryEndpoints.blob}deploy-listitemsfn'
-          authentication: {
-            type: 'SystemAssignedIdentity'
-          }
-        }
-      }
-      scaleAndConcurrency: {
-        maximumInstanceCount: 100
-        instanceMemoryMB: 2048
-      }
-      runtime: {
-        name: 'node'
-        version: '22'
-      }
-    }
+    reserved: true
+    httpsOnly: true
     siteConfig: {
+      linuxFxVersion: 'Node|20'
       appSettings: [
+        {
+          name: 'AzureWebJobsStorage'
+          value: 'DefaultEndpointsProtocol=https;AccountName=${sharedFnStorage.name};AccountKey=${sharedFnStorage.listKeys().keys[0].value};EndpointSuffix=core.windows.net'
+        }
+        {
+          name: 'WEBSITE_CONTENTAZUREFILECONNECTIONSTRING'
+          value: 'DefaultEndpointsProtocol=https;AccountName=${sharedFnStorage.name};AccountKey=${sharedFnStorage.listKeys().keys[0].value};EndpointSuffix=core.windows.net'
+        }
+        {
+          name: 'WEBSITE_CONTENTSHARE'
+          value: 'listitemsfn-content'
+        }
         {
           name: 'FUNCTIONS_EXTENSION_VERSION'
           value: '~4'
         }
         {
-          name: 'AzureWebJobsStorage__accountName'
-          value: sharedFnStorage.name
+          name: 'FUNCTIONS_WORKER_RUNTIME'
+          value: 'node'
+        }
+        {
+          name: 'AzureFunctionsWebHost__hostid'
+          value: 'listitemsfn-host'
         }
         {
           name: 'TABLE_NAME'
@@ -198,17 +129,6 @@ resource listItemsFn 'Microsoft.Web/sites@2023-12-01' = {
         }
       ]
     }
-    httpsOnly: true
-  }
-}
-
-resource listItemsFnStorageRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: sharedFnStorage
-  name: guid(sharedFnStorage.id, listItemsFn.id, 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
-    principalId: listItemsFn.identity.principalId
-    principalType: 'ServicePrincipal'
   }
 }
 

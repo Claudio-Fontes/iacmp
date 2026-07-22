@@ -16,34 +16,6 @@ resource sharedFnStorage 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   }
 }
 
-resource sharedFnStorageBlobSvc 'Microsoft.Storage/storageAccounts/blobServices@2023-01-01' = {
-  parent: sharedFnStorage
-  name: 'default'
-  properties: {}
-}
-
-resource processorFnPlan 'Microsoft.Web/serverfarms@2023-12-01' = {
-  name: 'processorfn-plan-${uniqueString(resourceGroup().id)}'
-  location: location
-  kind: 'functionapp'
-  sku: {
-    name: 'FC1'
-    tier: 'FlexConsumption'
-  }
-  tags: {
-    Name: 'ProcessorFn'
-  }
-  properties: {
-    reserved: true
-  }
-}
-
-resource processorFnDeployContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
-  parent: sharedFnStorageBlobSvc
-  name: 'deploy-processorfn'
-  properties: {}
-}
-
 resource processorFn 'Microsoft.Web/sites@2023-12-01' = {
   name: 'processorfn-${uniqueString(resourceGroup().id)}'
   location: location
@@ -54,53 +26,38 @@ resource processorFn 'Microsoft.Web/sites@2023-12-01' = {
   identity: {
     type: 'SystemAssigned'
   }
-  dependsOn: [
-    processorFnDeployContainer
-  ]
   properties: {
-    serverFarmId: processorFnPlan.id
-    functionAppConfig: {
-      deployment: {
-        storage: {
-          type: 'blobContainer'
-          value: '${sharedFnStorage.properties.primaryEndpoints.blob}deploy-processorfn'
-          authentication: {
-            type: 'SystemAssignedIdentity'
-          }
-        }
-      }
-      scaleAndConcurrency: {
-        maximumInstanceCount: 100
-        instanceMemoryMB: 2048
-      }
-      runtime: {
-        name: 'node'
-        version: '22'
-      }
-    }
+    reserved: true
+    httpsOnly: true
     siteConfig: {
+      linuxFxVersion: 'Node|20'
       appSettings: [
+        {
+          name: 'AzureWebJobsStorage'
+          value: 'DefaultEndpointsProtocol=https;AccountName=${sharedFnStorage.name};AccountKey=${sharedFnStorage.listKeys().keys[0].value};EndpointSuffix=core.windows.net'
+        }
+        {
+          name: 'WEBSITE_CONTENTAZUREFILECONNECTIONSTRING'
+          value: 'DefaultEndpointsProtocol=https;AccountName=${sharedFnStorage.name};AccountKey=${sharedFnStorage.listKeys().keys[0].value};EndpointSuffix=core.windows.net'
+        }
+        {
+          name: 'WEBSITE_CONTENTSHARE'
+          value: 'processorfn-content'
+        }
         {
           name: 'FUNCTIONS_EXTENSION_VERSION'
           value: '~4'
         }
         {
-          name: 'AzureWebJobsStorage__accountName'
-          value: sharedFnStorage.name
+          name: 'FUNCTIONS_WORKER_RUNTIME'
+          value: 'node'
+        }
+        {
+          name: 'AzureFunctionsWebHost__hostid'
+          value: 'processorfn-host'
         }
       ]
     }
-    httpsOnly: true
-  }
-}
-
-resource processorFnStorageRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: sharedFnStorage
-  name: guid(sharedFnStorage.id, processorFn.id, 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
-    principalId: processorFn.identity.principalId
-    principalType: 'ServicePrincipal'
   }
 }
 

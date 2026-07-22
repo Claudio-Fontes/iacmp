@@ -14,14 +14,15 @@ import { isExpr, rawExpr } from './constructs/shared';
  */
 
 // ── Catálogo: métricas válidas por namespace ────────────────────────────────
-// Só o Azure Monitor conhece isso — o validate de template não. FC1 (Flex
-// Consumption = Microsoft.Web/sites) NÃO tem Http5xx/Requests/AverageResponseTime
-// (essas são do App Service clássico); só expõe execução/recurso.
+// Só o Azure Monitor conhece isso — o validate de template não. Function.Lambda
+// vira Microsoft.Web/sites em Consumption (Y1/Dynamic) — métricas de App
+// Service clássico (Http5xx/Requests/AverageResponseTime/FunctionExecutionCount).
 export const AZURE_METRICS_BY_NAMESPACE: Record<string, ReadonlySet<string>> = {
   'Microsoft.Web/sites': new Set([
-    'MemoryWorkingSet', 'AverageMemoryWorkingSet', 'InstanceCount', 'CpuPercentage',
-    'OnDemandFunctionExecutionCount', 'OnDemandFunctionExecutionUnits',
-    'AlwaysReadyFunctionExecutionCount', 'AlwaysReadyFunctionExecutionUnits', 'AlwaysReadyUnits',
+    'MemoryWorkingSet', 'AverageMemoryWorkingSet', 'CpuTime', 'CpuPercentage',
+    'Http101', 'Http2xx', 'Http3xx', 'Http401', 'Http403', 'Http404', 'Http406', 'Http429', 'Http4xx', 'Http5xx',
+    'AverageResponseTime', 'Requests', 'FunctionExecutionCount', 'FunctionExecutionUnits',
+    'BytesReceived', 'BytesSent', 'HealthCheckStatus', 'Threads', 'HttpResponseTime',
   ]),
   'Microsoft.App/containerApps': new Set([
     'Requests', 'Replicas', 'RestartCount', 'RxBytes', 'TxBytes',
@@ -132,8 +133,7 @@ function validateMetricAlert(r: BicepResource, errors: string[]): void {
     if (known && c.metricName && !known.has(c.metricName)) {
       errors.push(
         `${label}: métrica '${c.metricName}' não existe no namespace '${ns}'. ` +
-        `Métricas válidas: ${[...known].slice(0, 6).join(', ')}… ` +
-        `(Function App FC1 não tem Http5xx/Requests — use OnDemandFunctionExecutionCount.)`,
+        `Métricas válidas: ${[...known].slice(0, 6).join(', ')}… `,
       );
     }
   }

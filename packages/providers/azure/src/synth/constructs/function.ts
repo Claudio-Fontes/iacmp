@@ -9,19 +9,45 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
 
   switch (construct.type) {
     case 'Function.Lambda': {
-      // Azure: Fn.Lambda → Azure Function App (FC1/FlexConsumption, identity-based storage)
+      // Azure: Fn.Lambda → Azure Function App em Consumption (Y1/Dynamic) Linux.
+      //
+      // NUNCA declarar `Microsoft.Web/serverfarms` explicitamente — validado por
+      // deploy real: subscriptions free-tier/restritas retornam
+      // "ServerFarmCreationNotAllowed" para QUALQUER PUT direto nesse tipo de
+      // recurso, mesmo Y1/Dynamic (não é só o FC1/FlexConsumption que é barrado).
+      // O caminho que funciona: PUT em `Microsoft.Web/sites` (kind
+      // 'functionapp,linux', properties.reserved=true) SEM `serverFarmId` nas
+      // properties — o ARM cria/reaproveita implicitamente o plano Dynamic
+      // compartilhado da região (nome tipo "EastUS2LinuxDynamicPlan"), por um
+      // caminho que não passa pela mesma checagem de política. É exatamente o
+      // que `az functionapp create --consumption-plan-location` faz por baixo
+      // (confirmado via --debug: o corpo do PUT em sites nunca inclui
+      // serverFarmId nem um recurso serverfarms é criado à parte).
       const environment = (props.environment as Record<string, string>) ?? {};
 
-      const appSettings: Array<{ name: string; value: unknown }> = [
-        { name: 'FUNCTIONS_EXTENSION_VERSION', value: '~4' },
-      ];
+      const fnAppName = `${construct.id.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 20)}`;
 
-      if (ctx.sharedFunctionStorageSym) {
-        appSettings.push({
-          name: 'AzureWebJobsStorage__accountName',
-          value: expr(`${ctx.sharedFunctionStorageSym}.name`),
-        });
-      }
+      // Connection string (não identity-based): Consumption clássico não precisa
+      // de role assignment/identidade para storage — listKeys() direto, igual ao
+      // que o `az functionapp create` gera.
+      const connStr = ctx.sharedFunctionStorageSym
+        ? expr(`'DefaultEndpointsProtocol=https;AccountName=\${${ctx.sharedFunctionStorageSym}.name};AccountKey=\${${ctx.sharedFunctionStorageSym}.listKeys().keys[0].value};EndpointSuffix=core.windows.net'`)
+        : '';
+      // WEBSITE_CONTENTSHARE: nome de Azure File share (lowercase/dígitos/hífen, 3-63 chars).
+      const contentShareName = `${fnAppName}-content`.slice(0, 63);
+      // AzureFunctionsWebHost__hostid: várias Function Apps compartilham a MESMA
+      // storage account (AzureWebJobsStorage) — sem um hostid distinto por app,
+      // o runtime pode colidir em locks internos (singleton/host id). Máx 32 chars.
+      const hostId = `${fnAppName}-host`.slice(0, 32);
+
+      const appSettings: Array<{ name: string; value: unknown }> = [
+        { name: 'AzureWebJobsStorage', value: connStr },
+        { name: 'WEBSITE_CONTENTAZUREFILECONNECTIONSTRING', value: connStr },
+        { name: 'WEBSITE_CONTENTSHARE', value: contentShareName },
+        { name: 'FUNCTIONS_EXTENSION_VERSION', value: '~4' },
+        { name: 'FUNCTIONS_WORKER_RUNTIME', value: 'node' },
+        { name: 'AzureFunctionsWebHost__hostid', value: hostId },
+      ];
 
       for (const [k, v] of Object.entries(environment)) {
         const value = resolveValue(v, ctx.idx, crossParams);
@@ -49,36 +75,6 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
         }
       }
 
-      const fnAppName = `${construct.id.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 20)}`;
-
-      // FC1 (Flex Consumption) aceita apenas 1 Function App por plano — cada Function cria o seu
-      const planSym = `${sym}Plan`;
-      resources.push({
-        sym: planSym,
-        type: 'Microsoft.Web/serverfarms',
-        apiVersion: '2023-12-01',
-        name: expr(`'${fnAppName}-plan-\${uniqueString(resourceGroup().id)}'`),
-        location: 'location',
-        kind: 'functionapp',
-        sku: { name: 'FC1', tier: 'FlexConsumption' },
-        tags: tag(construct.id),
-        properties: { reserved: true },
-      });
-
-      // Cada Function App tem seu próprio container de deploy para evitar colisão de released-package.zip
-      const fnContainerSym = `${sym}DeployContainer`;
-      const fnContainerName = `deploy-${fnAppName}`.slice(0, 63);
-      if (ctx.sharedFnBlobServiceSym) {
-        resources.push({
-          sym: fnContainerSym,
-          type: 'Microsoft.Storage/storageAccounts/blobServices/containers',
-          apiVersion: '2023-01-01',
-          parent: ctx.sharedFnBlobServiceSym,
-          name: fnContainerName,
-          properties: {},
-        });
-      }
-
       resources.push({
         sym,
         type: 'Microsoft.Web/sites',
@@ -89,49 +85,11 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
         tags: tag(construct.id),
         identity: { type: 'SystemAssigned' },
         properties: {
-          serverFarmId: expr(`${planSym}.id`),
-          functionAppConfig: {
-            deployment: {
-              storage: {
-                type: 'blobContainer',
-                value: ctx.sharedFunctionStorageSym
-                  ? expr(`'\${${ctx.sharedFunctionStorageSym}.properties.primaryEndpoints.blob}${fnContainerName}'`)
-                  : '',
-                authentication: { type: 'SystemAssignedIdentity' },
-              },
-            },
-            scaleAndConcurrency: {
-              maximumInstanceCount: 100,
-              instanceMemoryMB: 2048,
-            },
-            runtime: {
-              name: 'node',
-              version: '22',
-            },
-          },
-          siteConfig: { appSettings },
+          reserved: true,
           httpsOnly: true,
+          siteConfig: { linuxFxVersion: 'Node|20', appSettings },
         },
-        ...(ctx.sharedFnBlobServiceSym
-          ? { dependsOn: [fnContainerSym] }
-          : {}),
       });
-
-      if (ctx.sharedFunctionStorageSym) {
-        const roleSym = `${sym}StorageRole`;
-        resources.push({
-          sym: roleSym,
-          type: 'Microsoft.Authorization/roleAssignments',
-          apiVersion: '2022-04-01',
-          scope: ctx.sharedFunctionStorageSym,
-          name: expr(`guid(${ctx.sharedFunctionStorageSym}.id, ${sym}.id, 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')`),
-          properties: {
-            roleDefinitionId: expr(`subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')`),
-            principalId: expr(`${sym}.identity.principalId`),
-            principalType: 'ServicePrincipal',
-          },
-        });
-      }
 
       const outputKey = `${construct.id.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}functionappname`;
       outputs.push({ name: outputKey, type: 'string', value: `${sym}.name` });
@@ -414,7 +372,7 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
             if (refConstruct && (refConstruct.type === 'Function.Lambda' || refConstruct.type === 'Compute.Container')) {
               const lambdaSym = toSym(refObj.constructId);
               if (refConstruct.type === 'Function.Lambda') {
-                uri = expr(`'https://\${${lambdaSym}.properties.configuration.ingress.fqdn}'`);
+                uri = expr(`'https://\${${lambdaSym}.properties.defaultHostName}'`);
               } else {
                 uri = expr(`'https://\${${lambdaSym}.properties.configuration.ingress.fqdn}'`);
               }

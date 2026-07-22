@@ -284,7 +284,6 @@ export interface SynthContext {
   functionImageParams: Map<string, string>;
   sharedContainerEnvSym: string | null;
   sharedFunctionStorageSym: string | null;
-  sharedFnBlobServiceSym: string | null;
   cdnBucketRefs: Set<string>;
   subnetsByVpc: Map<string, Array<{ id: string; cidr: string; public: boolean; delegationService?: string }>>;
   accountTier: 'free' | 'standard';

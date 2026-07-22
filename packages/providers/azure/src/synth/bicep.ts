@@ -337,6 +337,11 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
     outputs.push({ name: 'sharedCaeId', type: 'string', value: `empty(sharedCaeId) ? ${sharedContainerEnvSym}.id : sharedCaeId` });
   }
 
+  // Storage compartilhada entre TODAS as Function.Lambda da stack — usada só
+  // para AzureWebJobsStorage/WEBSITE_CONTENTAZUREFILECONNECTIONSTRING (connection
+  // string via listKeys()). Cada Function App tem seu próprio WEBSITE_CONTENTSHARE
+  // e AzureFunctionsWebHost__hostid (ver function.ts) para não colidir no mesmo
+  // storage account.
   const hasLambda = stack.constructs.some(c => c.type === 'Function.Lambda');
   const sharedFunctionStorageSym: string | null = hasLambda ? 'sharedFnStorage' : null;
   if (sharedFunctionStorageSym) {
@@ -353,19 +358,6 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
     });
   }
 
-  const sharedFnBlobServiceSym: string | null = hasLambda ? 'sharedFnStorageBlobSvc' : null;
-
-  if (sharedFnBlobServiceSym) {
-    resources.push({
-      sym: sharedFnBlobServiceSym,
-      type: 'Microsoft.Storage/storageAccounts/blobServices',
-      apiVersion: '2023-01-01',
-      parent: sharedFunctionStorageSym!,
-      name: 'default',
-      properties: {},
-    });
-  }
-
   const ctx: SynthContext = {
     idx,
     globalIdx,
@@ -376,7 +368,6 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
     functionImageParams,
     sharedContainerEnvSym,
     sharedFunctionStorageSym,
-    sharedFnBlobServiceSym,
     cdnBucketRefs,
     subnetsByVpc,
     accountTier,
