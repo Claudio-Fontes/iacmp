@@ -96,7 +96,9 @@ export interface NetworkLoadBalancerProps {
 }
 
 export interface NetworkCDNProps {
-  origins: Array<{
+  /** Atalho: equivale a origins: [{ id: 'default', domainName: '', bucketRef }]. */
+  bucketRef?: string;
+  origins?: Array<{
     domainName: string;
     id: string;
     path?: string;
@@ -205,8 +207,11 @@ export namespace Network {
     readonly type = 'Network.CDN';
     readonly props: Record<string, unknown>;
     constructor(stack: Stack, readonly id: string, props: NetworkCDNProps) {
+      if ((!props.origins || props.origins.length === 0) && props.bucketRef) {
+        props = { ...props, origins: [{ id: 'default', domainName: '', bucketRef: props.bucketRef }] };
+      }
       if (!props.origins || props.origins.length === 0)
-        throw new Error(`Network.CDN "${id}": origins não pode ser vazio`);
+        throw new Error(`Network.CDN "${id}": origins não pode ser vazio (informe origins[] ou o atalho bucketRef)`);
       this.props = props as unknown as Record<string, unknown>;
       stack.addConstruct(this);
     }

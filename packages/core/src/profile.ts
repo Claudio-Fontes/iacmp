@@ -14,6 +14,8 @@ export interface EnvironmentProfile {
   drRegion?: string;
   /** AZs explícitas da região, quando o usuário quer fixá-las. */
   availabilityZones?: string[];
+  /** Cloud de destino — usado pelo validador agnóstico para suprimir regras AWS-only. */
+  cloud?: 'aws' | 'azure' | 'gcp';
 }
 
 /** Conta free é o default seguro quando o iacmp.json não informa o tier. */

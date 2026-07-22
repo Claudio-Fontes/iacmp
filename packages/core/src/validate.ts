@@ -35,6 +35,9 @@ export function prepareStacksForSynth(stacks: Stack[], profile: EnvironmentProfi
  * Retorna a lista de erros (vazia = ok). Não lança — quem chama decide.
  */
 export function validateSemantics(stacks: Stack[], profile?: EnvironmentProfile): string[] {
+  // Regras que codificam semântica AWS (AZs, ECS/EKS, free tier RDS) só valem
+  // quando o alvo é AWS — ou quando o cloud não foi informado (backward compat).
+  const awsSemantics = !profile?.cloud || profile.cloud === 'aws';
   const errors: string[] = [];
 
   // Índice global constructId → { construct, stackName }
@@ -167,7 +170,9 @@ export function validateSemantics(stacks: Stack[], profile?: EnvironmentProfile)
       const managedSubnets = subnetIds
         .map(sid => byId.get(sid))
         .filter((x): x is { c: BaseConstruct; stack: string } => !!x && x.c.type === 'Network.Subnet');
-      if (managedSubnets.length > 0) {
+      // Exigência de ≥2 AZs é semântica RDS/AWS. No Azure, Postgres Flexible com
+      // VNet integration usa UMA subnet delegada (HA é highAvailability.mode).
+      if ((!profile?.cloud || profile.cloud === 'aws') && managedSubnets.length > 0) {
         const azs = new Set<string>();
         let withoutAz = 0;
         for (const sub of managedSubnets) {
@@ -229,7 +234,7 @@ export function validateSemantics(stacks: Stack[], profile?: EnvironmentProfile)
       const managed = subnetIds
         .map(sid => byId.get(sid))
         .filter((x): x is { c: BaseConstruct; stack: string } => !!x && x.c.type === 'Network.Subnet');
-      if (managed.length > 0) {
+      if (awsSemantics && managed.length > 0) {
         const azs = new Set<string>();
         for (const sub of managed) {
           const az = (sub.c.props as Record<string, unknown>).availabilityZone as string | undefined;
@@ -261,7 +266,9 @@ export function validateSemantics(stacks: Stack[], profile?: EnvironmentProfile)
     for (const c of s.constructs) {
       const sp = c.props as Record<string, unknown>;
       const subnetIds = (sp.subnetIds as string[] | undefined) ?? [];
-      if (c.type === 'Compute.Container') {
+      // Fargate-sem-subnet e EKS são semântica AWS; no Azure, Compute.Container
+      // sem subnetIds é o caso normal (Container App em environment compartilhado).
+      if (awsSemantics && c.type === 'Compute.Container') {
         if (subnetIds.length === 0) {
           errors.push(
             `Compute.Container "${c.id}" (Fargate) não tem subnetIds. Sem subnets o ECS Service não é criado ` +
@@ -269,7 +276,7 @@ export function validateSemantics(stacks: Stack[], profile?: EnvironmentProfile)
           );
         }
       }
-      if (c.type === 'Compute.Kubernetes') {
+      if (awsSemantics && c.type === 'Compute.Kubernetes') {
         if (subnetIds.length === 0) {
           errors.push(
             `Compute.Kubernetes "${c.id}" (EKS) não tem subnetIds. EKS exige ≥2 subnets em AZs diferentes. Informe subnetIds.`,
@@ -289,7 +296,8 @@ export function validateSemantics(stacks: Stack[], profile?: EnvironmentProfile)
 
   // ── F) Conta free tier: recursos/configs que a AWS rejeita no deploy ───────
   // Só valida quando o tier é explicitamente 'free' (ou ausente, que assume free).
-  if (!profile || profile.accountTier === 'free') {
+  // Regras de RDS free tier — não se aplicam a Postgres Flexible/Cosmos no Azure.
+  if (awsSemantics && (!profile || profile.accountTier === 'free')) {
     for (const s of stacks) {
       for (const c of s.constructs) {
         if (c.type !== 'Database.SQL') continue;
@@ -324,25 +332,30 @@ export function validateSemantics(stacks: Stack[], profile?: EnvironmentProfile)
   // websiteHosting:true referenciado por um Network.CDN via bucketRef gera duas
   // BucketPolicies contraditórias (Principal:* vs cloudfront) e um bucket público
   // que contradiz o OAC. Para servir via CloudFront/OAC use websiteHosting:false.
-  const bucketRefsFromCdn = new Set<string>();
-  for (const s of stacks) {
-    for (const c of s.constructs) {
-      if (c.type !== 'Network.CDN') continue;
-      const origins = (c.props as Record<string, unknown>).origins as Array<Record<string, unknown>> | undefined;
-      for (const o of origins ?? []) {
-        if (typeof o.bucketRef === 'string') bucketRefsFromCdn.add(o.bucketRef);
+  // EXCEÇÃO: no Azure, static website + CDN é o padrão normal — o CDN aponta para
+  // o web endpoint público do storage account, sem conflito. A regra só se aplica
+  // quando o cloud alvo é AWS (ou não especificado — backward compat).
+  if (!profile?.cloud || profile.cloud === 'aws') {
+    const bucketRefsFromCdn = new Set<string>();
+    for (const s of stacks) {
+      for (const c of s.constructs) {
+        if (c.type !== 'Network.CDN') continue;
+        const origins = (c.props as Record<string, unknown>).origins as Array<Record<string, unknown>> | undefined;
+        for (const o of origins ?? []) {
+          if (typeof o.bucketRef === 'string') bucketRefsFromCdn.add(o.bucketRef);
+        }
       }
     }
-  }
-  for (const s of stacks) {
-    for (const c of s.constructs) {
-      if (c.type !== 'Storage.Bucket') continue;
-      if ((c.props as Record<string, unknown>).websiteHosting === true && bucketRefsFromCdn.has(c.id)) {
-        errors.push(
-          `Storage.Bucket "${c.id}" tem websiteHosting: true E é referenciado por um Network.CDN via bucketRef (OAC). ` +
-          `São mutuamente exclusivos — websiteHosting torna o bucket público, OAC exige privado, gerando policies conflitantes. ` +
-          `Para servir o site via CloudFront/OAC, use websiteHosting: false (o CDN serve o defaultRootObject).`,
-        );
+    for (const s of stacks) {
+      for (const c of s.constructs) {
+        if (c.type !== 'Storage.Bucket') continue;
+        if ((c.props as Record<string, unknown>).websiteHosting === true && bucketRefsFromCdn.has(c.id)) {
+          errors.push(
+            `Storage.Bucket "${c.id}" tem websiteHosting: true E é referenciado por um Network.CDN via bucketRef (OAC). ` +
+            `São mutuamente exclusivos — websiteHosting torna o bucket público, OAC exige privado, gerando policies conflitantes. ` +
+            `Para servir o site via CloudFront/OAC, use websiteHosting: false (o CDN serve o defaultRootObject).`,
+          );
+        }
       }
     }
   }

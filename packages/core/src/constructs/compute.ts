@@ -23,7 +23,7 @@ export interface ComputeAutoScalingProps {
 }
 
 export interface ComputeContainerProps {
-  image: string;
+  image?: string;
   cpu?: number;
   memory?: number;
   port?: number;
@@ -39,6 +39,8 @@ export interface ComputeContainerProps {
   cpuTargetPercent?: number;
   /** Target group do ALB onde registrar as tasks — ex: 'MyLoadBalancer.TargetGroupArn' ou getter lb.targetGroupArn. */
   targetGroupArn?: string | Ref<'TargetGroupArn'>;
+  /** Build de imagem a partir de contexto local (Dockerfile). Mutuamente exclusivo com `image`. */
+  build?: { context: string; dockerfile?: string };
 }
 
 export interface ComputeKubernetesProps {
@@ -79,8 +81,10 @@ export namespace Compute {
     readonly type = 'Compute.Container';
     readonly props: Record<string, unknown>;
     constructor(stack: Stack, readonly id: string, props: ComputeContainerProps) {
-      if (!props.image)
-        throw new Error(`Compute.Container "${id}": image é obrigatório`);
+      if (!props.image && !props.build)
+        throw new Error(`Compute.Container "${id}": informe "image" ou "build"`);
+      if (props.image && props.build)
+        throw new Error(`Compute.Container "${id}": "image" e "build" são mutuamente exclusivos — escolha um`);
       this.props = props as unknown as Record<string, unknown>;
       stack.addConstruct(this);
     }
