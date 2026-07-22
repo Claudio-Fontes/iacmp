@@ -81,8 +81,22 @@ export const RESOURCE_TIER_MAP: ResourceTierInfo[] = [
       standard: { availability: 'available',   recommendedSku: 'cache.t3.micro+' },
     },
     azure: {
-      free:     { availability: 'restricted',  recommendedSku: 'Basic C0 (porta 6380)', reason: 'Azure NÃO tem Redis grátis — Basic C0 é o menor SKU (~USD 16/mês, cobrado por hora). Redis Enterprise (Balanced_B0) falha com AllocationFailed — não usar.', alternative: 'Cosmos DB Table API com TTL como cache (free tier) ou destruir o Redis logo após o teste' },
-      standard: { availability: 'available',   recommendedSku: 'Standard C1+' },
+      // Azure Cache for Redis clássico (Basic/Standard/Premium, Microsoft.Cache/redis)
+      // foi RETIRADO — ARM recusa criar novos com InvalidRequestBody em qualquer
+      // tier/região (regra de negócio permanente, não é mais "restricted": é
+      // 'unavailable' pra sempre). O synth (bicep.ts) emite Microsoft.Cache/redisEnterprise
+      // (Balanced_B0) — único caminho correto daqui pra frente.
+      // Sonda empírica 2026-07-22 (3 regiões, `az rest` PUT direto, sem CLI wrapper):
+      // centralus, eastus2 e westus2 — Balanced_B0 aceito (Accepted/Creating) mas
+      // termina em provisioningState:Failed / resourceState:CreateFailed após 4-6min
+      // em TODAS as 3. Sem detalhe granular no erro (OperationFailed genérico), mas
+      // o padrão bate com o AllocationFailed histórico (p20az-r3, 2026-07-15).
+      // CONCLUSÃO: nesta subscription, hoje, NÃO há caminho de Redis funcionando
+      // (nem clássico, retirado; nem Managed Redis, CreateFailed nas 3 regiões
+      // testadas). Rever a data acima quando a bateria testar de novo — pode ser
+      // capacidade pontual da subscription/trial, não limitação permanente da SKU.
+      free:     { availability: 'unavailable', recommendedSku: 'Balanced_B0 (Managed Redis, porta 10000)', reason: 'Clássico retirado (InvalidRequestBody em qualquer tier). Balanced_B0 falhou com CreateFailed em centralus/eastus2/westus2 em 2026-07-22 — sem região funcional confirmada nesta subscription.', alternative: 'Cosmos DB Table API com TTL como cache (free tier) até uma região/subscription com capacidade ser confirmada' },
+      standard: { availability: 'unavailable', recommendedSku: 'Balanced_B0 (Managed Redis, porta 10000)', reason: 'Clássico retirado (InvalidRequestBody em qualquer tier). Balanced_B0 falhou com CreateFailed em centralus/eastus2/westus2 em 2026-07-22 — sem região funcional confirmada nesta subscription.', alternative: 'Cosmos DB Table API com TTL como cache até uma região/subscription com capacidade ser confirmada' },
     },
   },
 

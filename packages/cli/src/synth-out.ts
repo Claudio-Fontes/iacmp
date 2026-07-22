@@ -336,21 +336,21 @@ interface ParsedBicepModule {
   /** Params sem default — dependência obrigatória (senha ou output de outra stack). */
   hardParams: string[];
   /** Params com default; os `string = ''` são candidatos a 2º passo (lift). */
-  softParams: { name: string; isEmptyStringDefault: boolean }[];
+  softParams: { name: string; isEmptyStringDefault: boolean; defaultRaw: string }[];
   outputs: { name: string; type: string }[];
 }
 
 function parseBicepModule(t: TemplateRef): ParsedBicepModule {
   const content = fs.readFileSync(t.filePath, 'utf-8');
   const hardParams: string[] = [];
-  const softParams: { name: string; isEmptyStringDefault: boolean }[] = [];
+  const softParams: { name: string; isEmptyStringDefault: boolean; defaultRaw: string }[] = [];
   const outputs: { name: string; type: string }[] = [];
   for (const line of content.split('\n')) {
     const hard = line.match(/^param\s+(\w+)\s+\w+\s*$/);
     if (hard) { hardParams.push(hard[1]); continue; }
     const soft = line.match(/^param\s+(\w+)\s+(\w+)\s*=\s*(.*)$/);
     if (soft) {
-      softParams.push({ name: soft[1], isEmptyStringDefault: soft[2] === 'string' && soft[3].trim() === "''" });
+      softParams.push({ name: soft[1], isEmptyStringDefault: soft[2] === 'string' && soft[3].trim() === "''", defaultRaw: soft[3].trim() });
       continue;
     }
     const out = line.match(/^output\s+(\w+)\s+(\w+)\s*=/);
@@ -358,6 +358,18 @@ function parseBicepModule(t: TemplateRef): ParsedBicepModule {
   }
   return { ref: t, sym: `stk_${t.stackName.replace(/[^a-zA-Z0-9]/g, '_')}`, hardParams, softParams, outputs };
 }
+
+/**
+ * Nomes dos params compartilhados do pipeline de build de imagem (Compute.Container
+ * com `build` — ver bicep-expert/deploy/azure.ts ensureBootstrapAcr). Diferente dos
+ * demais soft params, o VALOR nunca vem de um output de construct — vem do deploy
+ * (bootstrap do ACR); por isso não entram no fluxo normal de lift por output homônimo.
+ */
+const AZURE_BUILD_SHARED_PARAMS: Array<{ name: string; secure: boolean }> = [
+  { name: 'acrServer', secure: false },
+  { name: 'acrUser', secure: false },
+  { name: 'acrPassword', secure: true },
+];
 
 /**
  * Gera o conteúdo do _main.bicep a partir das stacks ORDENADAS (orderByDependency).
@@ -371,11 +383,30 @@ function parseBicepModule(t: TemplateRef): ParsedBicepModule {
  *    deploy faz o 2º passo injetando o output;
  *  - outputs de todos os módulos são re-exportados (zip deploy e 2º passo leem
  *    os outputs da stack única) — nome duplicado: o último módulo vence.
+ *  - params do pipeline de build de imagem (acrServer/acrUser/acrPassword e cada
+ *    `<id>Image`, quando `containerBuildImageParams` indica que o projeto tem
+ *    `Compute.Container` com `build`) → SEMPRE promovidos a top-level (o valor
+ *    vem do deploy — bootstrap do ACR —, nunca de um output de construct) e
+ *    repassados por passthrough direto a CADA módulo que os declara.
+ *
+ * @param containerBuildImageParams nomes dos params `<id>Image` (um por
+ *   `Compute.Container` com `build`) agregados do sidecar `containerBuilds` do
+ *   projeto. Array vazio (default) = projeto sem builds → nenhum param extra,
+ *   comportamento idêntico a antes desta feature.
  */
-export function generateAzureMainBicep(ordered: TemplateRef[]): string {
+export function generateAzureMainBicep(ordered: TemplateRef[], containerBuildImageParams: string[] = []): string {
   const mods = ordered.map(parseBicepModule);
   const exportedAnywhere = new Set<string>();
   for (const m of mods) for (const o of m.outputs) exportedAnywhere.add(o.name.toLowerCase());
+
+  const hasContainerBuilds = containerBuildImageParams.length > 0;
+  const buildParamNames = new Set<string>(
+    hasContainerBuilds ? [...AZURE_BUILD_SHARED_PARAMS.map(p => p.name), ...containerBuildImageParams] : [],
+  );
+  // Default real de cada `<id>Image` (o literal `image` do construct, ou o fallback
+  // 'node:20-alpine') — capturado do módulo que o declara, pra preservar o mesmo
+  // comportamento de synth-time validate (sem --parameters) que existia antes do lift.
+  const imageParamDefaults = new Map<string, string>();
 
   // outputs disponíveis "até aqui" (lowercase → último exportador anterior)
   const exported = new Map<string, { sym: string; name: string; type: string }>();
@@ -403,6 +434,15 @@ export function generateAzureMainBicep(ordered: TemplateRef[]): string {
       wired.push(`    ${p}: ${src.sym}.outputs.${src.name}`);
     }
     for (const sp of m.softParams) {
+      if (buildParamNames.has(sp.name)) {
+        // Pipeline de build de imagem: passthrough puro do param de mesmo nome do
+        // main — nunca via output, nunca cai no fluxo de lift-por-output abaixo.
+        if (containerBuildImageParams.includes(sp.name) && !imageParamDefaults.has(sp.name)) {
+          imageParamDefaults.set(sp.name, sp.defaultRaw);
+        }
+        wired.push(`    ${sp.name}: ${sp.name}`);
+        continue;
+      }
       const src = exported.get(sp.name.toLowerCase());
       if (src) {
         wired.push(`    ${sp.name}: ${src.sym}.outputs.${src.name}`);
@@ -430,6 +470,19 @@ export function generateAzureMainBicep(ordered: TemplateRef[]): string {
   ];
   const params: string[] = [];
   if (needsAdminPassword) params.push('@secure()\nparam adminPassword string');
+  if (hasContainerBuilds) {
+    for (const bp of AZURE_BUILD_SHARED_PARAMS) {
+      params.push(
+        bp.secure
+          ? `@secure()\nparam ${bp.name} string = ''`
+          : `param ${bp.name} string = ''`,
+      );
+    }
+    for (const imgParam of containerBuildImageParams) {
+      const def = imageParamDefaults.get(imgParam) ?? "''";
+      params.push(`// Pipeline de build de imagem — o deploy injeta acrServer/${imgParam} após buildar+pushar pro ACR de bootstrap.\nparam ${imgParam} string = ${def}`);
+    }
+  }
   for (const name of lifted) {
     params.push(`// 2º passo: o deploy injeta quando o output homônimo ficar disponível.\nparam ${name} string = ''`);
   }

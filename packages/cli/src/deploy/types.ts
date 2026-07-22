@@ -50,6 +50,8 @@ export interface DestroyContext {
   region: string;
   resourceGroup?: string;
   projectId?: string;
+  /** Path do template sintetizado desta stack (Azure: usado para achar o `.iacmp-meta.json` sidecar — ex: limpar repositórios de ACR criados por `Compute.Container` com `build`). */
+  templatePath?: string;
 }
 
 export interface StackStatus {

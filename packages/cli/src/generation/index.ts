@@ -25,11 +25,9 @@ import {
 } from './file-persister';
 import { validateWithAutoInstall } from './synth-validator';
 import { generatePostmanCollection } from './postman';
-import { ensureAzureTablesHelper } from './azure-tables-helper';
 import {
   REVIEW_PROMPT,
   buildAzureSdkCorrection,
-  buildAzureTablesHelperCorrection,
   buildTsErrorCorrection,
   buildHandlerTsCorrection,
   classifySynthError,
@@ -115,7 +113,7 @@ async function fixInitialTypeErrors(
   const tsFiles = parsed.files.filter(f => f.path.endsWith('.ts'));
   if (tsFiles.length === 0) return parsed;
 
-  const result = validateWithAutoInstall(tsFiles, cwd, iacProvider, parsed.files);
+  const result = validateWithAutoInstall(tsFiles, cwd, iacProvider);
   if (result.valid) return parsed;
 
   const spinner = ora({ text: 'Validação TypeScript falhou — corrigindo...', spinner: 'dots', discardStdin: false }).start();
@@ -127,7 +125,6 @@ async function fixInitialTypeErrors(
     session.addAssistantMessage(retryRaw);
     try {
       const retryParsed = extractResponse(retryRaw);
-      ensureAzureTablesHelper(retryParsed, iacProvider);
       if (retryParsed.files.length < originalFileCount) {
         console.log(chalk.yellow(
           `  ⚠ a correção devolveu menos arquivos que a resposta original (${retryParsed.files.length} vs ${originalFileCount}) — confira se nada foi perdido.`
@@ -205,16 +202,12 @@ async function runSynthCorrectionLoop(
       // inexistente num cenário de blob), por isso roda mesmo com TS inválido.
       const currentTs = parsed.files.filter(f => f.path.endsWith('.ts'));
       const tsResult: { valid: boolean; errors: string[] } = currentTs.length > 0
-        ? validateWithAutoInstall(currentTs, cwd, iacProvider, parsed.files)
+        ? validateWithAutoInstall(currentTs, cwd, iacProvider)
         : { valid: true, errors: [] };
       const azureSdkMsg = iacProvider === 'azure' ? buildAzureSdkCorrection(parsed.files) : null;
-      const azureTablesMsg = iacProvider === 'azure' && !azureSdkMsg ? buildAzureTablesHelperCorrection(parsed.files) : null;
       if (azureSdkMsg) {
         spinner.fail('Azure: handlers com SDK errado — corrigindo...');
         correctionMsg = azureSdkMsg;
-      } else if (azureTablesMsg) {
-        spinner.fail('Azure: handlers ignoram o helper ./tables — corrigindo...');
-        correctionMsg = azureTablesMsg;
       } else if (tsResult.valid) {
         const currentSigs = extractConstructSignatures(parsed.files);
         const removed = [...initialSignatures].filter(s => !currentSigs.has(s));
@@ -246,9 +239,6 @@ async function runSynthCorrectionLoop(
       try {
         parsed = extractResponse(retryRaw);
         stripProtectedFiles(parsed);
-        // Re-injeta o helper Azure (o modelo não o devolve; sem isso o reconcile
-        // o removeria como órfão e a próxima validação quebraria no './tables').
-        ensureAzureTablesHelper(parsed, iacProvider);
         // Cada regeneração SUBSTITUI o conjunto anterior: escreve a nova geração e
         // remove os órfãos da tentativa anterior.
         written = await rewriteAndReconcile(parsed, cwd, written);
@@ -308,10 +298,6 @@ export async function runGeneration(
   if (!fromCache && parsed.files.length > 0) {
     parsed = await applySemanticReview(provider, session, parsed, reviewProvider);
   }
-
-  // Injeta o helper nativo src/tables.ts em projetos Azure com Database.DynamoDB
-  // ANTES de validar TS (os handlers importam './tables') e persistir.
-  ensureAzureTablesHelper(parsed, iacProvider);
 
   parsed = await fixInitialTypeErrors(provider, session, cwd, iacProvider, parsed, reviewProvider);
 

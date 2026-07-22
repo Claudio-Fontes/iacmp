@@ -26,20 +26,18 @@ function hasBundledTypes(cwd: string, mod: string): boolean {
 // Azure) e retorna true se instalou algo. Usado ANTES do loop e DENTRO do loop
 // de synth — sem isso, um SDK trocado no meio das correções (ex: data-tables→pg)
 // nunca instala e o loop queima todas as rodadas em TS2307 (ciclo p01az7).
-export function tryInstallMissingModules(errors: string[], cwd: string, iacProvider: string, files: GeneratedFile[]): boolean {
+export function tryInstallMissingModules(errors: string[], cwd: string, iacProvider: string): boolean {
   const missingModules = errors
     .map(e => e.match(/Cannot find module '([^']+)'/))
     .filter(Boolean)
     .map(m => m![1])
     .filter(pkg => !pkg.startsWith('.') && !pkg.startsWith('@iacmp/'))
     .filter((v, i, a) => a.indexOf(v) === i);
-  const stacksBlob = files.filter(f => f.path.startsWith('stacks/')).map(f => f.content).join('\n');
-  // data-tables só é o SDK certo quando há Database.DynamoDB — em projeto sem
-  // DynamoDB (SQL→pg, blob→storage-blob), NÃO instalar (mascararia o SDK errado
-  // e o detector do loop nunca forçaria a troca).
-  const noDynamoAzure = iacProvider === 'azure' && !stacksBlob.includes('Database.DynamoDB');
+  // @azure/data-tables/@azure/cosmos NUNCA são o SDK certo no Azure (Database.DynamoDB
+  // e Database.DocumentDB são ambos Cosmos MongoDB API — driver mongodb). NÃO instalar
+  // (mascararia o SDK errado e o detector do loop nunca forçaria a troca).
   const modulesToInstall = iacProvider === 'azure'
-    ? missingModules.filter(pkg => !pkg.startsWith('@aws-sdk/') && !(noDynamoAzure && pkg === '@azure/data-tables'))
+    ? missingModules.filter(pkg => !pkg.startsWith('@aws-sdk/') && pkg !== '@azure/data-tables' && pkg !== '@azure/cosmos')
     : missingModules;
   if (modulesToInstall.length === 0) return false;
   const installSpinner = ora({ text: `Instalando dependências: ${modulesToInstall.join(', ')}...`, spinner: 'dots', discardStdin: false }).start();
@@ -63,9 +61,9 @@ export function tryInstallMissingModules(errors: string[], cwd: string, iacProvi
 // Valida os arquivos .ts e, se falhar por "Cannot find module", instala os
 // pacotes faltantes e revalida uma vez — evita que a IA troque por outra lib
 // que também não existe.
-export function validateWithAutoInstall(tsFiles: GeneratedFile[], cwd: string, iacProvider: string, allFiles: GeneratedFile[]): TsResult {
+export function validateWithAutoInstall(tsFiles: GeneratedFile[], cwd: string, iacProvider: string): TsResult {
   let result = validateTypeScript(tsFiles, cwd);
-  if (!result.valid && tryInstallMissingModules(result.errors, cwd, iacProvider, allFiles)) {
+  if (!result.valid && tryInstallMissingModules(result.errors, cwd, iacProvider)) {
     result = validateTypeScript(tsFiles, cwd);
   }
   return result;

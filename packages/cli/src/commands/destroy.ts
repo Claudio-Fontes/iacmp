@@ -178,7 +178,7 @@ export default class Destroy extends Command {
         return;
       }
       this.log(`Stack: ${AZURE_MAIN_STACK} (deployment único — remove todos os módulos)`);
-      const ctx: DestroyContext = { ...baseCtx, stackName: mainStackName };
+      const ctx: DestroyContext = { ...baseCtx, stackName: mainStackName, templatePath: path.join(providerOutDir(cwd, 'azure'), AZURE_MAIN_FILE) };
       let commands;
       try {
         commands = await executor.planDestroy(ctx);
@@ -221,7 +221,7 @@ export default class Destroy extends Command {
       }
 
       this.log(`Stack: ${t.stackName}${stackRegion !== region ? ` [DR: ${stackRegion}]` : ''}`);
-      const ctx: DestroyContext = { ...stackCtx, stackName: physicalStackName(t.stackName) };
+      const ctx: DestroyContext = { ...stackCtx, stackName: physicalStackName(t.stackName), templatePath: t.filePath };
 
       let commands;
       try {

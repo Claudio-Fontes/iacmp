@@ -1,4 +1,4 @@
-import { execFileSync } from 'child_process';
+import { execFileSync, spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -30,6 +30,22 @@ function getCrossStackParams(templatePath: string): string[] {
     if (m) params.push(m[1]);
   }
   return params;
+}
+
+/** Nomes dos outputs que sinalizam storage accounts com static website a ativar pós-deploy. */
+function getStaticWebsiteOutputKeys(templatePath: string): string[] {
+  let content: string;
+  try {
+    content = fs.readFileSync(templatePath, 'utf-8');
+  } catch {
+    return [];
+  }
+  const keys: string[] = [];
+  for (const line of content.split('\n')) {
+    const m = line.match(/^output\s+(\w+StaticWebsiteAccount)\s+/);
+    if (m) keys.push(m[1]);
+  }
+  return keys;
 }
 
 /** Params com default '' (soft) — injetados quando disponíveis, sem erro se ausentes. */
@@ -136,6 +152,270 @@ interface AzureFunctionMeta {
   routePatterns?: string[];
 }
 
+interface AzureContainerBuildMeta {
+  constructId: string;
+  imageParamName: string;
+  repository: string;
+  tag: string;
+  context: string;
+  dockerfile?: string;
+}
+
+/** Resource group compartilhado entre projetos — guarda o ACR de bootstrap. Nunca é destruído por `iacmp destroy` de um projeto individual. */
+const ACR_BOOTSTRAP_RESOURCE_GROUP = 'iacmp-bootstrap-rg';
+
+function getSubscriptionId(): string {
+  return execFileSync('az', ['account', 'show', '--query', 'id', '--output', 'tsv'], { stdio: 'pipe' }).toString().trim();
+}
+
+/** Nome do ACR de bootstrap — 1 por subscription, compartilhado entre projetos (nomes de ACR são globalmente únicos no Azure). */
+function acrBootstrapName(subscriptionId: string): string {
+  return `iacmpacr${subscriptionId.replace(/-/g, '').slice(0, 12)}`;
+}
+
+function acrExists(name: string, resourceGroup: string): boolean {
+  try {
+    execFileSync('az', ['acr', 'show', '--name', name, '--resource-group', resourceGroup, '--query', 'name', '--output', 'tsv'], { stdio: 'pipe' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `az acr check-name`: o namespace de nomes de ACR é GLOBAL (azurecr.io) — um
+ * nome pode estar em uso por outra subscription/tenant inteiramente fora da
+ * nossa visão. `acrExists` (show no nosso resource group) não detecta isso;
+ * só o check-name diz se dá pra CRIAR com esse nome.
+ */
+function acrNameAvailable(name: string): boolean {
+  try {
+    const out = execFileSync('az', ['acr', 'check-name', '--name', name, '--query', 'nameAvailable', '--output', 'tsv'], { stdio: 'pipe' }).toString().trim();
+    return out === 'true';
+  } catch {
+    // check-name falhou (az indisponível, etc.) — trata como indisponível: mais
+    // seguro tentar um nome alternativo do que insistir num create que pode falhar.
+    return false;
+  }
+}
+
+function randomAcrSuffix(): string {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const crypto = require('crypto') as typeof import('crypto');
+  return crypto.randomBytes(3).toString('hex'); // 6 chars alfanuméricos
+}
+
+interface BootstrapAcr {
+  name: string;
+  loginServer: string;
+  username: string;
+  password: string;
+}
+
+/** Estado persistido do bootstrap Azure — sobrevive entre execuções do `iacmp deploy` (inclusive processos concorrentes). */
+interface AzureBootstrapState {
+  acrName?: string;
+}
+
+function bootstrapStatePath(): string {
+  // `$HOME` é a fonte documentada do os.homedir() no POSIX — checar direto aqui
+  // primeiro (em vez de só os.homedir()) mantém o comportamento idêntico em uso
+  // real e permite override determinístico em teste (alguns runners não repassam
+  // mutações de process.env.HOME até a chamada nativa de os.homedir()).
+  const home = process.env.HOME || os.homedir();
+  return path.join(home, '.iacmp', 'azure-bootstrap.json');
+}
+
+function readBootstrapState(): AzureBootstrapState {
+  try {
+    return JSON.parse(fs.readFileSync(bootstrapStatePath(), 'utf-8')) as AzureBootstrapState;
+  } catch {
+    return {};
+  }
+}
+
+function writeBootstrapState(state: AzureBootstrapState): void {
+  const file = bootstrapStatePath();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(state, null, 2));
+}
+
+function fetchAcrCredentials(acrName: string): BootstrapAcr {
+  const loginServer = execFileSync('az', [
+    'acr', 'show', '--name', acrName, '--resource-group', ACR_BOOTSTRAP_RESOURCE_GROUP,
+    '--query', 'loginServer', '--output', 'tsv',
+  ], { stdio: 'pipe' }).toString().trim();
+  const credsRaw = execFileSync('az', [
+    'acr', 'credential', 'show', '--name', acrName, '--resource-group', ACR_BOOTSTRAP_RESOURCE_GROUP,
+    '--query', '{username:username,password:passwords[0].value}', '--output', 'json',
+  ], { stdio: 'pipe' }).toString();
+  const creds = JSON.parse(credsRaw) as { username: string; password: string };
+  return { name: acrName, loginServer, username: creds.username, password: creds.password };
+}
+
+/**
+ * Garante o ACR de bootstrap (Basic, admin habilitado) num resource group próprio,
+ * compartilhado entre projetos — sobrevive ao `iacmp destroy` de qualquer projeto
+ * individual.
+ *
+ * O nome de ACR é GLOBALMENTE único (namespace azurecr.io) — o nome determinístico
+ * `iacmpacr<subId[:12]>` pode estar reservado fora da nossa visão (outra subscription,
+ * um registro já purgado, etc.), caso em que `az acr create` falha pra sempre com
+ * `RegistryNameAlreadyInUse` mesmo o nosso resource group nunca tendo tido esse ACR.
+ * Por isso: (1) show-before-create (reusa se já é nosso), (2) nome persistido em
+ * `~/.iacmp/azure-bootstrap.json` tem prioridade sobre o determinístico, (3) se o
+ * determinístico não estiver disponível, cai pra um nome com sufixo aleatório e
+ * PERSISTE a escolha pra próximas execuções, (4) corrida entre processos (dois
+ * deploys concorrentes chamando o bootstrap ao mesmo tempo): se o create falhar com
+ * RegistryNameAlreadyInUse, refaz o show no nosso RG antes de desistir — se o outro
+ * processo venceu a corrida, reusa o resultado dele em vez de falhar.
+ */
+function ensureBootstrapAcr(location: string): BootstrapAcr {
+  const subscriptionId = getSubscriptionId();
+  if (!resourceGroupExists(ACR_BOOTSTRAP_RESOURCE_GROUP)) {
+    process.stdout.write(`[iacmp] Criando resource group de bootstrap "${ACR_BOOTSTRAP_RESOURCE_GROUP}" (compartilhado entre projetos)...\n`);
+    execFileSync('az', ['group', 'create', '--name', ACR_BOOTSTRAP_RESOURCE_GROUP, '--location', location], { stdio: 'pipe' });
+  }
+
+  const state = readBootstrapState();
+  const deterministicName = acrBootstrapName(subscriptionId);
+  const candidates: Array<{ name: string; reason: 'persistido' | 'determinístico' | 'fallback' }> = state.acrName
+    ? [{ name: state.acrName, reason: 'persistido' }]
+    : [{ name: deterministicName, reason: 'determinístico' }];
+
+  const MAX_ATTEMPTS = 5;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const { name: acrName, reason } = candidates[candidates.length - 1];
+
+    // 1. Show-before-create: já é nosso? Reusa sem tentar criar de novo.
+    if (acrExists(acrName, ACR_BOOTSTRAP_RESOURCE_GROUP)) {
+      process.stdout.write(`[iacmp] ACR de bootstrap "${acrName}" já existe (nome ${reason}) — reaproveitando.\n`);
+      execFileSync('az', ['acr', 'update', '--name', acrName, '--resource-group', ACR_BOOTSTRAP_RESOURCE_GROUP, '--admin-enabled', 'true'], { stdio: 'pipe' });
+      if (state.acrName !== acrName) writeBootstrapState({ acrName });
+      return fetchAcrCredentials(acrName);
+    }
+
+    // 2. Não é nosso ainda — o nome está livre pra CRIAR (namespace global)?
+    if (!acrNameAvailable(acrName)) {
+      process.stdout.write(`[iacmp] Nome de ACR "${acrName}" (${reason}) está em uso fora do nosso resource group (namespace global azurecr.io) — gerando nome alternativo...\n`);
+      candidates.push({ name: `${deterministicName}${randomAcrSuffix()}`.slice(0, 50), reason: 'fallback' });
+      continue;
+    }
+
+    process.stdout.write(`[iacmp] Criando Azure Container Registry de bootstrap "${acrName}" (nome ${reason})...\n`);
+    try {
+      execFileSync('az', [
+        'acr', 'create',
+        '--name', acrName,
+        '--resource-group', ACR_BOOTSTRAP_RESOURCE_GROUP,
+        '--sku', 'Basic',
+        '--admin-enabled', 'true',
+        '--location', location,
+      ], { stdio: 'pipe' });
+      writeBootstrapState({ acrName });
+      return fetchAcrCredentials(acrName);
+    } catch (err) {
+      const stderr = (err as { stderr?: Buffer }).stderr?.toString() ?? (err as Error).message;
+      if (!/RegistryNameAlreadyInUse/i.test(stderr)) {
+        throw new Error(`Falha ao criar o ACR de bootstrap "${acrName}": ${stderr}`);
+      }
+      // 3. Corrida entre processos: outro deploy concorrente pode ter criado
+      // esse MESMO nome entre o check-name e o create — se foi no NOSSO
+      // resource group, a corrida terminou em sucesso; reusa.
+      if (acrExists(acrName, ACR_BOOTSTRAP_RESOURCE_GROUP)) {
+        process.stdout.write(`[iacmp] ACR "${acrName}" foi criado por um deploy concorrente entre o check e o create — reaproveitando.\n`);
+        execFileSync('az', ['acr', 'update', '--name', acrName, '--resource-group', ACR_BOOTSTRAP_RESOURCE_GROUP, '--admin-enabled', 'true'], { stdio: 'pipe' });
+        writeBootstrapState({ acrName });
+        return fetchAcrCredentials(acrName);
+      }
+      // Não é nosso — o nome é de terceiros mesmo (reservado fora da nossa visão). Fallback.
+      process.stdout.write(`[iacmp] "${acrName}" já está em uso (RegistryNameAlreadyInUse) e não é nosso — gerando nome alternativo...\n`);
+      candidates.push({ name: `${deterministicName}${randomAcrSuffix()}`.slice(0, 50), reason: 'fallback' });
+    }
+  }
+  throw new Error(
+    `Não foi possível encontrar um nome disponível para o ACR de bootstrap após ${MAX_ATTEMPTS} tentativas ` +
+    `(subscription ${subscriptionId}). Verifique "az acr check-name" manualmente ou limpe ~/.iacmp/azure-bootstrap.json.`,
+  );
+}
+
+/**
+ * Distingue "Docker não instalado" de "daemon parado" — nunca cai silenciosamente
+ * no fallback ACR Tasks quando o usuário só esqueceu de abrir o Docker Desktop
+ * (ACR Tasks é sabidamente bloqueado com TasksOperationsNotAllowed em subscriptions
+ * free-trial — cair nele "por acidente" só troca um erro claro por um confuso).
+ */
+function checkDockerAvailability(): 'available' | 'daemon-down' | 'not-installed' {
+  try {
+    execFileSync('docker', ['version', '--format', '{{.Client.Version}}'], { stdio: 'pipe' });
+    return 'available';
+  } catch {
+    const cliCheck = spawnSync('docker', ['--version'], { encoding: 'utf-8' });
+    return cliCheck.status === 0 ? 'daemon-down' : 'not-installed';
+  }
+}
+
+/**
+ * Builda e publica a imagem de um Compute.Container com `build` no ACR de bootstrap.
+ * Precedência (decisão registrada — ver docs/plano-p4-migracao-grafo-gcp-azure.md):
+ *   1. Docker local disponível → `docker build --platform linux/amd64` + `docker push` (rota validada em produção, commit 607292a).
+ *   2. Docker ausente → `az acr build` (ACR Tasks), best-effort — conhecido por falhar com
+ *      `TasksOperationsNotAllowed` em subscriptions free-trial; erro explícito nesse caso.
+ *   3. Docker instalado mas daemon parado → erro direto pedindo pra iniciar o Docker Desktop
+ *      (NUNCA cai silenciosamente no ACR Tasks, que pode estar bloqueado).
+ */
+function buildAndPushContainerImage(build: AzureContainerBuildMeta, cwd: string, acr: BootstrapAcr): string {
+  const contextPath = path.resolve(cwd, build.context);
+  if (!fs.existsSync(contextPath)) {
+    throw new Error(
+      `Compute.Container "${build.constructId}": contexto de build "${build.context}" não encontrado ` +
+      `(resolvido para "${contextPath}").`,
+    );
+  }
+  const fullImage = `${acr.loginServer}/${build.repository}:${build.tag}`;
+  const dockerState = checkDockerAvailability();
+
+  if (dockerState === 'available') {
+    process.stdout.write(`[iacmp] Compute.Container "${build.constructId}": build via Docker local -> ${fullImage}\n`);
+    const buildArgs = ['build', '--platform', 'linux/amd64', '-t', fullImage];
+    if (build.dockerfile) buildArgs.push('-f', path.resolve(cwd, build.dockerfile));
+    buildArgs.push(contextPath);
+    execFileSync('docker', buildArgs, { stdio: 'inherit' });
+    execFileSync('az', ['acr', 'login', '--name', acr.name], { stdio: 'pipe' });
+    execFileSync('docker', ['push', fullImage], { stdio: 'inherit' });
+    return fullImage;
+  }
+
+  if (dockerState === 'daemon-down') {
+    throw new Error(
+      `Compute.Container "${build.constructId}": Docker está instalado mas o daemon não está rodando.\n` +
+      `Inicie o Docker Desktop e tente novamente.\n` +
+      `(Alternativa best-effort: ACR Tasks — mas é conhecida por falhar com "TasksOperationsNotAllowed" ` +
+      `em subscriptions free-trial; Docker local é a rota suportada.)`,
+    );
+  }
+
+  process.stdout.write(`[iacmp] Compute.Container "${build.constructId}": Docker não encontrado — tentando ACR Tasks (best-effort) -> ${fullImage}\n`);
+  const acrBuildArgs = ['acr', 'build', '--registry', acr.name, '--image', `${build.repository}:${build.tag}`, '--platform', 'linux/amd64'];
+  if (build.dockerfile) acrBuildArgs.push('--file', build.dockerfile);
+  acrBuildArgs.push(contextPath);
+  try {
+    execFileSync('az', acrBuildArgs, { stdio: ['ignore', 'inherit', 'pipe'] });
+  } catch (err) {
+    const stderr = (err as { stderr?: Buffer }).stderr?.toString() ?? '';
+    if (stderr) process.stderr.write(stderr);
+    if (/TasksOperationsNotAllowed/i.test(stderr)) {
+      throw new Error(
+        `Compute.Container "${build.constructId}": ACR Tasks ("az acr build") não está disponível nesta ` +
+        `subscription (bloqueio conhecido em contas free-trial: TasksOperationsNotAllowed). Instale e inicie ` +
+        `o Docker Desktop e rode o deploy novamente — é a rota de build suportada nesta subscription.`,
+      );
+    }
+    throw new Error(`Compute.Container "${build.constructId}": az acr build falhou. ${stderr || (err as Error).message}`);
+  }
+  return fullImage;
+}
+
 /**
  * Empacota o handler de uma Function.Lambda para Azure Functions (zip deploy).
  *
@@ -201,7 +481,7 @@ function buildFunctionBundle(
   const shimPath = shimCandidates.find(p => fs.existsSync(p)) ?? shimCandidates[0];
   const s3ShimPath = shimPath.replace('azure-dynamo-shim', 'azure-s3-shim');
   const azureSdkNodePaths: string[] = [];
-  for (const pkg of ['@azure/data-tables', '@azure/storage-blob']) {
+  for (const pkg of ['@azure/data-tables', '@azure/storage-blob', 'mongodb']) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const pkgPath = require.resolve(`${pkg}/package.json`) as string;
@@ -399,10 +679,28 @@ export const azureExecutor: DeployExecutor = {
 
     const metaPath = ctx.templatePath.replace('.bicep', '.iacmp-meta.json');
     const zipCmds: NativeCommand[] = [];
+    // Parâmetros produzidos pelo pipeline de build de imagem (acrServer/acrUser/acrPassword
+    // + <imageParamName>=<imagem final> por Compute.Container com `build`) — injetados
+    // ANTES do cálculo de `paramValues` abaixo para que entrem no `provided` set e não
+    // sejam pisados pela lógica de soft/hard cross-stack params.
+    const containerBuildParamValues: string[] = [];
 
     if (!ctx.dryRun && fs.existsSync(metaPath)) {
-      const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as { functions: AzureFunctionMeta[] };
+      const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as {
+        functions: AzureFunctionMeta[];
+        containerBuilds?: AzureContainerBuildMeta[];
+      };
       const functions: AzureFunctionMeta[] = meta.functions ?? [];
+      const containerBuilds: AzureContainerBuildMeta[] = meta.containerBuilds ?? [];
+
+      if (containerBuilds.length > 0) {
+        const acr = ensureBootstrapAcr(ctx.region);
+        containerBuildParamValues.push(`acrServer=${acr.loginServer}`, `acrUser=${acr.username}`, `acrPassword=${acr.password}`);
+        for (const build of containerBuilds) {
+          const fullImage = buildAndPushContainerImage(build, ctx.cwd, acr);
+          containerBuildParamValues.push(`${build.imageParamName}=${fullImage}`);
+        }
+      }
 
       for (const fn of functions) {
         process.stdout.write(`[iacmp] Empacotando ${fn.constructId} para Azure Functions...\n`);
@@ -443,7 +741,7 @@ export const azureExecutor: DeployExecutor = {
       '--yes',
     ];
 
-    const paramValues: string[] = [];
+    const paramValues: string[] = [...containerBuildParamValues];
     if (ctx.templatePath) {
       const crossParams = getCrossStackParams(ctx.templatePath);
       // adminPassword (@secure, sem default): o deploy gera UMA senha forte por
@@ -578,12 +876,52 @@ export const azureExecutor: DeployExecutor = {
     }
 
     commands.push(...zipCmds);
+
+    // Ativação de static website — data-plane, não configurável via ARM/Bicep.
+    // Para cada output *StaticWebsiteAccount emitido pelo synth, roda pós-deploy:
+    //   az storage blob service-properties update --static-website ...
+    // O preRun lê os outputs da stack recém-deployada para obter o nome da conta.
+    if (!ctx.dryRun) {
+      const staticWebKeys = getStaticWebsiteOutputKeys(ctx.templatePath);
+      for (const accKey of staticWebKeys) {
+        const idxKey = accKey.replace(/StaticWebsiteAccount$/, 'StaticWebsiteIndex');
+        const errKey = accKey.replace(/StaticWebsiteAccount$/, 'StaticWebsite404');
+        const lazyCmd: NativeCommand = { bin: 'az', args: ['version', '--output', 'none'] };
+        lazyCmd.preRun = () => {
+          const outputs = getAzureStackOutputs(ctx.stackName, resourceGroup);
+          const byLow = new Map(Object.entries(outputs).map(([k, v]) => [k.toLowerCase(), v]));
+          const accountName = byLow.get(accKey.toLowerCase());
+          if (!accountName) {
+            process.stdout.write(`[iacmp] Output "${accKey}" não encontrado — static website não ativado.\n`);
+            return;
+          }
+          const indexDoc = byLow.get(idxKey.toLowerCase()) ?? 'index.html';
+          const errorDoc = byLow.get(errKey.toLowerCase()) ?? '404.html';
+          process.stdout.write(`[iacmp] Ativando static website em "${accountName}" (index: ${indexDoc}, 404: ${errorDoc})...\n`);
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const { execFileSync } = require('child_process') as typeof import('child_process');
+          execFileSync('az', [
+            'storage', 'blob', 'service-properties', 'update',
+            '--account-name', accountName,
+            '--static-website',
+            '--index-document', indexDoc,
+            '--404-document', errorDoc,
+            '--auth-mode', 'login',
+          ], { stdio: 'inherit' });
+          process.stdout.write(`[iacmp] Static website ativado em "${accountName}".\n`);
+          // O comando principal (az version) passa a ser no-op — todo o trabalho
+          // foi feito no preRun via execFileSync.
+        };
+        commands.push(lazyCmd);
+      }
+    }
+
     return commands;
   },
 
   async planDestroy(ctx: DestroyContext): Promise<NativeCommand[]> {
     const resourceGroup = requireResourceGroup(ctx);
-    return [{
+    const commands: NativeCommand[] = [{
       bin: 'az',
       args: [
         'stack', 'group', 'delete',
@@ -593,6 +931,41 @@ export const azureExecutor: DeployExecutor = {
         '--yes',
       ],
     }];
+
+    // Limpa só o repositório de imagem do projeto no ACR de bootstrap — o ACR em
+    // si é compartilhado entre projetos (resource group próprio) e nunca é
+    // destruído por aqui. Tolerante à ausência (repo/ACR já não existir).
+    if (ctx.templatePath) {
+      const metaPath = ctx.templatePath.replace(/\.bicep$/, '.iacmp-meta.json');
+      const containerBuilds: AzureContainerBuildMeta[] = fs.existsSync(metaPath)
+        ? ((JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as { containerBuilds?: AzureContainerBuildMeta[] }).containerBuilds ?? [])
+        : [];
+      for (const build of containerBuilds) {
+        // Placeholder no-op — o trabalho real acontece no preRun (lazy), pra não
+        // rodar `az account show` durante --dry-run (planDestroy não tem ctx.dryRun).
+        const lazyCmd: NativeCommand = { bin: 'az', args: ['version', '--output', 'none'] };
+        lazyCmd.preRun = () => {
+          // O nome real do ACR pode ter sido um fallback persistido (ver ensureBootstrapAcr) —
+          // nunca assume o determinístico sem checar o estado primeiro.
+          const acrName = readBootstrapState().acrName ?? acrBootstrapName(getSubscriptionId());
+          process.stdout.write(`[iacmp] Removendo repositório ACR "${build.repository}" (imagem de "${build.constructId}")...\n`);
+          try {
+            execFileSync('az', [
+              'acr', 'repository', 'delete',
+              '--name', acrName,
+              '--repository', build.repository,
+              '--yes',
+            ], { stdio: 'pipe' });
+            process.stdout.write(`[iacmp] Repositório "${build.repository}" removido.\n`);
+          } catch {
+            process.stdout.write(`[iacmp] Repositório "${build.repository}" não encontrado no ACR (ok, nada a limpar).\n`);
+          }
+        };
+        commands.push(lazyCmd);
+      }
+    }
+
+    return commands;
   },
 
   describeStatus(stackName: string, ctx: { resourceGroup?: string }): StackStatus {

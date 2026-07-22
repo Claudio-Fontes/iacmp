@@ -62,7 +62,7 @@ const RESOURCE_HINTS: ResourceHint[] = [
       },
       {
         label: 'b) Substituir por Cosmos DB (NoSQL — adapta o modelo de dados)',
-        constraint: '[RESTRIÇÃO DE CONTA: PostgreSQL Flexible Server não disponível. Use Database.DynamoDB (Cosmos DB Table API) em vez de Database.SQL. Handler usa @azure/data-tables.]',
+        constraint: '[RESTRIÇÃO DE CONTA: PostgreSQL Flexible Server não disponível. Use Database.DynamoDB (Cosmos DB MongoDB API) em vez de Database.SQL. Handler usa o driver mongodb (MongoClient).]',
       },
     ],
   },

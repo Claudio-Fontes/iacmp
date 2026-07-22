@@ -89,6 +89,9 @@ export default class Synth extends Command {
     const allStackFiles = findStackFiles(stacksDir);
     const loadedStacks: LoadedStack[] = [];
     const loadErrors: string[] = [];
+    // O nome de saída deriva do basename do arquivo — dois arquivos com o mesmo
+    // basename em pastas diferentes sobrescreveriam o output um do outro em silêncio.
+    const stackFilesByName = new Map<string, string[]>();
 
     for (const stackPath of allStackFiles) {
       const file = path.basename(stackPath);
@@ -123,6 +126,17 @@ export default class Synth extends Command {
       }
 
       loadedStacks.push({ stackName, stack: stack as Stack });
+      const rel = path.relative(stacksDir, stackPath);
+      stackFilesByName.set(stackName, [...(stackFilesByName.get(stackName) ?? []), rel]);
+    }
+
+    const collisions = [...stackFilesByName.entries()].filter(([, files]) => files.length > 1);
+    if (collisions.length > 0) {
+      this.error(
+        'Colisão de nome de stack — arquivos diferentes gerariam o MESMO arquivo de saída (um sobrescreveria o outro):\n\n' +
+        collisions.map(([name, files]) => `  • "${name}": ${files.join('  ×  ')}`).join('\n') +
+        '\n\nRenomeie os arquivos para basenames únicos (a pasta não diferencia o nome de saída).',
+      );
     }
 
     if (loadErrors.length > 0) {
@@ -331,12 +345,13 @@ export default class Synth extends Command {
             const bicep = p.synthesize(typedStack, allStacks, { accountTier: (config.accountTier === 'standard' ? 'standard' : 'free') });
             const outPath = path.join(provOutDir, `${stackName}.bicep`);
             fs.writeFileSync(outPath, bicep);
-            const { extractAzureFunctionMeta } = await import('@iacmp/provider-azure');
+            const { extractAzureFunctionMeta, extractAzureContainerBuilds } = await import('@iacmp/provider-azure');
             const fnMeta = extractAzureFunctionMeta(typedStack, allStacks);
-            if (fnMeta.length > 0) {
+            const containerBuilds = extractAzureContainerBuilds(typedStack, config.name || undefined);
+            if (fnMeta.length > 0 || containerBuilds.length > 0) {
               fs.writeFileSync(
                 path.join(provOutDir, `${stackName}.iacmp-meta.json`),
-                JSON.stringify({ functions: fnMeta }, null, 2),
+                JSON.stringify({ functions: fnMeta, containerBuilds }, null, 2),
               );
             }
             this.log(`Sintetizado: ${outPath}`);
@@ -411,20 +426,28 @@ export default class Synth extends Command {
   private writeAzureMain(cwd: string, ordered: TemplateRef[]): void {
     const dir = providerOutDir(cwd, 'azure');
     const mainPath = path.join(dir, AZURE_MAIN_FILE);
-    fs.writeFileSync(mainPath, generateAzureMainBicep(ordered));
 
-    const functions = ordered.flatMap(t => {
+    const metas = ordered.map(t => {
       const metaPath = t.filePath.replace(/\.bicep$/, '.iacmp-meta.json');
-      if (!fs.existsSync(metaPath)) return [];
+      if (!fs.existsSync(metaPath)) return null;
       try {
-        return (JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as { functions?: unknown[] }).functions ?? [];
+        return JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as { functions?: unknown[]; containerBuilds?: Array<{ imageParamName?: string }> };
       } catch {
-        return [];
+        return null;
       }
     });
+    const functions = metas.flatMap(m => m?.functions ?? []);
+    const containerBuilds = metas.flatMap(m => m?.containerBuilds ?? []);
+    // Params do pipeline de build (acrServer/acrUser/acrPassword/<id>Image) só existem
+    // no top-level do _main.bicep quando o projeto TEM containerBuilds — sem isso, o
+    // ARM rejeita `--parameters acrServer=...` como "unrecognized template parameter"
+    // (o deploy só injeta esses --parameters quando containerBuilds.length > 0).
+    const imageParamNames = [...new Set(containerBuilds.map(b => b.imageParamName).filter((n): n is string => !!n))];
+    fs.writeFileSync(mainPath, generateAzureMainBicep(ordered, imageParamNames));
+
     const mainMetaPath = mainPath.replace(/\.bicep$/, '.iacmp-meta.json');
-    if (functions.length > 0) {
-      fs.writeFileSync(mainMetaPath, JSON.stringify({ functions }, null, 2));
+    if (functions.length > 0 || containerBuilds.length > 0) {
+      fs.writeFileSync(mainMetaPath, JSON.stringify({ functions, containerBuilds }, null, 2));
     } else if (fs.existsSync(mainMetaPath)) {
       fs.rmSync(mainMetaPath);
     }

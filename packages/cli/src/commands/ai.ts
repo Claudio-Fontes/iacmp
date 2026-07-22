@@ -255,7 +255,7 @@ export default class AI extends Command {
     // usuário literalmente mesmo com override no system prompt. Sufixo garante que a
     // tradução Azure seja aplicada antes de enviar à IA.
     const finalPrompt = iacProvider === 'azure' && /\@aws-sdk\/|aws-sdk|s3-request-presigner|DynamoDBClient|ScanCommand|PutCommand|GetCommand|DeleteCommand/.test(userPrompt)
-      ? `${enrichedUserPrompt}\n\n[AZURE OVERRIDE: Este prompt menciona SDKs AWS. NUNCA gere @aws-sdk/* neste projeto Azure. Substituições obrigatórias: S3/presigned-URL → Storage.Bucket + @azure/storage-blob + BlobServiceClient.fromConnectionString + SAS (generateBlobSASQueryParameters); DynamoDB → Database.DynamoDB + @azure/data-tables. Gere TODOS os handlers com SDKs Azure.]`
+      ? `${enrichedUserPrompt}\n\n[AZURE OVERRIDE: Este prompt menciona SDKs AWS. NUNCA gere @aws-sdk/* neste projeto Azure. Substituições obrigatórias: S3/presigned-URL → Storage.Bucket + @azure/storage-blob + BlobServiceClient.fromConnectionString + SAS (generateBlobSASQueryParameters); DynamoDB → Database.DynamoDB + driver mongodb (MongoClient, MONGO_URI/DB_NAME auto-injetados). Gere TODOS os handlers com SDKs Azure.]`
       : enrichedUserPrompt;
     session.addUserMessage(finalPrompt);
     try {

@@ -24,10 +24,13 @@ export const REVIEW_PROMPT = (fileCount: number): string =>
   `Se encontrar QUALQUER defeito, retorne o JSON COMPLETO CORRIGIDO com os ${fileCount} arquivo(s) (todos, não só os corrigidos). Se estiver tudo perfeito, retorne exatamente o mesmo JSON. Responda APENAS com o JSON, sem texto antes ou depois.`;
 
 // DOIS MUNDOS SEPARADOS (regra do usuário): no Azure, NENHUM @aws-sdk é aceito.
-// O shim (azure-dynamo-shim) foi a decisão ANTIGA — hoje o caminho é o helper
-// nativo src/tables.ts (@azure/data-tables). Qualquer @aws-sdk num handler Azure
-// é erro e deve virar o SDK Azure nativo (DynamoDB→./tables, S3→storage-blob,
-// SQS→service-bus, secret→env var).
+// Database.DynamoDB no Azure é Cosmos DB MongoDB API (não Table API) — o handler
+// usa o driver `mongodb` nativo, igual a Database.DocumentDB. Qualquer @aws-sdk
+// num handler Azure é erro e deve virar o SDK Azure nativo (DynamoDB/DocumentDB→
+// mongodb, S3→storage-blob, SQS→service-bus, secret→env var). O shim
+// (azure-dynamo-shim) continua existindo só para o deploy CRUZADO — um projeto
+// AUTORADO para AWS (com @aws-sdk/client-dynamodb de verdade) que também é
+// deployado na Azure; ele hoje traduz para o driver mongodb por baixo.
 function usesAwsSdk(content: string): boolean {
   return /@aws-sdk\//.test(content);
 }
@@ -71,7 +74,9 @@ function azureServiceHints(handlerFiles: GeneratedFile[]): string {
  * correção (com o SDK certo pro datastore do projeto) ou null se tudo ok.
  * Roda INDEPENDENTE do TS: o SDK errado costuma SER a causa do erro de compilação
  * (ex: TableClient.getSignedUrl não existe num cenário de blob).
- * DynamoDB AWS SDK é aceito (shim de deploy) — só flaga SDKs AWS não-shimmados.
+ * QUALQUER @aws-sdk/* é flagado aqui — inclui client-dynamodb/lib-dynamodb, mesmo
+ * havendo um shim de deploy para eles (esse shim é só para o caso de deploy CRUZADO
+ * de um projeto AUTORADO para AWS; a geração Azure-nativa nunca deve produzi-lo).
  */
 export function buildAzureSdkCorrection(files: GeneratedFile[]): string | null {
   const stacksBlob = files.filter(f => f.path.startsWith('stacks/')).map(f => f.content).join('\n');
@@ -80,13 +85,11 @@ export function buildAzureSdkCorrection(files: GeneratedFile[]): string | null {
   const blobOnly = stacksBlob.includes('Storage.Bucket') && !hasDynamo && !stacksBlob.includes('Database.SQL');
   const handlerFiles = files.filter(f => (f.path.startsWith('src/') || f.path.endsWith('.ts')) && !f.path.startsWith('stacks/'));
   // Dois mundos separados: QUALQUER @aws-sdk num handler Azure é erro (inclui
-  // client/lib-dynamodb — o caminho é o helper ./tables, não o shim).
+  // client/lib-dynamodb — o caminho é o driver mongodb, não o shim).
   const awsSdkFiles = handlerFiles.filter(f => usesAwsSdk(f.content));
-  // data-tables/cosmos só é correto com Database.DynamoDB — em SQL (→pg) ou
-  // blob (→storage-blob) é o SDK errado.
-  const wrongTableFiles = (sqlOnly || blobOnly)
-    ? handlerFiles.filter(f => f.content.includes('@azure/data-tables') || f.content.includes('@azure/cosmos'))
-    : [];
+  // data-tables/cosmos NUNCA é o SDK certo no Azure — Database.DynamoDB e
+  // Database.DocumentDB são ambos Cosmos MongoDB API (driver mongodb), não Table API.
+  const wrongTableFiles = handlerFiles.filter(f => f.content.includes('@azure/data-tables') || f.content.includes('@azure/cosmos'));
   if (awsSdkFiles.length === 0 && wrongTableFiles.length === 0) return null;
   const fileList = [...new Set([...awsSdkFiles, ...wrongTableFiles].map(f => f.path))].join(', ');
   const sdkExample = sqlOnly
@@ -108,51 +111,23 @@ export function buildAzureSdkCorrection(files: GeneratedFile[]): string | null {
       `// list: for await (const b of container.listBlobsFlat()){...}  // delete: await container.deleteBlob(name)\n` +
       `\`\`\`\n\n` +
       `Env var ÚNICA: BLOB_CONNECTION: ref('<Bucket>','ConnectionString'). NÃO gere BLOB_KEY/BLOB_ACCOUNT/COSMOS_CONNECTION/TABLE_NAME. NUNCA @azure/data-tables/@azure/cosmos nem @aws-sdk/*.`
-    : `Reescreva APENAS esses handlers usando o helper './tables' (injetado pelo iacmp — NÃO importe @azure/data-tables direto):\n` +
+    : `Reescreva APENAS esses handlers usando o driver mongodb nativo (Database.DynamoDB no Azure é Cosmos DB MongoDB API, NUNCA Table API):\n` +
       `\`\`\`typescript\n` +
-      `import { table } from './tables';\n` +
-      `const items = table('items');\n` +
-      `// items.get(id)->obj|null  put(id,fields,{ifNotExists})  update(id,patch)  increment(id,field)  del(id)  list()  listByPrefix(pfx)\n` +
+      `import { MongoClient } from 'mongodb';\n` +
+      `let client: MongoClient | null = null;\n` +
+      `async function getClient() { if (!client) { client = new MongoClient(process.env.MONGO_URI!); await client.connect(); } return client; }\n` +
+      `export async function handler() {\n` +
+      `  const mongo = await getClient();\n` +
+      `  const col = mongo.db(process.env.DB_NAME).collection(process.env.TABLE_NAME!);\n` +
+      `  // col.findOne({ id }) -> doc|null   col.replaceOne({ id }, { id, ...fields }, { upsert: true })\n` +
+      `  // col.updateOne({ id }, { $set: patch }, { upsert: true })   col.updateOne({ id }, { $inc: { [campo]: 1 } }, { upsert: true })\n` +
+      `  // col.deleteOne({ id })   col.find({}).toArray()\n` +
+      `}\n` +
       `\`\`\`\n\n` +
-      `Env vars no Fn.Lambda: COSMOS_CONNECTION: ref('ItemsTable','ConnectionString'), TABLE_NAME: ref('ItemsTable','Name'). NUNCA @aws-sdk/* nem TableClient/getEntity cru.`;
+      `Env var ÚNICA no Fn.Lambda: TABLE_NAME: ref('ItemsTable','Name') — o synth injeta MONGO_URI e DB_NAME automaticamente a partir dela. NÃO declare COSMOS_CONNECTION nem MONGO_URI/DB_NAME manualmente. NUNCA @azure/data-tables/@azure/cosmos/TableClient/getEntity nem @aws-sdk/*.`;
   return `ERRO AZURE: os handlers ${fileList} usam o SDK errado para o datastore deste projeto.\n\n` +
     sdkExample + azureServiceHints(handlerFiles) + `\n\n` +
     `Retorne o JSON completo com TODOS os ${files.length} arquivo(s) da resposta anterior (corrija os handlers + as env vars dos Fn.Lambda nas stacks).`;
-}
-
-/**
- * Guard: em projeto Azure com Database.DynamoDB, o iacmp injeta src/tables.ts
- * (helper nativo). Os handlers DEVEM usá-lo — mas o modelo teima em escrever
- * @azure/data-tables/TableClient cru, reintroduzindo os bugs de getEntity/OData.
- * Detecta handlers (não o próprio tables.ts) que usam o SDK cru e força a
- * correção para o helper. Retorna a mensagem, ou null se todos já usam o helper.
- */
-export function buildAzureTablesHelperCorrection(files: GeneratedFile[]): string | null {
-  const stacksBlob = files.filter(f => f.path.startsWith('stacks/')).map(f => f.content).join('\n');
-  if (!stacksBlob.includes('Database.DynamoDB')) return null;
-  const handlers = files.filter(f =>
-    (f.path.startsWith('src/') || f.path.endsWith('.ts')) &&
-    !f.path.startsWith('stacks/') &&
-    f.path !== 'src/tables.ts',
-  );
-  const offenders = handlers.filter(f =>
-    f.content.includes('@azure/data-tables') || /\bTableClient\b/.test(f.content),
-  );
-  if (offenders.length === 0) return null;
-  const list = [...new Set(offenders.map(f => f.path))].join(', ');
-  return `ERRO AZURE: os handlers ${list} usam @azure/data-tables/TableClient DIRETAMENTE. ` +
-    `Este projeto JÁ TEM o helper nativo src/tables.ts — os handlers DEVEM usá-lo, NUNCA o SDK cru ` +
-    `(o SDK cru reintroduz os bugs de getEntity flat/.value, 404 que lança e campos OData).\n\n` +
-    `Reescreva CADA handler de Database.DynamoDB assim:\n` +
-    "```typescript\n" +
-    "import { table } from './tables';\n" +
-    "const items = table('items');   // 'items' = partição da tabela lógica\n" +
-    "// items.get(id) -> objeto com .id, ou null (nunca lança 404)\n" +
-    "// items.put(id, fields, { ifNotExists: true }) -> false se já existe\n" +
-    "// items.update(id, patch) | items.increment(id, 'campo') | items.del(id) | items.list() | items.listByPrefix('pref#')\n" +
-    "```\n\n" +
-    `REMOVA todo import de '@azure/data-tables' e todo uso de TableClient/getEntity/createEntity/updateEntity/deleteEntity dos handlers. ` +
-    `NÃO altere src/tables.ts (é do iacmp). Retorne o JSON completo com TODOS os ${files.length} arquivo(s).`;
 }
 
 // Monta o hint de correção para erros de compilação TypeScript. Prioriza o
@@ -181,10 +156,11 @@ export function buildTsErrorHint(iacProvider: string, files: GeneratedFile[]): s
         `  const svc = BlobServiceClient.fromConnectionString(process.env.BLOB_CONNECTION!);\n` +
         `  const container = svc.getContainerClient('uploads'); await container.createIfNotExists();\n` +
         `NUNCA use @azure/data-tables (é NoSQL Cosmos, não blob) nem @aws-sdk/*.`
-      : `\n\nEste projeto usa Azure Container Apps — use APENAS @azure/data-tables para acesso a Cosmos DB:\n` +
-        `  import { TableClient } from '@azure/data-tables';\n` +
-        `  const client = TableClient.fromConnectionString(process.env.COSMOS_CONNECTION!, process.env.TABLE_NAME!);\n` +
-        `NUNCA use @aws-sdk/* (DynamoDBClient, etc.) — não funciona no Azure.`)
+      : `\n\nEste projeto usa Database.DynamoDB/Database.DocumentDB no Azure — ambos são Cosmos DB MongoDB API. Use o driver mongodb:\n` +
+        `  import { MongoClient } from 'mongodb';\n` +
+        `  const client = new MongoClient(process.env.MONGO_URI!); await client.connect();\n` +
+        `  const col = client.db(process.env.DB_NAME).collection(process.env.TABLE_NAME ?? 'documents');\n` +
+        `NUNCA use @azure/data-tables/@azure/cosmos/TableClient nem @aws-sdk/* (DynamoDBClient, etc.) — não funciona no Azure.`)
     : ``;
 }
 

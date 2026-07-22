@@ -1,36 +1,38 @@
-import { TableClient, TableEntity } from '@azure/data-tables';
+import { MongoClient, Collection } from 'mongodb';
 
-function getTableClient(tableName: string): TableClient {
-  for (const [key, val] of Object.entries(process.env)) {
-    if (val === tableName) {
-      const connStr = process.env[`${key}_CONNECTION_STRING`];
-      if (connStr) {
-        return TableClient.fromConnectionString(connStr, tableName);
-      }
-    }
+// Shim de deploy CRUZADO: um projeto AUTORADO para AWS (handler real com
+// @aws-sdk/client-dynamodb + @aws-sdk/lib-dynamodb) também pode ser deployado
+// na Azure — o esbuild alias troca esses imports por este arquivo no
+// empacotamento (ver deploy/azure.ts). Database.DynamoDB no Azure é Cosmos DB
+// MongoDB API (NÃO Table API) — por isso o shim é hoje backed por `mongodb`,
+// não `@azure/data-tables`. MONGO_URI/DB_NAME chegam auto-injetados pelo synth
+// (function.ts) sempre que o Fn.Lambda referencia ref(<Table>, 'Name').
+
+let client: MongoClient | null = null;
+
+async function getClient(): Promise<MongoClient> {
+  if (!client) {
+    const uri = process.env.MONGO_URI;
+    if (!uri) throw new Error('MONGO_URI não definida no ambiente da Function');
+    client = new MongoClient(uri);
+    await client.connect();
   }
-  throw new Error(`No connection string found for table "${tableName}". Expected env var {KEY}_CONNECTION_STRING where {KEY}="${tableName}".`);
+  return client;
 }
 
-// Aceita Record em vez de TableEntity: o SDK retorna TableEntityResult (com
-// partitionKey/rowKey opcionais), incompatível com TableEntity estrito — e o
-// corpo só desestrutura chaves, não precisa da garantia de presença.
-function entityToItem(entity: Record<string, unknown>): Record<string, unknown> {
-  const { partitionKey, rowKey, etag, timestamp, ...rest } = entity;
-  void partitionKey; void etag; void timestamp;
-  const filtered = Object.fromEntries(Object.entries(rest).filter(([k]) => !k.startsWith('odata.')));
-  return { id: rowKey, ...filtered };
+async function getCollection(tableName: string): Promise<Collection> {
+  const dbName = process.env.DB_NAME;
+  if (!dbName) throw new Error('DB_NAME não definida no ambiente da Function');
+  const mongo = await getClient();
+  return mongo.db(dbName).collection(tableName);
 }
 
-function itemToEntity(item: Record<string, unknown>): TableEntity {
-  const { id, ...rest } = item;
-  return { partitionKey: 'default', rowKey: String(id), ...rest } as TableEntity;
-}
-
-function isNotFound(e: unknown): boolean {
-  if (!e || typeof e !== 'object') return false;
-  const err = e as Record<string, unknown>;
-  return err['statusCode'] === 404 || err['code'] === 'ResourceNotFound';
+// Documento Mongo -> item de negócio: remove o `_id` interno do driver (a
+// chave de negócio é sempre o campo `id`, gravado explicitamente).
+function toItem(doc: Record<string, unknown>): Record<string, unknown> {
+  const { _id, ...rest } = doc;
+  void _id;
+  return rest;
 }
 
 export class DynamoDBClient {
@@ -58,12 +60,9 @@ export class ScanCommand extends BaseCommand {
     this.tableName = input.TableName;
   }
   async execute(): Promise<{ Items: Record<string, unknown>[] }> {
-    const client = getTableClient(this.tableName);
-    const items: Record<string, unknown>[] = [];
-    for await (const entity of client.listEntities()) {
-      items.push(entityToItem(entity));
-    }
-    return { Items: items };
+    const col = await getCollection(this.tableName);
+    const docs = await col.find({}).toArray();
+    return { Items: docs.map(toItem) };
   }
 }
 
@@ -76,8 +75,9 @@ export class PutCommand extends BaseCommand {
     this.item = input.Item;
   }
   async execute(): Promise<Record<string, never>> {
-    const client = getTableClient(this.tableName);
-    await client.upsertEntity(itemToEntity(this.item), 'Replace');
+    const col = await getCollection(this.tableName);
+    const { id, ...rest } = this.item;
+    await col.replaceOne({ id }, { id, ...rest }, { upsert: true });
     return {};
   }
 }
@@ -91,14 +91,9 @@ export class GetCommand extends BaseCommand {
     this.key = input.Key;
   }
   async execute(): Promise<{ Item?: Record<string, unknown> }> {
-    const client = getTableClient(this.tableName);
-    try {
-      const entity = await client.getEntity('default', String(this.key.id));
-      return { Item: entityToItem(entity) };
-    } catch (e: unknown) {
-      if (isNotFound(e)) return { Item: undefined };
-      throw e;
-    }
+    const col = await getCollection(this.tableName);
+    const doc = await col.findOne({ id: this.key.id });
+    return { Item: doc ? toItem(doc) : undefined };
   }
 }
 
@@ -126,26 +121,22 @@ export class UpdateCommand extends BaseCommand {
   }
 
   async execute(): Promise<{ Attributes: Record<string, unknown> }> {
-    const client = getTableClient(this.tableName);
-    const rowKey = String(this.key.id);
+    const col = await getCollection(this.tableName);
+    const id = this.key.id;
 
-    const existing = await client.getEntity('default', rowKey);
-    const current = entityToItem(existing);
-
+    const set: Record<string, unknown> = {};
     const setMatch = this.updateExpression.match(/SET\s+(.+)/i);
     if (setMatch) {
       for (const assignment of setMatch[1].split(',')) {
         const [lhs, rhs] = assignment.split('=').map(s => s.trim());
         const fieldName = this.exprNames[lhs] ?? lhs;
-        current[fieldName] = this.exprValues[rhs];
+        set[fieldName] = this.exprValues[rhs];
       }
     }
 
-    const updatedEntity = itemToEntity(current);
-    await client.upsertEntity(updatedEntity, 'Replace');
-
-    const refreshed = await client.getEntity('default', rowKey);
-    return { Attributes: entityToItem(refreshed) };
+    await col.updateOne({ id }, { $set: set }, { upsert: true });
+    const updated = await col.findOne({ id });
+    return { Attributes: updated ? toItem(updated) : {} };
   }
 }
 
@@ -158,8 +149,8 @@ export class DeleteCommand extends BaseCommand {
     this.key = input.Key;
   }
   async execute(): Promise<Record<string, never>> {
-    const client = getTableClient(this.tableName);
-    await client.deleteEntity('default', String(this.key.id));
+    const col = await getCollection(this.tableName);
+    await col.deleteOne({ id: this.key.id });
     return {};
   }
 }

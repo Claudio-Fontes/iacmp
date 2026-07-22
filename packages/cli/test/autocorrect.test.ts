@@ -1,55 +1,16 @@
-import { buildAzureSdkCorrection, buildAzureTablesHelperCorrection } from '../src/generation/autocorrect';
+import { buildAzureSdkCorrection } from '../src/generation/autocorrect';
 
-// stack de projeto DynamoDB (Cosmos Table API no Azure)
+// stack de projeto DynamoDB (Cosmos DB MongoDB API no Azure — NÃO Table API)
 const dynamoStack = { path: 'stacks/database/db-stack.ts', content: `new Database.DynamoDB(stack, 'ItemsTable', {})` };
 const sqlStack = { path: 'stacks/database/db-stack.ts', content: `new Database.SQL(stack, 'AppDB', { engine: 'postgres' })` };
 
-describe('buildAzureTablesHelperCorrection — força handlers a usarem ./tables', () => {
-  const helper = { path: 'src/tables.ts', content: "import { table } from '@azure/data-tables';" };
-
-  test('handler com TableClient cru → corrige (aponta o arquivo)', () => {
-    const files = [
-      dynamoStack, helper,
-      { path: 'src/get.ts', content: "import { TableClient } from '@azure/data-tables';\nconst c = TableClient.fromConnectionString(x, y);" },
-    ];
-    const msg = buildAzureTablesHelperCorrection(files);
-    expect(msg).not.toBeNull();
-    expect(msg).toContain('src/get.ts');
-    expect(msg).toContain("./tables");
-  });
-
-  test('handlers que já usam ./tables → NÃO corrige', () => {
-    const files = [
-      dynamoStack, helper,
-      { path: 'src/get.ts', content: "import { table } from './tables';\nconst items = table('items');" },
-    ];
-    expect(buildAzureTablesHelperCorrection(files)).toBeNull();
-  });
-
-  test('o próprio src/tables.ts não é acusado (é ele quem usa data-tables)', () => {
-    const files = [
-      dynamoStack, helper,
-      { path: 'src/get.ts', content: "import { table } from './tables';" },
-    ];
-    expect(buildAzureTablesHelperCorrection(files)).toBeNull();
-  });
-
-  test('projeto sem Database.DynamoDB → não se aplica', () => {
-    const files = [
-      sqlStack,
-      { path: 'src/get.ts', content: "import { TableClient } from '@azure/data-tables';" },
-    ];
-    expect(buildAzureTablesHelperCorrection(files)).toBeNull();
-  });
-});
-
 describe('buildAzureSdkCorrection — dois mundos separados (ZERO @aws-sdk no Azure)', () => {
-  test('handler com @aws-sdk/client-dynamodb + lib-dynamodb → CORRIGE (dois mundos: usa ./tables, não shim)', () => {
+  test('handler com @aws-sdk/client-dynamodb + lib-dynamodb → CORRIGE (dois mundos: usa mongodb, não shim)', () => {
     const files = [
       dynamoStack,
       { path: 'src/createItem.ts', content: `import { DynamoDBClient } from '@aws-sdk/client-dynamodb';\nimport { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';` },
     ];
-    // regra do usuário: Azure é Azure, nenhum @aws-sdk — o caminho é o helper ./tables
+    // regra do usuário: Azure é Azure, nenhum @aws-sdk — o caminho é o driver mongodb
     const msg = buildAzureSdkCorrection(files);
     expect(msg).not.toBeNull();
     expect(msg).toContain('src/createItem.ts');
@@ -83,10 +44,21 @@ describe('buildAzureSdkCorrection — dois mundos separados (ZERO @aws-sdk no Az
     expect(buildAzureSdkCorrection(files)).not.toBeNull();
   });
 
-  test('handler 100% Azure SDK → não corrige', () => {
+  test('handler com @azure/data-tables/TableClient num projeto DynamoDB → corrige (Table API não existe mais no Azure)', () => {
     const files = [
       dynamoStack,
-      { path: 'src/get.ts', content: `import { TableClient } from '@azure/data-tables';` },
+      { path: 'src/get.ts', content: `import { TableClient } from '@azure/data-tables';\nconst c = TableClient.fromConnectionString(x, y);` },
+    ];
+    const msg = buildAzureSdkCorrection(files);
+    expect(msg).not.toBeNull();
+    expect(msg).toContain('src/get.ts');
+    expect(msg).toContain('mongodb');
+  });
+
+  test('handler 100% Azure SDK (mongodb) → não corrige', () => {
+    const files = [
+      dynamoStack,
+      { path: 'src/get.ts', content: `import { MongoClient } from 'mongodb';\nconst client = new MongoClient(process.env.MONGO_URI!);` },
     ];
     expect(buildAzureSdkCorrection(files)).toBeNull();
   });
