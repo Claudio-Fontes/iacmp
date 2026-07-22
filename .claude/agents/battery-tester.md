@@ -28,6 +28,17 @@ Executar o ciclo completo de um prompt iacmp em uma nuvem:
 
 **Não há valor em deployar com bug conhecido.** O deploy vai falhar de qualquer forma, vai gastar tempo e dinheiro, e o log de erro será menos útil do que o bug identificado na geração.
 
+## REGRA — check-run obrigatório após passar COM correções
+
+Se o ciclo de um prompt passou mas exigiu QUALQUER correção na ferramenta durante o caminho (fix de synth, validador, deploy, prompt de IA, knowledge base):
+
+1. Complete o ciclo normalmente (teste funcional + destroy nas duas nuvens).
+2. O prompt NÃO está validado ainda. Rode o MESMO prompt de novo, em pasta nova e VAZIA com sufixo `-check` (ex.: `bat3-azure-p15` → `bat3-azure-p15-check`), código 100% do zero.
+3. O check-run precisa passar DIRETO, sem nenhuma correção. Só então reporte o prompt como ✅.
+4. Se o check-run também travar em bug de ferramenta: PARE e reporte — o fix anterior foi incompleto; após novo fix, o check reinicia.
+
+Prompts que passaram sem nenhuma correção não precisam de check-run.
+
 ## REGRA — nunca editar arquivo gerado
 
 Nunca edite stacks ou handlers gerados para "fazer passar". O bug fica no prompt/synth, a correção vai para lá. Se o coordenador não te deu autorização explícita de editar um arquivo fora dos gerados, não edite.
