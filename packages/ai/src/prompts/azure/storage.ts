@@ -5,7 +5,7 @@ export const STORAGE_AZURE = `
 
 **Storage.Bucket ≠ Database.DynamoDB.** São constructs DISTINTOS com SDKs DISTINTOS:
 - \`Storage.Bucket\` → Azure Blob Storage → handler usa \`@azure/storage-blob\` + \`BlobServiceClient.fromConnectionString\` + env \`BLOB_CONNECTION: ref('MeuBucket','ConnectionString')\`
-- \`Database.DynamoDB\` → Cosmos DB Table API → handler usa \`@azure/data-tables\` + env \`TABLE_CONNECTION: ref('MinhaTabela','ConnectionString')\`
+- \`Database.DynamoDB\` → Cosmos DB MongoDB API → handler usa o driver \`mongodb\` (\`MongoClient\`) + env \`TABLE_NAME: ref('MinhaTabela','Name')\` (o synth injeta \`MONGO_URI\`/\`DB_NAME\` automaticamente)
 
 **NUNCA use \`@azure/data-tables\` para \`Storage.Bucket\`.** Gerar \`COSMOS_CONNECTION\` ou \`TABLE_NAME\` para um \`Storage.Bucket\` é ERRO — o synth não consegue gerar upload/SAS para Cosmos. O container \`uploads\` NÃO existe por padrão — sempre chame \`createIfNotExists\` no handler.
 
@@ -27,7 +27,7 @@ await container.createIfNotExists();                 // o container NÃO existe 
 **REGRA CRÍTICA AZURE — pipeline "Blob dispara Lambda" (BlobCreated via Event Grid):** quando um \`Storage.Bucket\` tem \`eventNotifications\` apontando para uma \`Fn.Lambda\` (Container App), ambos DEVEM ficar na MESMA stack. Motivo: o Event Grid subscription precisa do FQDN da Lambda (bucket→lambda) E a Lambda precisa das credenciais do bucket via env vars (lambda→bucket) — se ficarem em stacks separadas cria DEPENDÊNCIA CIRCULAR cross-stack que o deploy bloqueia. Apenas o PAR acoplado fica junto; todo o resto fica em stacks separadas:
 - \`stacks/pipeline/pipeline-stack.ts\`: \`Storage.Bucket\` (RawDataBucket **com** eventNotifications) + \`Fn.Lambda\` (DataProcessorFn) + \`Policy.IAM\` — o par acoplado.
 - \`stacks/storage/storage-stack.ts\`: \`Storage.Bucket\` (ProcessedBucket, **sem** trigger) — a Lambda só escreve nele via \`ref('ProcessedBucket','ConnectionString')\`.
-- \`stacks/database/database-stack.ts\`: \`Database.DynamoDB\` (CosmosDB) — a Lambda acessa via \`ref('MinhaTabela','ConnectionString')\`.
+- \`stacks/database/database-stack.ts\`: \`Database.DynamoDB\` (Cosmos MongoDB API) — a Lambda acessa via \`ref('MinhaTabela','Name')\` (auto-injeta \`MONGO_URI\`/\`DB_NAME\`).
 **NUNCA coloque o bucket-trigger como env var separada da Lambda (ex: \`RAW_BUCKET_NAME: ref('RawDataBucket','Name')\`) quando ambos estão na mesma stack** — é redundante e o synth pode resolver via evento. Buckets de SAÍDA (outra stack) SIM podem aparecer como env var.
 
 **FORMATO DO EVENTO — handler do blob trigger:** o runtime Azure converte o evento Event Grid para o MESMO formato S3 da AWS. O handler DEVE usar \`record.s3.object.key\` (nome do blob) e \`record.s3.bucket.name\` (nome do container). NÃO use \`record.blob.name\`, \`record.data\` ou qualquer outro formato — SOMENTE o formato S3:
@@ -35,12 +35,19 @@ await container.createIfNotExists();                 // o container NÃO existe 
 \`\`\`typescript
 // src/dataProcessor.ts — handler do blob trigger (BlobCreated via Event Grid)
 import { BlobServiceClient } from '@azure/storage-blob';
-import { TableClient } from '@azure/data-tables';
+import { MongoClient } from 'mongodb';
+
+let mongo: MongoClient | null = null;
+async function getCollection() {
+  if (!mongo) { mongo = new MongoClient(process.env.MONGO_URI!); await mongo.connect(); }
+  return mongo.db(process.env.DB_NAME).collection(process.env.TABLE_NAME!);
+}
 
 export async function handler(event: any) {
   const records = event.Records || [];
   const blobServiceClient = BlobServiceClient.fromConnectionString(process.env.BLOB_CONNECTION!);
   const processedBlobServiceClient = BlobServiceClient.fromConnectionString(process.env.PROCESSED_BLOB_CONNECTION!);
+  const col = await getCollection();
 
   for (const record of records) {
     // OBRIGATÓRIO: usar record.s3.object.key (não record.blob.name!)
@@ -52,11 +59,9 @@ export async function handler(event: any) {
     const response = await blockBlobClient.downloadToBuffer();
     const data = JSON.parse(response.toString());
 
-    // Gravar no Cosmos DB Table API
-    // ATENÇÃO: 'id' é propriedade RESERVADA na Table API — excluir do spread antes de createEntity
-    const { id: dataId, ...dataRest } = data;
-    const tableClient = TableClient.fromConnectionString(process.env.COSMOS_CONNECTION!, process.env.TABLE_NAME!);
-    await tableClient.createEntity({ partitionKey: 'items', rowKey: dataId || Date.now().toString(), ...dataRest });
+    // Gravar no Cosmos DB MongoDB API (Database.DynamoDB no Azure)
+    const id = data.id || Date.now().toString();
+    await col.replaceOne({ id }, { id, ...data }, { upsert: true });
 
     // Mover para bucket processado
     const processedContainerClient = processedBlobServiceClient.getContainerClient('processed');

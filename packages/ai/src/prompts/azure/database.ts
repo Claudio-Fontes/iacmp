@@ -3,9 +3,9 @@ export const DATABASE_AZURE = `
 
 ### Escolha de construct no Azure (NUNCA troque)
 - Cenário pede **documentos / MongoDB / blog posts / articles / posts / conteúdo não-estruturado / coleções de objetos JSON** → \`Database.DocumentDB\` (Cosmos MongoDB API). Handler usa driver \`mongodb\` com \`MongoClient\`. NUNCA \`@aws-sdk/*\` nem \`@azure/data-tables\` para MongoDB.
-- Cenário pede **chave-valor simples / sessões / cache persistido / "DynamoDB"** → \`Database.DynamoDB\` (Cosmos Table API). **O handler usa o helper \`import { table } from './tables'\` (injetado automaticamente pelo iacmp) — NUNCA \`@azure/data-tables\`/\`TableClient\` direto no handler.** NUNCA \`Database.DocumentDB\` para isso.
+- Cenário pede **chave-valor simples / sessões / cache persistido / "DynamoDB"** → \`Database.DynamoDB\`. **No Azure isso TAMBÉM vira Cosmos DB MongoDB API (NÃO Table API)** — o handler usa o MESMO driver \`mongodb\` que \`Database.DocumentDB\`, importando \`MongoClient\`. NUNCA \`@azure/data-tables\`/\`TableClient\`/\`@aws-sdk/*\` no handler.
 - Cenário pede PostgreSQL/MySQL → \`Database.SQL\` (vira Azure Database flexible server). O handler usa o driver \`pg\`/\`mysql2\` NORMAL (o protocolo é o mesmo do RDS) com \`ref('AppDB','Endpoint'/'Port'/'Password'/'Username')\` — NUNCA \`@azure/data-tables\` para SQL.
-- **Atributos válidos de \`ref()\` por tipo (NÃO invente outros):** \`Database.SQL\` → \`Endpoint, Port, SecretArn, Password, Username\` (NÃO existe \`ConnectionString\`); \`Database.DynamoDB\` → \`Arn, Name, ConnectionString\` (Name = nome da TABELA); \`Database.DocumentDB\` → \`Endpoint, ConnectionString, SecretArn\` (use \`ConnectionString\` para a URI completa do MongoDB).
+- **Atributos válidos de \`ref()\` por tipo (NÃO invente outros):** \`Database.SQL\` → \`Endpoint, Port, SecretArn, Password, Username\` (NÃO existe \`ConnectionString\`); \`Database.DynamoDB\` → \`Arn, Name, ConnectionString\` (\`Name\` = o construct ID, usado como valor de \`DB_NAME\`/\`TABLE_NAME\`; \`ConnectionString\` = URI \`mongodb://\` completa); \`Database.DocumentDB\` → \`Endpoint, ConnectionString, SecretArn\` (use \`ConnectionString\` para a URI completa do MongoDB).
 - **NUNCA concatene \`ref()\` com strings, NUNCA chame \`.toString()\` em \`ref()\`** — \`ref()\` retorna um objeto Ref, NÃO uma string. Tanto a concatenação com \`+\` quanto \`.toString()\` produzem \`[object Object]\` e quebram o deploy silenciosamente. Use \`ref()\` DIRETAMENTE como valor da env var: \`MONGO_URI: ref('MyDocDB', 'ConnectionString')\`.
 - **Policy.IAM para \`Database.SQL\`: NÃO gere.** O acesso ao Postgres/MySQL é por usuário/senha via env vars — não existe IAM de data-plane. Só gere Policy.IAM quando o handler usa um serviço com IAM real (fila, storage, tabela NoSQL).
 - **Policy.IAM para Cosmos DB no Azure: NÃO gere** — a connection string já autentica.
@@ -61,75 +61,84 @@ export async function handler() {
 
 **REGRA CRÍTICA — CREATE TABLE em todos os handlers:** O PostgreSQL Flexible Server não cria tabelas automaticamente. Todo handler que acessa uma tabela DEVE executar \`CREATE TABLE IF NOT EXISTS\` antes de qualquer SELECT/INSERT/UPDATE/DELETE. Isso vale para TODOS os handlers (list, create, get, update, delete) — não só o de listagem.
 
-### OBRIGATÓRIO — handlers com Database.DynamoDB usam o helper \`./tables\`, NUNCA @azure/data-tables cru
-Todo projeto Azure com Database.DynamoDB recebe automaticamente um arquivo \`src/tables.ts\` (o iacmp injeta — você NÃO precisa criá-lo nem editá-lo). Ele expõe uma API simples por cima do Cosmos DB Table API, resolvendo as armadilhas do SDK (getEntity flat, 404 que lança, campos OData). **Gere TODOS os handlers de Database.DynamoDB importando esse helper** — NUNCA use \`TableClient\`/\`getEntity\`/\`createEntity\`/\`updateEntity\` diretamente.
+### OBRIGATÓRIO — handlers com Database.DynamoDB no Azure usam o driver \`mongodb\`, NUNCA @azure/data-tables
+No Azure, \`Database.DynamoDB\` vira Cosmos DB **MongoDB API** (kind: MongoDB) — a MESMA tecnologia por trás de \`Database.DocumentDB\`, só que com uma collection dedicada por construct. **NÃO existe helper \`./tables\` nem Table API — use \`MongoClient\` diretamente**, exatamente como em \`Database.DocumentDB\`. NUNCA \`TableClient\`/\`getEntity\`/\`createEntity\`/\`updateEntity\`/\`@azure/data-tables\`.
 
-API do helper (o único import de dados que os handlers precisam):
+**Por que sem helper:** as armadilhas do Table API (getEntity retorna flat, lança 404, campos OData, rowKey proíbe \`# / \\ ?\`) NÃO existem no driver \`mongodb\` — \`findOne\` retorna \`null\` naturalmente quando não encontra, o item é um documento JSON normal (campo \`id\` livre, sem restrição de caracteres), e não há metadados OData para filtrar. Um helper seria abstração desnecessária.
+
 \`\`\`typescript
-import { table } from './tables';   // caminho relativo à raiz de src/ (ajuste ../ se o handler estiver em subpasta)
-const items = table('items');       // 'items' = partição fixa desta "tabela lógica"
+// src/tableClient.ts (opcional — reutilizável entre handlers do mesmo projeto)
+import { MongoClient, Collection } from 'mongodb';
 
-await items.get(id)                          // → objeto com .id, ou null se não existe (nunca lança 404)
-await items.put(id, { name, price })         // cria/sobrescreve
-await items.put(id, { ... }, { ifNotExists: true })  // → false se já existe. SÓ p/ "criar se não existe" (slug único). NUNCA em read-modify-write!
-await items.update(id, { price: 9 })         // mescla campos (Merge)
-await items.increment(id, 'clicks')          // contador atômico (+1); increment(id,'x',5,{seed}) cria se não existe
-await items.del(id)                          // apaga (idempotente)
-await items.list()                           // todos os itens da partição
-await items.listByPrefix('dev#')             // itens cujo id começa com o prefixo (chaves compostas env#nome)
+let client: MongoClient | null = null;
+async function getClient(): Promise<MongoClient> {
+  if (!client) {
+    client = new MongoClient(process.env.MONGO_URI!);
+    await client.connect();
+  }
+  return client;
+}
+
+export async function getCollection(): Promise<Collection> {
+  const mongo = await getClient();
+  return mongo.db(process.env.DB_NAME).collection(process.env.TABLE_NAME!);
+}
 \`\`\`
 
-**A CHAVE volta SEMPRE como \`item.id\`** — em get/list/listByPrefix o objeto tem \`item.id\` = a chave que você gravou (ex: 'dev#nova_feature'), NUNCA \`item.flagKey\`/\`item.counterKey\`/\`item.slug\`. Para extrair partes de uma chave composta, use \`item.id\` (ex: \`item.id.split('#')[1]\`). NÃO invente um campo com o nome da chave — ele não existe a menos que você o tenha gravado explicitamente nos fields.
+Operações CRUD com o driver nativo (todas idempotentes/sem lançar em "não encontrado", igual à ergonomia do DynamoDB):
+\`\`\`typescript
+await col.findOne({ id })                                    // → doc ou null (nunca lança)
+await col.replaceOne({ id }, { id, ...fields }, { upsert: true })   // cria/sobrescreve
+await col.updateOne({ id }, { $set: patch }, { upsert: true })      // mescla campos
+await col.updateOne({ id }, { $inc: { clicks: 1 } }, { upsert: true }) // contador atômico (cria com o valor se não existir)
+await col.deleteOne({ id })                                   // apaga (idempotente mesmo se não existir)
+await col.find({}).toArray()                                  // todos os itens
+await col.find({ id: { $regex: '^' + prefixo } }).toArray()    // itens cujo id começa com o prefixo
+\`\`\`
 
-**read-modify-write (ler → computar → gravar): use \`put(id, fields)\` SEM \`ifNotExists\`, ou \`update(id, fields)\`.** \`ifNotExists: true\` faz o write virar NO-OP quando o item já existe — se você já leu o item com \`get\` e está gravando o estado novo (ex: atualizar recorde/placar, incrementar contador), NUNCA use \`ifNotExists\`, senão só a primeira gravação persiste.
+**CONTADOR / acumulador (gamesPlayed, total, clicks, views): use SEMPRE \`$inc\`** — o prompt pode dizer "ADD" ou "incremente" (linguagem DynamoDB), mas no Mongo isso é \`{ $inc: { campo: 1 } }\`. NUNCA grave um valor fixo tipo \`{ $set: { gamesPlayed: 1 } }\` (isso zera a contagem a cada write).
 
-**CONTADOR / acumulador (gamesPlayed, total, clicks, views): use \`await items.increment(id, 'campo')\`** — ele lê o valor atual e soma atomicamente (cria com o valor se não existir). O prompt pode dizer "ADD" ou "incremente" (linguagem DynamoDB) — no helper isso é SEMPRE \`increment()\`, NUNCA grave um valor fixo tipo \`{ gamesPlayed: 1 }\` (isso zera a contagem a cada write).
+**Nunca use \`_id\` do Mongo como chave de negócio** — declare seu próprio campo \`id\` (string, gerado com \`crypto.randomUUID()\` no create) e filtre/atualize sempre por \`{ id }\`. \`_id\` fica reservado ao driver.
 
 Exemplo completo (CRUD + create com id gerado):
 \`\`\`typescript
-import { table } from './tables';
+import { getCollection } from './tableClient';
 import { randomUUID } from 'crypto';
-const items = table('items');
 
 // CREATE
 export async function handler(event: any) {
   const body = typeof event.body === 'string' ? JSON.parse(event.body) : (event.body ?? {});
   const id = randomUUID();
-  await items.put(id, body);
+  const col = await getCollection();
+  await col.insertOne({ id, ...body });
   return { statusCode: 201, body: JSON.stringify({ id, ...body }) };
 }
 // GET por id
 export async function handler(event: any) {
-  const item = await items.get(event.pathParameters?.id);
+  const col = await getCollection();
+  const item = await col.findOne({ id: event.pathParameters?.id }, { projection: { _id: 0 } });
   if (!item) return { statusCode: 404, body: JSON.stringify({ error: 'não encontrado' }) };
   return { statusCode: 200, body: JSON.stringify(item) };
 }
 // LIST
 export async function handler() {
-  return { statusCode: 200, body: JSON.stringify(await items.list()) };
+  const col = await getCollection();
+  const items = await col.find({}).project({ _id: 0 }).toArray();
+  return { statusCode: 200, body: JSON.stringify(items) };
 }
 // UPDATE (merge) / DELETE
-// await items.update(id, patch);  /  await items.del(id);
+// await col.updateOne({ id }, { $set: patch }, { upsert: true });  /  await col.deleteOne({ id });
 \`\`\`
 
-O helper cuida de: id ↔ rowKey, remoção de campos OData, 404→null, contador atômico. Não replique essa lógica no handler.
-
-### Env vars obrigatórias no Fn.Lambda que acessa Database.DynamoDB:
+### Env var OBRIGATÓRIA (única) no Fn.Lambda que acessa Database.DynamoDB:
 \`\`\`typescript
 environment: {
-  COSMOS_CONNECTION: ref('ItemsTable', 'ConnectionString'),
   TABLE_NAME: ref('ItemsTable', 'Name'),
 }
 \`\`\`
+**NÃO declare \`MONGO_URI\`/\`DB_NAME\` manualmente e NÃO declare \`COSMOS_CONNECTION\`** — o synth Azure detecta o \`ref('ItemsTable', 'Name')\` e injeta \`MONGO_URI\` (a connection string \`mongodb://\`) e \`DB_NAME\` automaticamente no Function App. O handler lê \`process.env.MONGO_URI\`, \`process.env.DB_NAME\` e \`process.env.TABLE_NAME\` (esta última como nome da collection).
 
-### Regras de partitionKey/rowKey:
-- partitionKey: categoria fixa (ex: 'items') — NUNCA o id
-- rowKey: id único do item (randomUUID() no create)
-- listEntities() é AsyncIterable — use for await
-- getEntity(partitionKey, rowKey) lança se não existir
-- deleteEntity(partitionKey, rowKey)
-
-### nextSteps obrigatório: inclua "npm install @azure/data-tables" e NÃO mencione @aws-sdk/*.
+### nextSteps obrigatório: inclua "npm install mongodb" e NÃO mencione @azure/data-tables nem @aws-sdk/*.
 
 ### Padrão obrigatório para Database.DocumentDB (Cosmos DB MongoDB API) no Azure
 
