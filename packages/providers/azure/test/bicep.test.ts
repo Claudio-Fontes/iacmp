@@ -1,5 +1,5 @@
 import { Stack, Compute, Storage, Network, Database, Fn, Messaging, Cache, Monitoring, ref, CONSTRUCT_TYPES } from '@iacmp/core';
-import { AzureProvider, emitBicep } from '../src';
+import { AzureProvider, emitBicep, extractAzureContainerBuilds } from '../src';
 import { AZURE_ATTR_MAP, bv, expr } from '../src/synth/constructs/shared';
 
 function synth(stack: Stack): string {
@@ -240,6 +240,39 @@ describe('AzureProvider (Bicep)', () => {
     expect(() => synth(stack)).toThrow(/undefined|process\.env/i);
   });
 
+  test('Compute.Container com build (sem image) → ainda emite param de imagem + ACR params', () => {
+    const stack = new Stack('test');
+    new Compute.Container(stack, 'AppContainer', { build: { context: './services/app' }, port: 3000 } as any);
+    const out = synth(stack);
+    // Mesmo mecanismo de param usado para image literal — o deploy injeta o valor real via --parameters.
+    expect(out).toContain('param appContainerImage string');
+    expect(out).toContain('param acrServer string');
+    expect(out).toContain('param acrPassword string');
+  });
+
+  test('extractAzureContainerBuilds → coleta build por Compute.Container e ignora quem usa image literal', () => {
+    const stack = new Stack('test');
+    new Compute.Container(stack, 'AppContainer', { build: { context: './services/app', dockerfile: 'Dockerfile.prod' } } as any);
+    new Compute.Container(stack, 'Web', { image: 'nginx:latest' });
+    const builds = extractAzureContainerBuilds(stack, 'MeuProjeto');
+    expect(builds).toHaveLength(1);
+    expect(builds[0]).toMatchObject({
+      constructId: 'AppContainer',
+      imageParamName: 'appContainerImage',
+      repository: 'meuprojeto-appcontainer',
+      tag: 'latest',
+      context: './services/app',
+      dockerfile: 'Dockerfile.prod',
+    });
+  });
+
+  test('extractAzureContainerBuilds → sem projectName usa slug "iacmp" default', () => {
+    const stack = new Stack('test');
+    new Compute.Container(stack, 'Api', { build: { context: '.' } } as any);
+    const builds = extractAzureContainerBuilds(stack);
+    expect(builds[0].repository).toBe('iacmp-api');
+  });
+
   // ── Fim dos testes Compute.Container ─────────────────────────────────────────
 
   test('Messaging.Queue → namespaces + queues', () => {
@@ -257,15 +290,20 @@ describe('AzureProvider (Bicep)', () => {
     expect(out).toContain("'Microsoft.ServiceBus/namespaces/topics@2022-10-01-preview'");
   });
 
-  test('Cache.Redis → Microsoft.Cache/redis Standard C1 (não Enterprise)', () => {
+  test('Cache.Redis → Microsoft.Cache/redisEnterprise (Basic/Standard/Premium retirado)', () => {
     const stack = new Stack('test');
     new Cache.Redis(stack, 'MyRedis', { nodeType: 'small' });
     const out = synth(stack);
-    // Standard C1 @2023-04-01 — Enterprise Balanced_B0 falha com AllocationFailed em várias regiões
-    expect(out).toContain("'Microsoft.Cache/redis@2023-04-01'");
-    expect(out).not.toContain('redisEnterprise');
-    // porta TLS padrão do Azure Cache for Redis é 6380
-    expect(out).toContain("'6380'");
+    // Azure Cache for Redis clássico (Basic/Standard/Premium) foi retirado — novas
+    // contas recebem InvalidRequestBody. Substituto: Azure Managed Redis (redisEnterprise).
+    expect(out).toContain("'Microsoft.Cache/redisEnterprise@2025-07-01'");
+    expect(out).toContain("'Microsoft.Cache/redisEnterprise/databases@2025-07-01'");
+    expect(out).not.toContain("'Microsoft.Cache/redis@");
+    expect(out).toContain("name: 'Balanced_B0'");
+    expect(out).toContain("clusteringPolicy: 'NoCluster'");
+    // porta TLS do Azure Managed Redis é 10000 (NUNCA 6379/6380)
+    expect(out).toContain("'10000'");
+    expect(out).toContain('port: 10000');
   });
 
   test('Secret.Vault → Microsoft.KeyVault/vaults com subscription().tenantId', () => {
@@ -364,25 +402,25 @@ describe('AzureProvider (Bicep)', () => {
     expect(out).toContain('repositoryUrl');
   });
 
-  test('Database.DynamoDB → conta Cosmos + tabela filha + output ConnectionString', () => {
+  test('Database.DynamoDB → conta Cosmos MongoDB API + database/collection filhos + output ConnectionString', () => {
     const stack = new Stack('test');
     new Database.DynamoDB(stack, 'ItemsTable', { partitionKey: 'id' });
     const out = synth(stack);
-    // Conta Cosmos DB (Table API)
+    // Conta Cosmos DB (MongoDB API — DynamoDB no Azure NÃO é Table API)
     expect(out).toContain("'Microsoft.DocumentDB/databaseAccounts@2023-04-15'");
-    expect(out).toContain('EnableTable');
-    // Tabela filha — sem ela o SDK falha com TableNotFound
-    expect(out).toContain("'Microsoft.DocumentDB/databaseAccounts/tables@2023-04-15'");
-    // Output ConnectionString com listKeys()
+    expect(out).toContain("kind: 'MongoDB'");
+    // Database + collection filhos — sem eles o driver mongodb falha ao conectar
+    expect(out).toContain("'Microsoft.DocumentDB/databaseAccounts/mongodbDatabases@2023-04-15'");
+    expect(out).toContain("'Microsoft.DocumentDB/databaseAccounts/mongodbDatabases/collections@2023-04-15'");
+    // Output ConnectionString com listConnectionStrings() (URI mongodb://)
     expect(out).toContain('ConnectionString');
-    expect(out).toContain('listKeys().primaryMasterKey');
-    expect(out).toContain('table.cosmos.azure.com');
+    expect(out).toContain('listConnectionStrings().connectionStrings[0].connectionString');
     // Output Name e Arn
     expect(out).toContain('ItemsTableName');
     expect(out).toContain('ItemsTableArn');
   });
 
-  test('Database.DynamoDB → ref ConnectionString same-stack resolve para expressão listKeys()', () => {
+  test('Database.DynamoDB → ref ConnectionString same-stack resolve para expressão listConnectionStrings()', () => {
     const stack = new Stack('test');
     const { ref: coreRef } = require('@iacmp/core');
     new Database.DynamoDB(stack, 'ItemsTable', { partitionKey: 'id' });
@@ -396,11 +434,14 @@ describe('AzureProvider (Bicep)', () => {
       },
     });
     const out = synth(stack);
-    // A env var COSMOS_CONNECTION deve conter a expressão listKeys() inline
+    // A env var COSMOS_CONNECTION deve conter a expressão listConnectionStrings() inline (URI mongodb://)
     expect(out).toContain('COSMOS_CONNECTION');
-    expect(out).toContain('listKeys().primaryMasterKey');
-    // TABLE_NAME deve conter referência ao .name da conta
+    expect(out).toContain('listConnectionStrings().connectionStrings[0].connectionString');
+    // TABLE_NAME deve conter referência ao Name resolvido
     expect(out).toContain('TABLE_NAME');
+    // TABLE_NAME dispara o auto-inject de MONGO_URI/DB_NAME (function.ts)
+    expect(out).toContain('MONGO_URI');
+    expect(out).toContain('DB_NAME');
   });
 
   // ── Network.CDN → Azure Front Door Standard ────────────────────────────────
@@ -426,7 +467,7 @@ describe('AzureProvider (Bicep)', () => {
     expect(out).toContain('properties.hostName');
   });
 
-  test('Network.CDN com bucketRef em origins → hostName usa primaryEndpoints.blob (não string vazia)', () => {
+  test('Network.CDN com bucketRef em origins (bucket SEM websiteHosting) → hostName usa primaryEndpoints.blob, sem container decorativo', () => {
     const stack = new Stack('test');
     new Storage.Bucket(stack, 'SiteBucket', {});
     new Network.CDN(stack, 'SiteCdn', {
@@ -438,27 +479,51 @@ describe('AzureProvider (Bicep)', () => {
     expect(out).toContain("replace(replace(siteBucket.properties.primaryEndpoints.blob,'https://',''),'/','')");
     // A storage referenciada ganha allowBlobPublicAccess: true
     expect(out).toContain('allowBlobPublicAccess: true');
-    // Container 'web' criado para servir o conteúdo
-    expect(out).toContain("'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01'");
-    expect(out).toContain("name: 'web'");
-    expect(out).toContain("publicAccess: 'Blob'");
-    // originPath '/web' na route
-    expect(out).toContain("originPath: '/web'");
+    // NÃO cria mais o container decorativo 'web' — nada nunca fazia upload nele e um
+    // container Blob comum não resolve documento default no root (bug confirmado em
+    // deploy real, bateria p06). Nem originPath '/web' na route.
+    expect(out).not.toContain("'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01'");
+    expect(out).not.toContain('originPath');
+  });
+
+  test('Network.CDN com bucketRef em origins (bucket COM websiteHosting) → hostName usa primaryEndpoints.web, sem originPath', () => {
+    const stack = new Stack('test');
+    new Storage.Bucket(stack, 'SiteBucket', { websiteHosting: true });
+    new Network.CDN(stack, 'SiteCdn', {
+      origins: [{ domainName: 'placeholder.blob.core.windows.net', id: 'site', bucketRef: 'SiteBucket' }],
+    });
+    const out = synth(stack);
+    expect(out).toContain("replace(replace(siteBucket.properties.primaryEndpoints.web,'https://',''),'/','')");
+    expect(out).not.toContain('primaryEndpoints.blob');
+    expect(out).toContain('allowBlobPublicAccess: true');
+    expect(out).not.toContain("'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01'");
+    expect(out).not.toContain('originPath');
   });
 });
 
 describe('Network.CDN — accountTier free (Front Door proibido em Free Trial)', () => {
-  test('free: NÃO emite recursos Microsoft.Cdn; Url sai do endpoint blob público', () => {
+  test('free + bucket SEM websiteHosting: NÃO emite recursos Microsoft.Cdn; Url sai do endpoint blob cru (sem container decorativo)', () => {
     const stack = new Stack('site');
     new Storage.Bucket(stack, 'AppBucket', {});
     new Network.CDN(stack, 'AppCDN', { defaultRootObject: 'index.html', origins: [{ id: 'o', domainName: '', bucketRef: 'AppBucket' }] });
     const bicep = emitBicep(stack, { accountTier: 'free' });
     expect(bicep).not.toContain('Standard_AzureFrontDoor');
     expect(bicep).not.toContain('Microsoft.Cdn/');
-    expect(bicep).toContain("output AppCDNUrl string = '${appBucket.properties.primaryEndpoints.blob}web'");
-    // o bucket referenciado continua ganhando o container web público
-    expect(bicep).toContain("'web'");
+    expect(bicep).toContain('output AppCDNUrl string = appBucket.properties.primaryEndpoints.blob');
     expect(bicep).toContain('allowBlobPublicAccess: true');
+    // sem container decorativo 'web'
+    expect(bicep).not.toContain("'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01'");
+  });
+
+  test('free + bucket COM websiteHosting: Url sai do endpoint de static website (primaryEndpoints.web)', () => {
+    const stack = new Stack('site');
+    new Storage.Bucket(stack, 'AppBucket', { websiteHosting: true });
+    new Network.CDN(stack, 'AppCDN', { defaultRootObject: 'index.html', origins: [{ id: 'o', domainName: '', bucketRef: 'AppBucket' }] });
+    const bicep = emitBicep(stack, { accountTier: 'free' });
+    expect(bicep).not.toContain('Microsoft.Cdn/');
+    expect(bicep).toContain('output AppCDNUrl string = appBucket.properties.primaryEndpoints.web');
+    expect(bicep).toContain('allowBlobPublicAccess: true');
+    expect(bicep).not.toContain("'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01'");
   });
 
   test('standard (default): mantém Front Door', () => {
@@ -512,26 +577,26 @@ describe('accountTier free → SKUs mais baratas (paridade de custo com AWS free
     expect(std).toContain("name: 'Standard_D2ds_v5'");
   });
 
-  test('Cache.Redis por tier: free → Basic C0 (menor custo), standard → Standard C1', () => {
+  test('Cache.Redis por tier: mesmo SKU Balanced_B0, highAvailability varia (free → Disabled, standard → Enabled)', () => {
     const stack = new Stack('c');
     new Cache.Redis(stack, 'AppCache', { nodeType: 'small' });
-    // Azure não tem Redis grátis — free usa o menor SKU pago (Basic C0 ~USD 16/mês)
+    // Azure Managed Redis não tem tier grátis — Balanced_B0 é o menor SKU em
+    // ambos os tiers; a diferença de custo/SLA vira highAvailability (réplica).
     const free = emitBicep(stack, { accountTier: 'free' });
-    expect(free).toMatch(/name: 'Basic'[\s\S]{0,40}capacity: 0/);
+    expect(free).toContain("name: 'Balanced_B0'");
+    expect(free).toContain("highAvailability: 'Disabled'");
     const std = emitBicep(stack, { accountTier: 'standard' });
-    expect(std).toMatch(/name: 'Standard'[\s\S]{0,40}capacity: 1/);
-    // nunca Enterprise (Balanced_B0 falha com AllocationFailed em várias regiões)
-    expect(free).not.toContain('redisEnterprise');
-    expect(std).not.toContain('redisEnterprise');
+    expect(std).toContain("name: 'Balanced_B0'");
+    expect(std).toContain("highAvailability: 'Enabled'");
   });
 
-  test('Database.DynamoDB → Cosmos Table API sem enableFreeTier (evita conflito de conta grátis)', () => {
+  test('Database.DynamoDB → Cosmos MongoDB API sem enableFreeTier (evita conflito de conta grátis)', () => {
     const stack = new Stack('t');
     new Database.DynamoDB(stack, 'ItemsTable', { partitionKey: 'id', partitionKeyType: 'S' } as any);
     const free = emitBicep(stack, { accountTier: 'free' });
-    // deploy-validado p02az: Table API sobe sem enableFreeTier. O flag só permite 1
-    // conta grátis por subscription — omitir evita colisão em projetos com 2 Cosmos.
-    expect(free).toContain("'EnableTable'");
+    // deploy-validado p02az: Cosmos MongoDB API sobe sem enableFreeTier. O flag só
+    // permite 1 conta grátis por subscription — omitir evita colisão em projetos com 2 Cosmos.
+    expect(free).toContain("kind: 'MongoDB'");
     expect(free).not.toContain('enableFreeTier');
   });
 });
@@ -939,5 +1004,159 @@ describe('Storage.Bucket replication geo — RA-GRS (bucket de DR idiomático)',
     const bicep = emitBicep(s, { accountTier: 'free', allStacks: [s] });
     expect(bicep).toContain("name: 'Standard_LRS'");
     expect(bicep).not.toContain('SecondaryEndpoint');
+  });
+});
+
+describe('VNet integration — Database.SQL (postgres) + Compute.Container com subnetIds', () => {
+  // Cenário OBRIGATÓRIO da bateria: stacks separadas por domínio (network vs.
+  // database vs. compute) — reproduz o bug real de corrida no ARM (p09) e a
+  // exigência de delegation do Container Apps Environment (p07, deploy real).
+  function buildMultiStack() {
+    const netStack = new Stack('notes-vnet-stack');
+    new Network.VPC(netStack, 'AppVpc', { cidr: '10.0.0.0/16' });
+    new Network.Subnet(netStack, 'DbSubnet', { vpcId: 'AppVpc', cidr: '10.0.1.0/28', public: false });
+    new Network.Subnet(netStack, 'ContainerSubnet', { vpcId: 'AppVpc', cidr: '10.0.2.0/23', public: false });
+
+    const dbStack = new Stack('notes-db-stack');
+    new Database.SQL(dbStack, 'AppDb', { engine: 'postgres', storageGb: 32, subnetIds: ['DbSubnet'] });
+
+    const compStack = new Stack('notes-api-stack');
+    new Compute.Container(compStack, 'ApiApp', {
+      image: 'node:20-alpine',
+      port: 3000,
+      environment: { DB_HOST: ref('AppDb', 'Endpoint') },
+      subnetIds: ['ContainerSubnet'],
+    });
+
+    return { netStack, dbStack, compStack, all: [netStack, dbStack, compStack] };
+  }
+
+  test('cross-stack: rede emite as DUAS delegations (Postgres exclusiva + Container Apps)', () => {
+    const { netStack, all } = buildMultiStack();
+    const net = emitBicep(netStack, { accountTier: 'free', allStacks: all });
+    // Postgres: subnet delegada exclusivamente a Microsoft.DBforPostgreSQL/flexibleServers
+    expect(net).toMatch(/name: 'DbSubnet'[\s\S]*?serviceName: 'Microsoft\.DBforPostgreSQL\/flexibleServers'/);
+    // Container Apps: validado em deploy real (2026-07-22) que o ARM EXIGE a
+    // delegation mesmo em Consumption-only (ManagedEnvironmentSubnetDelegationError
+    // sem ela) — a doc pública que diz o contrário está desatualizada.
+    expect(net).toMatch(/name: 'ContainerSubnet'[\s\S]*?serviceName: 'Microsoft\.App\/environments'/);
+  });
+
+  test('cross-stack: rede exporta VpcId/SubnetId (output) só porque há consumidor em outra stack', () => {
+    const { netStack, all } = buildMultiStack();
+    const net = emitBicep(netStack, { accountTier: 'free', allStacks: all });
+    expect(net).toContain('output AppVpcVpcId string = appVpc.id');
+    expect(net).toContain("output DbSubnetSubnetId string = resourceId('Microsoft.Network/virtualNetworks/subnets', appVpc.name, 'DbSubnet')");
+    expect(net).toContain("output ContainerSubnetSubnetId string = resourceId('Microsoft.Network/virtualNetworks/subnets', appVpc.name, 'ContainerSubnet')");
+  });
+
+  test('cross-stack: database-stack recebe DbSubnetSubnetId/AppVpcVpcId como param HARD (sem default) — cria o dependsOn de módulo', () => {
+    const { dbStack, all } = buildMultiStack();
+    const db = emitBicep(dbStack, { accountTier: 'free', allStacks: all });
+    // Param HARD (sem "="): é o que o generateAzureMainBicep (synth-out.ts) casa
+    // com o output homônimo da stack de rede, criando o dependsOn implícito entre
+    // módulos — nunca embutir o resourceId literal aqui (bug real de bateria p09).
+    expect(db).toMatch(/^param DbSubnetSubnetId string\s*$/m);
+    expect(db).toMatch(/^param AppVpcVpcId string\s*$/m);
+    expect(db).not.toMatch(/resourceId\('Microsoft\.Network\/virtualNetworks\/subnets',\s*'AppVpc'/);
+    expect(db).toContain('delegatedSubnetResourceId: DbSubnetSubnetId');
+    expect(db).toContain('virtualNetwork: {\n      id: AppVpcVpcId\n    }');
+    // sem subnet delegada → nenhuma firewall rule pública
+    expect(db).not.toContain('flexibleServers/firewallRules');
+  });
+
+  test('cross-stack: compute-stack recebe ContainerSubnetSubnetId como param HARD e cria env dedicado (não o sharedContainerEnv)', () => {
+    const { compStack, all } = buildMultiStack();
+    const comp = emitBicep(compStack, { accountTier: 'free', allStacks: all });
+    expect(comp).toMatch(/^param ContainerSubnetSubnetId string\s*$/m);
+    expect(comp).toContain('infrastructureSubnetId: ContainerSubnetSubnetId');
+    expect(comp).not.toContain('sharedContainerEnv');
+    expect(comp).not.toContain("param sharedCaeId");
+  });
+
+  test('same-stack: usa referência simbólica direta (sem param cross-stack)', () => {
+    const s = new Stack('one-stack');
+    new Network.VPC(s, 'Vpc1', { cidr: '10.0.0.0/16' });
+    new Network.Subnet(s, 'DbSub', { vpcId: 'Vpc1', cidr: '10.0.1.0/28' });
+    new Network.Subnet(s, 'CompSub', { vpcId: 'Vpc1', cidr: '10.0.2.0/23' });
+    new Database.SQL(s, 'Db1', { engine: 'postgres', subnetIds: ['DbSub'] });
+    new Compute.Container(s, 'App1', { image: 'x', subnetIds: ['CompSub'] });
+
+    // Sem `allStacks`: fragmento isolado, não passa por prepareStacksForSynth
+    // (que agora também acusa monolito de 3+ camadas — regra nova e correta,
+    // mas ortogonal ao que este teste verifica: a resolução same-stack do
+    // subnetId/vpcId em si).
+    const out = emitBicep(s, { accountTier: 'free' });
+    expect(out).not.toMatch(/^param \w*SubnetId string\s*$/m);
+    expect(out).toContain("resourceId('Microsoft.Network/virtualNetworks/subnets', vpc1.name, 'DbSub')");
+    expect(out).toContain("resourceId('Microsoft.Network/virtualNetworks/subnets', vpc1.name, 'CompSub')");
+    expect(out).toMatch(/serviceName: 'Microsoft\.DBforPostgreSQL\/flexibleServers'/);
+    expect(out).toMatch(/serviceName: 'Microsoft\.App\/environments'/);
+  });
+
+  test('subnet compartilhada entre Database.SQL (postgres) e Compute.Container → erro alto (duas delegations exclusivas conflitam)', () => {
+    const net = new Stack('net');
+    new Network.VPC(net, 'Vpc1', { cidr: '10.0.0.0/16' });
+    new Network.Subnet(net, 'SharedSubnet', { vpcId: 'Vpc1', cidr: '10.0.1.0/24' });
+    const db = new Stack('db');
+    new Database.SQL(db, 'Db1', { engine: 'postgres', subnetIds: ['SharedSubnet'] });
+    const comp = new Stack('comp');
+    new Compute.Container(comp, 'App1', { image: 'x', subnetIds: ['SharedSubnet'] });
+    const all = [net, db, comp];
+    expect(() => emitBicep(net, { accountTier: 'free', allStacks: all })).toThrow(/só aceita UMA delegation/);
+  });
+
+  test('engine != postgres com subnetIds → erro alto (fim do silêncio)', () => {
+    const net = new Stack('net2');
+    new Network.VPC(net, 'Vpc2', { cidr: '10.0.0.0/16' });
+    new Network.Subnet(net, 'Sub2', { vpcId: 'Vpc2', cidr: '10.0.1.0/28' });
+    const db = new Stack('db2');
+    new Database.SQL(db, 'Db2', { engine: 'mysql', subnetIds: ['Sub2'] });
+    const all = [net, db];
+    expect(() => emitBicep(db, { accountTier: 'free', allStacks: all })).toThrow(/subnetIds só é suportado no provider Azure para engine 'postgres'/);
+  });
+
+  test('securityGroupIds em Database.SQL ou Compute.Container → erro alto (fim do silêncio)', () => {
+    const net = new Stack('net3');
+    new Network.VPC(net, 'Vpc3', { cidr: '10.0.0.0/16' });
+    new Network.Subnet(net, 'Sub3', { vpcId: 'Vpc3', cidr: '10.0.1.0/28' });
+    const db = new Stack('db3');
+    new Database.SQL(db, 'Db3', { engine: 'postgres', subnetIds: ['Sub3'], securityGroupIds: ['sg-x'] });
+    expect(() => emitBicep(db, { accountTier: 'free', allStacks: [net, db] })).toThrow(/securityGroupIds ainda não é suportado/);
+
+    const net4 = new Stack('net4');
+    new Network.VPC(net4, 'Vpc4', { cidr: '10.0.0.0/16' });
+    new Network.Subnet(net4, 'Sub4', { vpcId: 'Vpc4', cidr: '10.0.1.0/23' });
+    const comp4 = new Stack('comp4');
+    new Compute.Container(comp4, 'App4', { image: 'x', subnetIds: ['Sub4'], securityGroupIds: ['sg-y'] });
+    expect(() => emitBicep(comp4, { accountTier: 'free', allStacks: [net4, comp4] })).toThrow(/securityGroupIds ainda não é suportado/);
+  });
+
+  test('subnet menor que o mínimo exigido → erro alto (Postgres /28, Container Apps /23)', () => {
+    const net5 = new Stack('net5');
+    new Network.VPC(net5, 'Vpc5', { cidr: '10.0.0.0/16' });
+    new Network.Subnet(net5, 'Sub5', { vpcId: 'Vpc5', cidr: '10.0.1.0/29' });
+    const db5 = new Stack('db5');
+    new Database.SQL(db5, 'Db5', { engine: 'postgres', subnetIds: ['Sub5'] });
+    expect(() => emitBicep(db5, { accountTier: 'free', allStacks: [net5, db5] })).toThrow(/menor que \/28/);
+
+    const net6 = new Stack('net6');
+    new Network.VPC(net6, 'Vpc6', { cidr: '10.0.0.0/16' });
+    new Network.Subnet(net6, 'Sub6', { vpcId: 'Vpc6', cidr: '10.0.1.0/24' });
+    const comp6 = new Stack('comp6');
+    new Compute.Container(comp6, 'App6', { image: 'x', subnetIds: ['Sub6'] });
+    expect(() => emitBicep(comp6, { accountTier: 'free', allStacks: [net6, comp6] })).toThrow(/menor que \/23/);
+  });
+
+  test('dois Compute.Container na mesma subnet → compartilham 1 único managedEnvironment dedicado', () => {
+    const net = new Stack('net7');
+    new Network.VPC(net, 'Vpc7', { cidr: '10.0.0.0/16' });
+    new Network.Subnet(net, 'Sub7', { vpcId: 'Vpc7', cidr: '10.0.1.0/23' });
+    const comp = new Stack('comp7');
+    new Compute.Container(comp, 'AppA', { image: 'x', subnetIds: ['Sub7'] });
+    new Compute.Container(comp, 'AppB', { image: 'x', subnetIds: ['Sub7'] });
+    const out = emitBicep(comp, { accountTier: 'free', allStacks: [net, comp] });
+    const envCount = (out.match(/Microsoft\.App\/managedEnvironments@/g) || []).length;
+    expect(envCount).toBe(1);
   });
 });

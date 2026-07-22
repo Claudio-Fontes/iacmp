@@ -1,5 +1,5 @@
 import { BaseConstruct } from '@iacmp/core';
-import { expr, tag, toSym, resolveValue, crossParamName, outputName, SynthContext } from './shared';
+import { expr, tag, toSym, resolveValue, crossParamName, outputName, SynthContext, resolveSubnetForVnetIntegration, cidrPrefixLength } from './shared';
 
 const INSTANCE_TYPE_MAP: Record<string, string> = {
   small: 'Standard_B1s',
@@ -157,6 +157,67 @@ export function synthesizeCompute(construct: BaseConstruct, ctx: SynthContext): 
       const maxReplicas = (props.maxCapacity as number) ?? 10;
       const targetPort = (props.port as number) ?? 80;
 
+      // Fim do silêncio: securityGroupIds não tem caminho de tradução ainda (NSG
+      // não é anexado à subnet do Container Apps Environment pelo synth) — falha
+      // alto em vez de gerar infra que ignora a intenção do usuário.
+      if (((props.securityGroupIds as string[] | undefined) ?? []).length > 0) {
+        throw new Error(
+          `Compute.Container "${construct.id}": securityGroupIds ainda não é suportado no provider Azure. ` +
+          `Remova securityGroupIds (o tráfego dentro da VNet já é permitido; controle acesso externo pela ` +
+          `topologia da subnet/ingress).`,
+        );
+      }
+
+      const subnetIds = (props.subnetIds as string[] | undefined) ?? [];
+      let managedEnvironmentIdExpr = expr(`empty(sharedCaeId) ? sharedContainerEnv.id : sharedCaeId`);
+      if (subnetIds.length > 0) {
+        const subnetId = subnetIds[0];
+        if (subnetIds.length > 1) {
+          console.warn(`[azure] Compute.Container "${construct.id}": Container Apps Environment aceita 1 subnet de infraestrutura; usando "${subnetId}" e ignorando as demais.`);
+        }
+        const resolved = resolveSubnetForVnetIntegration(subnetId, ctx);
+        const prefix = cidrPrefixLength(resolved.cidr);
+        if (prefix !== undefined && prefix > 23) {
+          throw new Error(
+            `Compute.Container "${construct.id}": subnet "${subnetId}" (${resolved.cidr}) é menor que /23 — Container ` +
+            `Apps Environment (Consumption) exige subnet dedicada de no mínimo /23.`,
+          );
+        }
+        // Uma subnet só pode ter UMA infrastructureSubnetId associada — se vários
+        // Compute.Container apontam para a mesma subnet, compartilham o mesmo env
+        // dedicado (em vez de tentar criar um Microsoft.App/managedEnvironments por
+        // container, o que colidiria no ARM).
+        let dedicatedEnvSym = ctx.dedicatedContainerEnvs.get(subnetId);
+        if (!dedicatedEnvSym) {
+          dedicatedEnvSym = `${sym}Env`;
+          ctx.dedicatedContainerEnvs.set(subnetId, dedicatedEnvSym);
+          // A subnet É delegada a Microsoft.App/environments (ver network.ts, case
+          // Network.VPC — delegationService vem de bicep.ts/containerSubnetOwner).
+          // A doc pública do Container Apps orienta NÃO delegar a subnet em
+          // ambiente Consumption-only (delegação seria só para workload profiles) —
+          // essa orientação está DESATUALIZADA/INCORRETA para o
+          // Microsoft.App/managedEnvironments@2023-05-01 que emitimos: validado em
+          // DEPLOY REAL 2026-07-22 (bateria p07) que o ARM rejeita o CAE sem a
+          // delegation com "ManagedEnvironmentSubnetDelegationError: The subnet of
+          // the environment must be delegated to the service
+          // 'Microsoft.App/environments'". NÃO remover a delegation "de volta" —
+          // o erro do ARM é a palavra final, não a documentação.
+          resources.push({
+            sym: dedicatedEnvSym,
+            type: 'Microsoft.App/managedEnvironments',
+            apiVersion: '2023-05-01',
+            name: expr(`'${construct.id.toLowerCase()}-cae'`),
+            location: 'location',
+            tags: tag(construct.id),
+            properties: {
+              zoneRedundant: false,
+              vnetConfiguration: { infrastructureSubnetId: resolved.subnetResourceIdExpr },
+            },
+          });
+        }
+        managedEnvironmentIdExpr = expr(`${dedicatedEnvSym}.id`);
+      }
+
       resources.push({
         sym,
         type: 'Microsoft.App/containerApps',
@@ -166,7 +227,7 @@ export function synthesizeCompute(construct: BaseConstruct, ctx: SynthContext): 
         tags: tag(construct.id),
         identity: { type: 'SystemAssigned' },
         properties: {
-          managedEnvironmentId: expr(`empty(sharedCaeId) ? sharedContainerEnv.id : sharedCaeId`),
+          managedEnvironmentId: managedEnvironmentIdExpr,
           configuration: {
             ingress: { external: true, targetPort },
             registries: expr(`empty(acrServer) ? [] : [{\n    server: acrServer\n    username: acrUser\n    passwordSecretRef: 'acr-pwd'\n  }]`),

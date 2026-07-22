@@ -3,17 +3,15 @@ param location string = resourceGroup().location
 resource itemsTable 'Microsoft.DocumentDB/databaseAccounts@2023-04-15' = {
   name: 'itemstable-${uniqueString(resourceGroup().id)}'
   location: location
-  kind: 'GlobalDocumentDB'
+  kind: 'MongoDB'
   tags: {
     Name: 'ItemsTable'
   }
   properties: {
     databaseAccountOfferType: 'Standard'
-    capabilities: [
-      {
-        name: 'EnableTable'
-      }
-    ]
+    apiProperties: {
+      serverVersion: '4.2'
+    }
     locations: [
       {
         locationName: location
@@ -31,19 +29,30 @@ resource itemsTable 'Microsoft.DocumentDB/databaseAccounts@2023-04-15' = {
   }
 }
 
-resource itemsTableTable 'Microsoft.DocumentDB/databaseAccounts/tables@2023-04-15' = {
+resource itemsTableDb 'Microsoft.DocumentDB/databaseAccounts/mongodbDatabases@2023-04-15' = {
   parent: itemsTable
-  name: 'ItemsTable'
+  name: 'itemstable-db'
   properties: {
     resource: {
-      id: 'ItemsTable'
+      id: 'itemstable-db'
+    }
+    options: {}
+  }
+}
+
+resource itemsTableColl 'Microsoft.DocumentDB/databaseAccounts/mongodbDatabases/collections@2023-04-15' = {
+  parent: itemsTableDb
+  name: 'itemstable'
+  properties: {
+    resource: {
+      id: 'itemstable'
     }
     options: {}
   }
 }
 
 output ItemsTableEndpoint string = itemsTable.properties.documentEndpoint
-output ItemsTableName string = 'ItemsTable'
+output ItemsTableName string = 'itemstable'
 output ItemsTableArn string = itemsTable.id
 #disable-next-line outputs-should-not-contain-secrets
-output ItemsTableConnectionString string = 'DefaultEndpointsProtocol=https;AccountName=${itemsTable.name};AccountKey=${itemsTable.listKeys().primaryMasterKey};TableEndpoint=https://${itemsTable.name}.table.cosmos.azure.com:443/;'
+output ItemsTableConnectionString string = itemsTable.listConnectionStrings().connectionStrings[0].connectionString

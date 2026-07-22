@@ -95,8 +95,12 @@ resource createItemFn 'Microsoft.Web/sites@2023-12-01' = {
           value: ItemsTableName
         }
         {
-          name: 'TABLE_NAME_CONNECTION_STRING'
+          name: 'MONGO_URI'
           value: ItemsTableConnectionString
+        }
+        {
+          name: 'DB_NAME'
+          value: ItemsTableName
         }
       ]
     }
@@ -185,8 +189,12 @@ resource listItemsFn 'Microsoft.Web/sites@2023-12-01' = {
           value: ItemsTableName
         }
         {
-          name: 'TABLE_NAME_CONNECTION_STRING'
+          name: 'MONGO_URI'
           value: ItemsTableConnectionString
+        }
+        {
+          name: 'DB_NAME'
+          value: ItemsTableName
         }
       ]
     }

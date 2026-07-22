@@ -57,6 +57,17 @@ export function synthesizeStorage(construct: BaseConstruct, ctx: SynthContext): 
       outputs.push({ name: outputName(construct.id, 'Id'), type: 'string', value: `${sym}.id` });
       outputs.push({ name: crossParamName(construct.id, 'Name'), type: 'string', value: `${sym}.name` });
       outputs.push({ name: crossParamName(construct.id, 'ConnectionString'), type: 'string', value: `'DefaultEndpointsProtocol=https;AccountName=\${${sym}.name};AccountKey=\${${sym}.listKeys().keys[0].value};EndpointSuffix=core.windows.net'` });
+      // Static website — data-plane, impossível via ARM/Bicep. Emite outputs para que
+      // o deploy.ts rode `az storage blob service-properties update` pós-deploy.
+      const websiteHosting = props.websiteHosting;
+      if (websiteHosting) {
+        const wh = typeof websiteHosting === 'object' ? websiteHosting as Record<string, string> : {};
+        const indexDoc = wh.indexDocument ?? 'index.html';
+        const errorDoc = wh.errorDocument ?? '404.html';
+        outputs.push({ name: outputName(construct.id, 'StaticWebsiteAccount'), type: 'string', value: `${sym}.name` });
+        outputs.push({ name: outputName(construct.id, 'StaticWebsiteIndex'), type: 'string', value: `'${indexDoc}'` });
+        outputs.push({ name: outputName(construct.id, 'StaticWebsite404'), type: 'string', value: `'${errorDoc}'` });
+      }
       if (geoReplication) {
         // Endpoint de leitura da região pareada (RA-GRS) — o "bucket de DR".
         outputs.push({ name: crossParamName(construct.id, 'SecondaryEndpoint'), type: 'string', value: `${sym}.properties.secondaryEndpoints.blob` });

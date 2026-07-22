@@ -1,5 +1,5 @@
 import { BaseConstruct } from '@iacmp/core';
-import { expr, tag, toSym, crossParamName, outputName, SynthContext } from './shared';
+import { expr, tag, toSym, crossParamName, outputName, SynthContext, resolveSubnetForVnetIntegration, cidrPrefixLength } from './shared';
 
 function flexibleServerSku(accountTier: 'free' | 'standard'): { name: string; tier: string } {
   return accountTier === 'free'
@@ -21,6 +21,25 @@ export function synthesizeDatabase(construct: BaseConstruct, ctx: SynthContext):
       const dbSku = flexibleServerSku(accountTier);
       needsAdminPassword.value = true;
 
+      // Fim do silêncio: subnetIds/securityGroupIds em combinações que o provider
+      // Azure ainda não traduz devem falhar o synth, nunca gerar infra pública
+      // silenciosamente (era o bug: subnetIds era lido em lugar nenhum).
+      const subnetIds = (props.subnetIds as string[] | undefined) ?? [];
+      if (subnetIds.length > 0 && engine !== 'postgres') {
+        throw new Error(
+          `Database.SQL "${construct.id}": subnetIds só é suportado no provider Azure para engine 'postgres' ` +
+          `(Postgres Flexible Server com VNet integration). Engine "${engine}" ainda não tem esse caminho ` +
+          `implementado — troque para 'postgres' ou remova subnetIds.`,
+        );
+      }
+      if (((props.securityGroupIds as string[] | undefined) ?? []).length > 0) {
+        throw new Error(
+          `Database.SQL "${construct.id}": securityGroupIds ainda não é suportado no provider Azure — o synth não ` +
+          `anexa o Network.SecurityGroup à subnet delegada. Remova securityGroupIds (o tráfego dentro da VNet já ` +
+          `é permitido; controle acesso externo pela topologia da subnet).`,
+        );
+      }
+
       const fwRule = { sym: `${sym}Fw`, type: `${'x'}`, apiVersion: '', parent: sym, name: 'AllowAzure', properties: { startIpAddress: '0.0.0.0', endIpAddress: '0.0.0.0' } };
       if (engine === 'mysql') {
         resources.push({ sym, type: 'Microsoft.DBforMySQL/flexibleServers', apiVersion: '2023-06-30', name: serverName, location: 'location', tags: tag(construct.id), sku: dbSku, properties: { administratorLogin: 'dbadmin', administratorLoginPassword: expr('adminPassword'), version: '8.0.21', storage: { storageSizeGB: props.storageGb ?? 20, autoGrow: 'Enabled' }, backup: { backupRetentionDays: Math.max(Number(props.backupRetentionDays ?? 7), 7), geoRedundantBackup: 'Disabled' }, highAvailability: { mode: zoneRedundant ? 'ZoneRedundant' : 'Disabled' } } });
@@ -33,8 +52,78 @@ export function synthesizeDatabase(construct: BaseConstruct, ctx: SynthContext):
       if (engine === 'postgres') {
         const pgStorageRaw = Number(props.storageGb ?? 32);
         const pgStorageGB = pgStorageRaw < 32 ? 32 : pgStorageRaw;
-        resources.push({ sym, type: 'Microsoft.DBforPostgreSQL/flexibleServers', apiVersion: '2023-06-01-preview', name: serverName, location: 'location', tags: tag(construct.id), sku: dbSku, properties: { administratorLogin: 'dbadmin', administratorLoginPassword: expr('adminPassword'), version: '15', storage: { storageSizeGB: pgStorageGB }, backup: { backupRetentionDays: Math.max(Number(props.backupRetentionDays ?? 7), 7), geoRedundantBackup: 'Disabled' }, highAvailability: { mode: zoneRedundant ? 'ZoneRedundant' : 'Disabled' } } });
-        resources.push({ ...fwRule, type: 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules', apiVersion: '2023-06-01-preview' });
+        const pgProperties: Record<string, unknown> = {
+          administratorLogin: 'dbadmin',
+          administratorLoginPassword: expr('adminPassword'),
+          version: '15',
+          storage: { storageSizeGB: pgStorageGB },
+          backup: { backupRetentionDays: Math.max(Number(props.backupRetentionDays ?? 7), 7), geoRedundantBackup: 'Disabled' },
+          highAvailability: { mode: zoneRedundant ? 'ZoneRedundant' : 'Disabled' },
+        };
+
+        let vnetDependsOn: string[] | undefined;
+        if (subnetIds.length > 0) {
+          const subnetId = subnetIds[0];
+          if (subnetIds.length > 1) {
+            console.warn(`[azure] Database.SQL "${construct.id}": Postgres Flexible Server aceita 1 subnet delegada; usando "${subnetId}" e ignorando as demais.`);
+          }
+          const resolved = resolveSubnetForVnetIntegration(subnetId, ctx);
+          const prefix = cidrPrefixLength(resolved.cidr);
+          if (prefix !== undefined && prefix > 28) {
+            throw new Error(
+              `Database.SQL "${construct.id}": subnet "${subnetId}" (${resolved.cidr}) é menor que /28 — Postgres ` +
+              `Flexible Server exige subnet dedicada de no mínimo /28 (16 IPs).`,
+            );
+          }
+          // Zone name no formato "<id>.private.postgres.database.azure.com" — a Azure exige
+          // sufixo ".postgres.database.azure.com"; a forma de 2 rótulos evita a restrição de
+          // "não pode ser igual ao nome do servidor" que a forma de 1 rótulo teria.
+          const dnsZoneSym = `${sym}Dns`;
+          const dnsLinkSym = `${sym}DnsLink`;
+          resources.push({
+            sym: dnsZoneSym,
+            type: 'Microsoft.Network/privateDnsZones',
+            apiVersion: '2020-06-01',
+            name: `${construct.id.toLowerCase()}.private.postgres.database.azure.com`,
+            location: "'global'",
+            tags: tag(construct.id),
+            properties: {},
+          });
+          resources.push({
+            sym: dnsLinkSym,
+            type: 'Microsoft.Network/privateDnsZones/virtualNetworkLinks',
+            apiVersion: '2020-06-01',
+            parent: dnsZoneSym,
+            name: `${construct.id.toLowerCase()}-link`,
+            location: "'global'",
+            properties: {
+              registrationEnabled: false,
+              virtualNetwork: { id: resolved.vpcResourceIdExpr },
+            },
+          });
+          pgProperties.network = {
+            delegatedSubnetResourceId: resolved.subnetResourceIdExpr,
+            privateDnsZoneArmResourceId: expr(`${dnsZoneSym}.id`),
+          };
+          vnetDependsOn = [dnsLinkSym];
+        }
+
+        resources.push({
+          sym,
+          type: 'Microsoft.DBforPostgreSQL/flexibleServers',
+          apiVersion: '2023-06-01-preview',
+          name: serverName,
+          location: 'location',
+          tags: tag(construct.id),
+          sku: dbSku,
+          properties: pgProperties,
+          ...(vnetDependsOn ? { dependsOn: vnetDependsOn } : {}),
+        });
+        // Com subnet delegada (VNet integration) o servidor não tem endpoint público —
+        // NENHUMA firewall rule pública é criada nesse modo.
+        if (subnetIds.length === 0) {
+          resources.push({ ...fwRule, type: 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules', apiVersion: '2023-06-01-preview' });
+        }
         outputs.push({ name: outputName(construct.id, 'Endpoint'), type: 'string', value: `${sym}.properties.fullyQualifiedDomainName` });
         outputs.push({ name: outputName(construct.id, 'Port'), type: 'string', value: `'5432'` });
         outputs.push({ name: outputName(construct.id, 'Username'), type: 'string', value: `'dbadmin'` });

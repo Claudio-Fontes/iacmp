@@ -25,11 +25,34 @@ export function synthesizeNetwork(construct: BaseConstruct, ctx: SynthContext): 
               properties: {
                 addressPrefix: s.cidr,
                 privateEndpointNetworkPolicies: s.public ? 'Disabled' : 'Enabled',
+                ...(s.delegationService ? {
+                  delegations: [{
+                    name: 'delegation',
+                    properties: { serviceName: s.delegationService },
+                  }],
+                } : {}),
               },
             })),
           } : {}),
         },
       });
+
+      // Outputs cross-stack do resourceId da VNet e de cada subnet — só quando
+      // ALGUM Database.SQL/Compute.Container com subnetIds em OUTRA stack
+      // efetivamente consome (ver crossStackSubnetIds/crossStackVpcIds em
+      // bicep.ts). Same-stack usa referência simbólica direta, sem output
+      // (ver resolveSubnetForVnetIntegration em shared.ts).
+      if (ctx.crossStackVpcIds.has(construct.id)) {
+        outputs.push({ name: crossParamName(construct.id, 'VpcId'), type: 'string', value: `${sym}.id` });
+      }
+      for (const s of vpcSubnets) {
+        if (!ctx.crossStackSubnetIds.has(s.id)) continue;
+        outputs.push({
+          name: crossParamName(s.id, 'SubnetId'),
+          type: 'string',
+          value: `resourceId('Microsoft.Network/virtualNetworks/subnets', ${sym}.name, '${s.id}')`,
+        });
+      }
       break;
     }
 
@@ -213,8 +236,20 @@ export function synthesizeNetwork(construct: BaseConstruct, ctx: SynthContext): 
         console.warn(`[azure] Network.CDN "${construct.id}": accountTier=free — Front Door indisponível em Free Trial; servindo direto do Storage público (sem CDN).`);
         if (bucketRefEarly) {
           const bSym = toSym(bucketRefEarly);
+          const bucketConstructEarly = ctx.globalIdx.get(bucketRefEarly);
+          const hasWebsiteHostingEarly = !!(bucketConstructEarly?.props as Record<string, unknown> | undefined)?.websiteHosting;
           cdnBucketRefs.add(bucketRefEarly);
-          outputs.push({ name: outputName(construct.id, 'Url'), type: 'string', value: `'\${${bSym}.properties.primaryEndpoints.blob}web'` });
+          // Com websiteHosting: endpoint real do static website ($web, ativado no
+          // deploy) — o único modo que resolve index/error document no root.
+          // Sem websiteHosting: expõe o endpoint blob "cru" — um container Blob
+          // comum não resolve documento default no root (GET / sempre 404), então
+          // não fingimos que existe uma url de "site" funcional aqui (ver post-
+          // processing de cdnBucketRefs em bicep.ts — não criamos mais o container
+          // decorativo 'web' que nada nunca populava).
+          const urlValue = hasWebsiteHostingEarly
+            ? `${bSym}.properties.primaryEndpoints.web`
+            : `${bSym}.properties.primaryEndpoints.blob`;
+          outputs.push({ name: outputName(construct.id, 'Url'), type: 'string', value: urlValue });
         }
         break;
       }
@@ -257,12 +292,19 @@ export function synthesizeNetwork(construct: BaseConstruct, ctx: SynthContext): 
       const bucketRefRaw = origins[0]?.bucketRef;
       const bucketRefId = isRef(bucketRefRaw) ? bucketRefRaw.constructId : bucketRefRaw as string | undefined;
       let hostNameExpr: unknown;
-      let originPath: string | undefined;
 
       if (bucketRefId) {
         const bucketSym = toSym(bucketRefId);
-        hostNameExpr = expr(`replace(replace(${bucketSym}.properties.primaryEndpoints.blob,'https://',''),'/','')`);
-        originPath = '/web';
+        const bucketConstruct = ctx.globalIdx.get(bucketRefId);
+        const hasWebsiteHosting = !!(bucketConstruct?.props as Record<string, unknown> | undefined)?.websiteHosting;
+        // Com websiteHosting: origem = endpoint de static website ($web) — o único
+        // modo que resolve index/error document no root. Sem websiteHosting: aponta
+        // pro endpoint blob cru, sem originPath — não existe mais o container
+        // decorativo 'web' (nada nunca fazia upload nele; um container Blob comum
+        // também não resolve documento default no root, então fingir uma origem
+        // '/web' não tornava isso funcional). Ver post-processing de cdnBucketRefs
+        // em bicep.ts.
+        hostNameExpr = expr(`replace(replace(${bucketSym}.properties.primaryEndpoints.${hasWebsiteHosting ? 'web' : 'blob'},'https://',''),'/','')`);
         cdnBucketRefs.add(bucketRefId);
       } else {
         hostNameExpr = origins[0]?.domainName ?? '';
@@ -294,7 +336,6 @@ export function synthesizeNetwork(construct: BaseConstruct, ctx: SynthContext): 
         httpsRedirect: 'Enabled',
         enabledState: 'Enabled',
       };
-      if (originPath) routeProps.originPath = originPath;
 
       resources.push({
         sym: routeSym,

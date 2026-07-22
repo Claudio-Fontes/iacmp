@@ -96,6 +96,81 @@ export function crossParamName(constructId: string, attribute: string): string {
 // que usar a mesma sanitização — por isso outputName é crossParamName.
 export const outputName = crossParamName;
 
+// ── VNet integration (subnetIds) ─────────────────────────────────────────────
+// Resolve um subnetId (string de props.subnetIds — nunca um Ref) para os dados
+// necessários a delegatedSubnetResourceId/infrastructureSubnetId (Database.SQL,
+// Compute.Container) e ao id da VNet (virtualNetworkLinks do private DNS).
+//
+// Same-stack (subnet e consumidor na MESMA stack): referência SIMBÓLICA aos
+// recursos declarados no mesmo arquivo (${vnetSym}.name / ${vnetSym}.id) — o
+// nome do VNet é literal (name: construct.id — ver Network.VPC), mas usar o
+// símbolo em vez da string crua dá um dependsOn implícito real dentro do
+// arquivo (Bicep detecta a referência ao resource).
+//
+// Cross-stack (subnet declarada em OUTRA stack — ex: rede separada de banco):
+// NUNCA embuta o resourceId literal aqui. Bug real de bateria (p09): isso
+// "resolve" o endereçamento mas apaga a ORDENAÇÃO — generateAzureMainBicep
+// (packages/cli/src/synth-out.ts) só cria dependsOn entre módulos quando um
+// param HARD de uma stack casa com um output de outra (parseBicepModule);
+// sem esse casamento de nomes, o módulo do banco/container pode deployar
+// ANTES do módulo da VNet terminar → corrida não-determinística no ARM.
+// Por isso aqui só declaramos um param HARD (crossParams) cujo nome bate com
+// o output que Network.VPC exporta para cada VNet/subnet — mesmíssimo
+// mecanismo já usado para Fqdn/ConnectionString, nenhum special-case novo.
+export interface ResolvedSubnet {
+  vpcId: string;
+  cidr?: string;
+  /** Expressão Bicep pronta para delegatedSubnetResourceId / infrastructureSubnetId. */
+  subnetResourceIdExpr: BicepExpr;
+  /** Expressão Bicep pronta para o id da própria VNet (ex: virtualNetworkLinks.properties.virtualNetwork.id). */
+  vpcResourceIdExpr: BicepExpr;
+}
+
+export function resolveSubnetForVnetIntegration(
+  subnetId: string,
+  ctx: { idx: Map<string, BaseConstruct>; globalIdx: Map<string, BaseConstruct>; crossParams: Map<string, string> },
+): ResolvedSubnet {
+  const isLocal = ctx.idx.has(subnetId);
+  const c = ctx.idx.get(subnetId) ?? ctx.globalIdx.get(subnetId);
+  if (!c || c.type !== 'Network.Subnet') {
+    throw new Error(
+      `[azure] subnetIds referencia "${subnetId}", mas não há Network.Subnet com esse id em nenhuma stack. ` +
+      `Declare o Network.Subnet antes de referenciá-lo.`,
+    );
+  }
+  const p = c.props as Record<string, unknown>;
+  const vpcIdRaw = p.vpcId;
+  const vpcId = isRef(vpcIdRaw) ? (vpcIdRaw as Ref).constructId : vpcIdRaw as string;
+  const cidr = p.cidr as string | undefined;
+
+  if (isLocal) {
+    const vnetSym = toSym(vpcId);
+    return {
+      vpcId,
+      cidr,
+      subnetResourceIdExpr: expr(`resourceId('Microsoft.Network/virtualNetworks/subnets', ${vnetSym}.name, '${subnetId}')`),
+      vpcResourceIdExpr: expr(`${vnetSym}.id`),
+    };
+  }
+
+  const subnetParam = crossParamName(subnetId, 'SubnetId');
+  const vpcParam = crossParamName(vpcId, 'VpcId');
+  ctx.crossParams.set(subnetParam, 'string');
+  ctx.crossParams.set(vpcParam, 'string');
+  return {
+    vpcId,
+    cidr,
+    subnetResourceIdExpr: expr(subnetParam),
+    vpcResourceIdExpr: expr(vpcParam),
+  };
+}
+
+export function cidrPrefixLength(cidr: string | undefined): number | undefined {
+  if (!cidr) return undefined;
+  const m = /\/(\d{1,2})$/.exec(cidr);
+  return m ? Number(m[1]) : undefined;
+}
+
 export function resolveRef(r: Ref, idx: Map<string, BaseConstruct>, crossParams: Map<string, string>): string {
   const c = idx.get(r.constructId);
   if (!c) {
@@ -125,10 +200,12 @@ export function resolveRef(r: Ref, idx: Map<string, BaseConstruct>, crossParams:
     return expr(`${sym}Ns.id`);
   }
   if (c.type === 'Cache.Redis' && r.attribute === 'ConnectionString') {
-    return expr(`'rediss://:$\{${sym}.listKeys().primaryKey}@$\{${sym}.properties.hostName}:6380'`);
+    // ConnectionString usa o database filho (${sym}Db) — listKeys() do cluster
+    // redisEnterprise não expõe chaves; quem tem accessKeys é o `databases/default`.
+    return expr(`'rediss://:$\{${sym}Db.listKeys().primaryKey}@$\{${sym}.properties.hostName}:10000'`);
   }
   if (c.type === 'Cache.Redis' && r.attribute === 'Port') {
-    return '6380';
+    return '10000';
   }
   if (c.type === 'Storage.Bucket' && r.attribute === 'ConnectionString') {
     return expr(`'DefaultEndpointsProtocol=https;AccountName=\${${sym}.name};AccountKey=\${${sym}.listKeys().keys[0].value};EndpointSuffix=core.windows.net'`);
@@ -209,6 +286,16 @@ export interface SynthContext {
   sharedFunctionStorageSym: string | null;
   sharedFnBlobServiceSym: string | null;
   cdnBucketRefs: Set<string>;
-  subnetsByVpc: Map<string, Array<{ id: string; cidr: string; public: boolean }>>;
+  subnetsByVpc: Map<string, Array<{ id: string; cidr: string; public: boolean; delegationService?: string }>>;
   accountTier: 'free' | 'standard';
+  /** subnetId → sym do Microsoft.App/managedEnvironments dedicado criado para essa subnet.
+   * Vários Compute.Container que apontam para a MESMA subnet compartilham UM env
+   * (uma subnet só pode ter uma infrastructureSubnetId associada por vez). */
+  dedicatedContainerEnvs: Map<string, string>;
+  /** subnetIds/vpcIds que precisam do output cross-stack VpcId/SubnetId (ver
+   * network.ts, case Network.VPC) — só os efetivamente consumidos por um
+   * Database.SQL/Compute.Container em OUTRA stack (evita poluir stacks de rede
+   * sem consumidor com outputs não usados). */
+  crossStackSubnetIds: Set<string>;
+  crossStackVpcIds: Set<string>;
 }

@@ -49,7 +49,7 @@ export const AZURE_NAME_MAX: Record<string, { max: number; label: string }> = {
   'Microsoft.Storage/storageAccounts': { max: 24, label: 'Storage account' },
   'Microsoft.KeyVault/vaults': { max: 24, label: 'Key Vault' },
   'Microsoft.DocumentDB/databaseAccounts': { max: 44, label: 'Cosmos DB account' },
-  'Microsoft.Cache/redis': { max: 63, label: 'Redis' },
+  'Microsoft.Cache/redisEnterprise': { max: 60, label: 'Redis Enterprise' },
   'Microsoft.ApiManagement/service': { max: 50, label: 'API Management' },
 };
 

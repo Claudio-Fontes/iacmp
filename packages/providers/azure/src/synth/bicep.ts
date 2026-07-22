@@ -146,6 +146,45 @@ export function extractAzureFunctionMeta(stack: Stack, allStacks?: Stack[]): Azu
     });
 }
 
+// ── Container build metadata (Compute.Container com `build`) ─────────────────
+// O deploy precisa saber QUAIS Compute.Container têm `build` (context+dockerfile)
+// para: garantir o ACR de bootstrap, buildar+pushar a imagem (Docker local ou
+// ACR Tasks best-effort) e injetar `<imageParamName>=<loginServer>/<repository>:<tag>`
+// como valor de parâmetro Bicep — reaproveita o MESMO param `<sym>Image` que já
+// existe para `image` literal (ver synthesizeCompute), só troca quem fornece o valor.
+export interface AzureContainerBuildMeta {
+  constructId: string;
+  /** Nome do param Bicep (`<sym>Image`) que recebe a imagem final via --parameters no deploy. */
+  imageParamName: string;
+  /** Nome do repositório no ACR de bootstrap — prefixado pelo projeto para não colidir entre projetos diferentes que compartilham o mesmo ACR. */
+  repository: string;
+  tag: string;
+  /** Caminho do contexto de build, relativo à raiz do projeto (mesmo valor de `build.context`). */
+  context: string;
+  dockerfile?: string;
+}
+
+export function extractAzureContainerBuilds(stack: Stack, projectName?: string): AzureContainerBuildMeta[] {
+  const projectSlug = (projectName ?? 'iacmp').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-+|-+$)/g, '') || 'iacmp';
+  const out: AzureContainerBuildMeta[] = [];
+  for (const c of stack.constructs) {
+    if (c.type !== 'Compute.Container') continue;
+    const props = c.props as Record<string, unknown>;
+    const build = props.build as { context: string; dockerfile?: string } | undefined;
+    if (!build) continue;
+    const idSlug = c.id.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-+|-+$)/g, '') || 'container';
+    out.push({
+      constructId: c.id,
+      imageParamName: `${toSym(c.id)}Image`,
+      repository: `${projectSlug}-${idSlug}`,
+      tag: 'latest',
+      context: build.context,
+      dockerfile: build.dockerfile,
+    });
+  }
+  return out;
+}
+
 // ── Main export ───────────────────────────────────────────────────────────────
 export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standard'; allStacks?: Stack[] }): string {
   const accountTier = opts?.accountTier ?? 'standard';
@@ -156,7 +195,7 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
   // ver todas as stacks. O synth.ts real sempre passa allStacks; chamadas
   // isoladas (unit test de um fragmento) pulam — não há projeto para validar.
   if (opts?.allStacks && opts.allStacks.length > 0) {
-    prepareStacksForSynth(opts.allStacks, { accountTier });
+    prepareStacksForSynth(opts.allStacks, { accountTier, cloud: 'azure' });
   }
   const idx = new Map<string, BaseConstruct>(stack.constructs.map(c => [c.id, c]));
   // globalIdx: lookup de tipo em qualquer stack (nunca usado para resolver valor de ref)
@@ -180,19 +219,110 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
     }
   }
 
-  const subnetsByVpc = new Map<string, Array<{ id: string; cidr: string; public: boolean }>>();
+  // VNet integration — subnetIds de Database.SQL (postgres) e Compute.Container.
+  // Postgres Flexible Server exige subnet EXCLUSIVA (delegada só a ele — nenhum
+  // outro recurso, nem outro Postgres, pode usá-la). Compute.Container (Container
+  // Apps Environment dedicado) TAMBÉM exige a subnet delegada — validado em
+  // deploy real 2026-07-22 (bateria p07): o ARM rejeita o CAE com
+  // "ManagedEnvironmentSubnetDelegationError: The subnet of the environment must
+  // be delegated to the service 'Microsoft.App/environments'" mesmo sem
+  // workload profiles (a doc pública da Microsoft que orienta NÃO delegar em
+  // Consumption-only está desatualizada/incorreta para o Microsoft.App/
+  // managedEnvironments@2023-05-01 que emitimos — o erro do ARM é a palavra
+  // final; NÃO reverter esta delegation sem novo deploy real confirmando).
+  // Detecta em synth-time (não no deploy real, ~15-20min depois) qualquer
+  // conflito de subnet compartilhada entre as duas delegations (cada uma só
+  // aceita UM serviço). Calculado sobre TODAS as stacks (allConstructs) porque
+  // VNet/subnet podem estar numa stack de rede e o banco/container em outra.
+  const postgresSubnetOwner = new Map<string, string>(); // subnetId → Database.SQL id dono
+  const containerSubnetOwner = new Map<string, string>(); // subnetId → Compute.Container id dono
+  for (const c of allConstructs) {
+    const p = c.props as Record<string, unknown>;
+    const subnetIds = (p.subnetIds as string[] | undefined) ?? [];
+    if (subnetIds.length === 0) continue;
+    if (c.type === 'Database.SQL' && ((p.engine as string) ?? 'mysql') === 'postgres') {
+      for (const sid of subnetIds) {
+        const existingOwner = postgresSubnetOwner.get(sid);
+        if (existingOwner && existingOwner !== c.id) {
+          throw new Error(
+            `[azure] Subnet "${sid}" já está delegada exclusivamente ao Database.SQL "${existingOwner}". ` +
+            `Postgres Flexible Server exige subnet dedicada (Microsoft.DBforPostgreSQL/flexibleServers) — ` +
+            `nenhum outro recurso, nem outro banco, pode compartilhá-la. Use uma subnet diferente para "${c.id}".`,
+          );
+        }
+        postgresSubnetOwner.set(sid, c.id);
+      }
+    }
+    if (c.type === 'Compute.Container') {
+      for (const sid of subnetIds) containerSubnetOwner.set(sid, c.id);
+    }
+  }
+  for (const [sid, owner] of postgresSubnetOwner) {
+    if (containerSubnetOwner.has(sid)) {
+      throw new Error(
+        `[azure] Subnet "${sid}" é usada tanto pelo Database.SQL "${owner}" (delegação exclusiva ` +
+        `Microsoft.DBforPostgreSQL/flexibleServers) quanto por um Compute.Container (delegação exclusiva ` +
+        `Microsoft.App/environments) — uma subnet só aceita UMA delegation. Use subnets separadas.`,
+      );
+    }
+  }
+
+  const subnetsByVpc = new Map<string, Array<{ id: string; cidr: string; public: boolean; delegationService?: string }>>();
   for (const c of stack.constructs) {
     if (c.type !== 'Network.Subnet') continue;
     const p = c.props as Record<string, unknown>;
     const vpcId = p.vpcId;
     const vnetId = isRef(vpcId) ? (vpcId as Ref).constructId : vpcId as string;
     if (!subnetsByVpc.has(vnetId)) subnetsByVpc.set(vnetId, []);
-    subnetsByVpc.get(vnetId)!.push({ id: c.id, cidr: p.cidr as string, public: (p.public as boolean) ?? false });
+    subnetsByVpc.get(vnetId)!.push({
+      id: c.id,
+      cidr: p.cidr as string,
+      public: (p.public as boolean) ?? false,
+      delegationService: postgresSubnetOwner.has(c.id)
+        ? 'Microsoft.DBforPostgreSQL/flexibleServers'
+        : containerSubnetOwner.has(c.id)
+          ? 'Microsoft.App/environments'
+          : undefined,
+    });
+  }
+
+  // Outputs cross-stack de VpcId/SubnetId (ver resolveSubnetForVnetIntegration em
+  // shared.ts): só emitidos quando ALGUM Database.SQL/Compute.Container com
+  // subnetIds está numa stack DIFERENTE da subnet — emitir sempre poluiria
+  // (e quebraria golden tests de) stacks 100% de rede sem consumidor nenhum.
+  // Bug real de bateria (p09): sem o wiring param↔output entre módulos do
+  // _main.bicep, o módulo do banco/container podia deployar antes da VNet
+  // terminar (corrida no ARM) — ver generateAzureMainBicep em synth-out.ts.
+  const stackOfConstruct = new Map<string, string>();
+  for (const s of opts?.allStacks ?? [stack]) {
+    for (const c of s.constructs) stackOfConstruct.set(c.id, s.name);
+  }
+  const crossStackSubnetIds = new Set<string>();
+  const crossStackVpcIds = new Set<string>();
+  for (const c of allConstructs) {
+    if (c.type !== 'Database.SQL' && c.type !== 'Compute.Container') continue;
+    const p = c.props as Record<string, unknown>;
+    const consumerSubnetIds = (p.subnetIds as string[] | undefined) ?? [];
+    for (const sid of consumerSubnetIds) {
+      if (stackOfConstruct.get(sid) === stackOfConstruct.get(c.id)) continue; // same-stack: sem param, ver shared.ts
+      crossStackSubnetIds.add(sid);
+      const subnetConstruct = globalIdx.get(sid);
+      if (!subnetConstruct) continue;
+      const subnetVpcRaw = (subnetConstruct.props as Record<string, unknown>).vpcId;
+      crossStackVpcIds.add(isRef(subnetVpcRaw) ? (subnetVpcRaw as Ref).constructId : subnetVpcRaw as string);
+    }
   }
 
   const hasContainerApp = stack.constructs.some(c => c.type === 'Compute.Container');
+  // O env compartilhado (free tier: só 1 por região) só serve containers SEM
+  // subnetIds — quem pede VNet integration ganha um Microsoft.App/managedEnvironments
+  // dedicado (ver compute.ts). Sem essa distinção, todo projeto com Container Apps
+  // em VNet criaria um CAE órfão e não-referenciado além do dedicado.
+  const needsSharedContainerEnv = stack.constructs.some(
+    c => c.type === 'Compute.Container' && ((c.props as Record<string, unknown>).subnetIds as string[] | undefined ?? []).length === 0,
+  );
   let sharedContainerEnvSym: string | null = null;
-  if (hasContainerApp) {
+  if (needsSharedContainerEnv) {
     sharedContainerEnvSym = 'sharedContainerEnv';
     resources.push({
       sym: sharedContainerEnvSym,
@@ -250,6 +380,9 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
     cdnBucketRefs,
     subnetsByVpc,
     accountTier,
+    dedicatedContainerEnvs: new Map<string, string>(),
+    crossStackSubnetIds,
+    crossStackVpcIds,
   };
 
   for (const construct of stack.constructs) {
@@ -295,32 +428,22 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
     }
   }
 
-  // Post-processing: Storage.Buckets referenciados por CDN via bucketRef → allowBlobPublicAccess + container 'web'.
+  // Post-processing: Storage.Buckets referenciados por CDN via bucketRef → allowBlobPublicAccess.
+  // NÃO cria mais um container decorativo 'web' aqui (removido — bug confirmado em
+  // deploy real, bateria p06): nada no pipeline de deploy jamais fazia upload nele
+  // (nenhum `az storage blob upload*` em todo o deploy/azure.ts), e mesmo populado à
+  // mão um container Blob comum não resolve documento default no root — GET / sempre
+  // 404 (diferente do defaultRootObject do CloudFront/AWS, que o synth Azure nunca
+  // implementou). Para servir root funcionalmente no Azure use
+  // Storage.Bucket({ websiteHosting: true }) — ativa o endpoint $web (data-plane, ver
+  // deploy/azure.ts) com primaryEndpoints.web e index/error document reais; ver o
+  // tratamento de websiteHosting em constructs/network.ts (Network.CDN).
   for (const bucketId of cdnBucketRefs) {
     const bucketSym = toSym(bucketId);
     const bucketResource = resources.find(r => r.sym === bucketSym);
     if (bucketResource) {
       bucketResource.properties.allowBlobPublicAccess = true;
     }
-    const blobSvcSym = `${bucketSym}BlobService`;
-    if (!resources.find(r => r.sym === blobSvcSym)) {
-      resources.push({
-        sym: blobSvcSym,
-        type: 'Microsoft.Storage/storageAccounts/blobServices',
-        apiVersion: '2023-01-01',
-        parent: bucketSym,
-        name: 'default',
-        properties: {},
-      });
-    }
-    resources.push({
-      sym: `${bucketSym}WebContainer`,
-      type: 'Microsoft.Storage/storageAccounts/blobServices/containers',
-      apiVersion: '2023-01-01',
-      parent: blobSvcSym,
-      name: 'web',
-      properties: { publicAccess: 'Blob' },
-    });
   }
 
   // Choke point global: resolve todos os Ref que escaparam dos cases individuais.
@@ -364,6 +487,8 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
     params.push({ name: 'acrServer', type: 'string', default: '' });
     params.push({ name: 'acrUser', type: 'string', default: '' });
     params.push({ name: 'acrPassword', type: 'string', default: '', secure: true });
+  }
+  if (needsSharedContainerEnv) {
     params.push({ name: 'sharedCaeId', type: 'string', default: '' });
   }
   for (const [name, type] of crossParams) {
