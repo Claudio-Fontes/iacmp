@@ -237,12 +237,19 @@ export ANTHROPIC_API_KEY=sk-ant-...
 iacmp ai "cria uma VPC com subnets públicas e privadas na AWS"
 ```
 
+A geração é apoiada por uma **knowledge base de 126 exemplos** de referência (parte
+validada em deploy real). Ela vem **embutida no CLI** — na primeira vez que você roda
+`iacmp ai`, o banco `~/.iacmp/knowledge.db` é semeado automaticamente a partir de
+`@iacmp/knowledge`. Nenhum setup manual; o mesmo banco é reaproveitado pelo servidor MCP.
+
 ## Estrutura do monorepo
 
 ```
 packages/
 ├── cli/                  # CLI (oclif v4) — pacote publicado como `iacmp`
 ├── core/                 # Constructs agnósticos de provider
+├── runtime/              # Facade neutro (table/blob) que os handlers importam
+├── knowledge/            # Knowledge base: corpus (126 exemplos) + retrieval + seed
 ├── ai/                   # Geração de stacks via IA (Claude/Copilot)
 ├── providers/
 │   ├── aws/              # CloudFormation

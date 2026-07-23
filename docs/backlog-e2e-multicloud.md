@@ -72,7 +72,7 @@ Status AWS = bateria jun/jul + re-validações pós-refactors. Status Azure = s�
 
 - **`destroy_project` reporta falha prematura em Lambda-em-VPC** — o comando retorna erro no timeout padrão mas o CloudFormation segue deletando (ENI cleanup demora); e a stack de VPC não ganha novo trigger automático após o RDS terminar (bat3-aws-p09 precisou de `delete-stack` manual na vpc-stack). Fix: aguardar DELETE_IN_PROGRESS de verdade + re-disparar stacks dependentes ao final.
 
-- **Exemplos AWS do KB com padrões que o validador atual rejeita** (achado bat3-aws-p08) — `REDIS_HOST: ref('AppCache','Host')` ('Host' nunca existiu no RESOLVE_MAP; é Endpoint/Port) e `TABLE_NAME: 'ItemsTable'` literal (validador exige `ref()` explícito). Corrigir NA FONTE (iacmp-mcp src/knowledge) — mais um caso para os testes de contrato dos exemplos.
+- **Exemplos AWS do KB com padrões que o validador atual rejeita** (achado bat3-aws-p08) — `REDIS_HOST: ref('AppCache','Host')` ('Host' nunca existiu no RESOLVE_MAP; é Endpoint/Port) e `TABLE_NAME: 'ItemsTable'` literal (validador exige `ref()` explícito). Corrigir NA FONTE (`packages/knowledge/src/corpus` no monorepo iacmp) — mais um caso para os testes de contrato dos exemplos.
 
 - **Destroy AWS deixa bucket Retain órfão (recorrente)** — todo prompt com `Storage.Bucket` (DeletionPolicy: Retain) termina com bucket órfão pós-destroy, às vezes com delete-marker de versionamento bloqueando `s3 rb` (p01, p04r, p06). Agentes limpam manualmente toda vez. Avaliar: `destroy --purge-retained` que esvazia (incl. versions/delete-markers) e remove buckets Retain do projeto, com confirmação.
 
