@@ -2,12 +2,25 @@ import Database from 'better-sqlite3';
 import { homedir } from 'os';
 import { join } from 'path';
 import { existsSync } from 'fs';
-import { ftsNeedsRebuild, rebuildFts, searchExamples, type ScoredExample } from '@iacmp/knowledge';
+import { ftsNeedsRebuild, rebuildFts, searchExamples, ensureSeeded, type ScoredExample } from '@iacmp/knowledge';
 import { buildBM25Index, bm25Search } from './bm25';
 import { Chunk } from './chunker';
 
 // Mesma env do iacmp-mcp — quando setada, os dois leem o MESMO banco (gêmeos).
 const DB_PATH = process.env.IACMP_MCP_DB || join(homedir(), '.iacmp', 'knowledge.db');
+
+// Semeia ~/.iacmp/knowledge.db no primeiro uso a partir do corpus embutido em
+// @iacmp/knowledge — é o que faz a knowledge base existir para o cliente que só
+// instalou o CLI (`npm i -g iacmp`) e nunca rodou o servidor MCP. Idempotente e
+// barato em regime (pula quando o hash do corpus já bate). Guardado para uma vez
+// por processo; falha (ex: disco read-only) é silenciosa e cai no comportamento
+// antigo (sem exemplos).
+let seedEnsured = false;
+function ensureSeededOnce(): void {
+  if (seedEnsured) return;
+  seedEnsured = true;
+  try { ensureSeeded({ dbPath: DB_PATH }); } catch { /* segue sem KB */ }
+}
 
 interface ExampleRow {
   id: string;
@@ -21,6 +34,7 @@ interface ExampleRow {
 }
 
 function openDb(): Database.Database | null {
+  ensureSeededOnce();
   if (!existsSync(DB_PATH)) return null;
   try {
     // Read-write: precisamos poder CONSTRUIR o índice FTS se ainda não existir
