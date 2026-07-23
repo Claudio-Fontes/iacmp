@@ -496,9 +496,12 @@ export function validateLambdaVpcGatewayEndpoint(loaded: LoadedStack[], cwd: str
     }
   }
 
-  const SDK_BY_SERVICE: Array<{ service: string; re: RegExp }> = [
-    { service: 'dynamodb', re: /@aws-sdk\/(client|lib)-dynamodb/ },
-    { service: 's3', re: /@aws-sdk\/client-s3/ },
+  // Além do SDK cru, o handler pode acessar o serviço via o facade neutro
+  // @iacmp/runtime (table()→dynamodb, blob()→s3) — mesma necessidade de
+  // Gateway VPC Endpoint, só que sem o import @aws-sdk/* delatando o serviço.
+  const SDK_BY_SERVICE: Array<{ service: string; re: RegExp; facadeRe: RegExp }> = [
+    { service: 'dynamodb', re: /@aws-sdk\/(client|lib)-dynamodb/, facadeRe: /\btable\s*\(/ },
+    { service: 's3', re: /@aws-sdk\/client-s3/, facadeRe: /\bblob\s*\(/ },
   ];
 
   for (const { stack } of loaded) {
@@ -513,8 +516,10 @@ export function validateLambdaVpcGatewayEndpoint(loaded: LoadedStack[], cwd: str
         .find(p => fs.existsSync(p));
       if (!srcFile) continue;
       const content = fs.readFileSync(srcFile, 'utf-8');
-      for (const { service, re } of SDK_BY_SERVICE) {
-        if (re.test(content) && !endpointServices.has(service)) {
+      const usesFacade = /@iacmp\/runtime/.test(content);
+      for (const { service, re, facadeRe } of SDK_BY_SERVICE) {
+        const detected = re.test(content) || (usesFacade && facadeRe.test(content));
+        if (detected && !endpointServices.has(service)) {
           errors.push(
             `Fn.Lambda "${c.id}" (em VPC) → ${path.relative(cwd, srcFile)} acessa ${service.toUpperCase()}, ` +
             `mas não há Gateway VPC Endpoint para '${service}'. Sem NAT, a Lambda em subnet privada não alcança o serviço e dá timeout. ` +

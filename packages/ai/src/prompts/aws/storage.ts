@@ -1,6 +1,19 @@
 export const STORAGE_AWS = `
 ## Regras AWS — Storage (S3)
 
+**REGRA ABSOLUTA — acesso a Storage.Bucket usa o facade \`@iacmp/runtime\`, NUNCA \`@aws-sdk/client-s3\`/\`@aws-sdk/s3-request-presigner\` direto:**
+\`\`\`typescript
+import { blob } from '@iacmp/runtime';
+const b = blob(process.env.BUCKET_NAME!);
+await b.put(key, body, { contentType });          // upload
+const obj = await b.get(key);                     // → { body: Buffer, contentType? } | null
+await b.delete(key);
+const keys = await b.list(prefix);
+const putUrl = await b.presignPut(key);           // URL pré-assinada de upload
+const getUrl = await b.presignGet(key);           // URL pré-assinada de download
+\`\`\`
+\`blob(name)\` aceita QUALQUER nome de bucket — inclusive o bucket-origem vindo de \`record.s3.bucket.name\` num trigger (não precisa ser um \`ref()\` de env var). Só volte para o SDK cru quando o cenário exigir algo que o facade NÃO cobre: \`StorageClass\` (ex: \`DEEP_ARCHIVE\`), Object Lock, multipart upload, ou leitura de metadados sem baixar o body (\`HeadObjectCommand\`).
+
 **REGRA — CORS do S3:** para permitir upload/download do browser (presigned URL, SPA), use a prop \`cors\` DO PRÓPRIO \`Storage.Bucket\`: \`cors: [{ allowedMethods: ['GET','PUT','POST'], allowedOrigins: ['*'], allowedHeaders: ['*'] }]\` — o synth gera a \`CorsConfiguration\` no bucket. NUNCA implemente CORS com \`Custom.Resource\` / \`AWS::S3::BucketPolicy\` (BucketPolicy é controle de ACESSO, não CORS; e o preflight OPTIONS do browser não funciona assim).
 **REGRA — nome do bucket para os handlers:** a env var com o nome do bucket (ex: \`BUCKET_NAME\`) usa \`ref('MeuBucket', 'Name')\` — NUNCA \`ref('MeuBucket','Arn')\` (o ARN não é aceito como Bucket nas chamadas do SDK S3). Atributos válidos do \`Storage.Bucket\`: \`Arn\` (para Policy.IAM resources) e \`Name\` (para o SDK).
 **REGRA — Policy.IAM para S3 (bucket + objetos):** um \`ref()\` é um OBJETO, NUNCA concatene com string (\`ref('B','Arn') + '/*'\` vira \`"[object Object]/*"\` e o deploy falha). Para o bucket em si use \`ref('MeuBucket','Arn')\`; para os OBJETOS dentro dele use a STRING \`'MeuBucket/*'\` (o synth resolve para \`<arn>/*\`). Ex: \`resources: [ref('MeuBucket','Arn'), 'MeuBucket/*']\`.
@@ -9,8 +22,7 @@ export const STORAGE_AWS = `
 **REGRA — path param de key S3 com barra:** se a key do objeto pode conter \`/\` (ex: \`uploads/123.png\`), a rota \`DELETE /files/{key}\` NÃO captura a barra (404). Use greedy \`{key+}\`. No handler: \`const key = event.pathParameters?.key ?? '';\` — NUNCA \`event.pathParameters.key\` sem \`?.\` (se for null, explode com "Cannot read properties of null").
 **REGRA — pipeline "S3 dispara Lambda" (ObjectCreated):** quando uma Lambda deve ser ACIONADA por upload de arquivo no S3, declare o trigger em \`Storage.Bucket.eventNotifications: [{ lambdaId: 'MinhaFn', events: ['s3:ObjectCreated:*'] }]\` — o synth gera a NotificationConfiguration e a Lambda::Permission. NUNCA exponha essa Lambda por \`Fn.ApiGateway\` (o pipeline dispara sozinho no upload, não por HTTP) e NÃO invente rotas HTTP. O handler recebe o evento S3; o NOME DO BUCKET vem de \`record.s3.bucket.name\` (não de env var) e a KEY vem de \`record.s3.object.key\`. Exemplo de handler:
 \`\`\`typescript
-import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
-const s3 = new S3Client({});
+import { blob } from '@iacmp/runtime';
 
 export const handler = async (event: S3Event): Promise<void> => {
   for (const record of event.Records) {
@@ -18,12 +30,12 @@ export const handler = async (event: S3Event): Promise<void> => {
     const bucketName = record.s3.bucket.name;
     const key = decodeURIComponent(record.s3.object.key.replace(/\\+/g, ' '));  // '+' vira espaço; key vem URL-encoded
 
-    const obj = await s3.send(new GetObjectCommand({ Bucket: bucketName, Key: key }));
-    const body = await obj.Body!.transformToString();
+    const obj = await blob(bucketName).get(key);
+    const body = obj?.body.toString();
     // ... processa ...
 
     // DESTINO (bucket SEM trigger, outra stack): PODE vir de env var via ref('ProcessedBucket','Name')
-    await s3.send(new PutObjectCommand({ Bucket: process.env.PROCESSED_BUCKET_NAME!, Key: key, Body: body }));
+    await blob(process.env.PROCESSED_BUCKET_NAME!).put(key, body ?? '');
   }
 };
 \`\`\`

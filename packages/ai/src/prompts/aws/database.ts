@@ -1,6 +1,18 @@
 export const DATABASE_AWS = `
 ## Regras AWS — Database (DynamoDB, RDS, Aurora)
 
+**REGRA ABSOLUTA — acesso a Database.DynamoDB usa o facade \`@iacmp/runtime\`, NUNCA \`@aws-sdk/client-dynamodb\`/\`@aws-sdk/lib-dynamodb\` direto.** Para CRUD simples por chave (\`partitionKey: 'id'\`, SEM \`sortKey\`, SEM GSI, SEM contador atômico, SEM escrita condicional):
+\`\`\`typescript
+import { table } from '@iacmp/runtime';
+const t = table(process.env.TABLE_NAME!);
+await t.put({ id, ...fields });          // upsert por 'id'
+const item = await t.get(id);            // → objeto | null
+await t.delete(id);
+const all = await t.list();              // scan completo
+const some = await t.query({ status: 'active' }); // filtro só por IGUALDADE
+\`\`\`
+Só volte para o SDK cru (\`DynamoDBDocumentClient\` + commands) quando o cenário exigir algo que o facade NÃO cobre: consulta por GSI, \`sortKey\`/chave composta, \`ConditionExpression\` (escrita condicional/seed idempotente), contador atômico (\`UpdateExpression: 'ADD ...'\`), ou filtro por comparação (\`<\`, \`>\`, \`BETWEEN\` — \`query()\` do facade só filtra por igualdade). Nesses casos as regras abaixo (ExpressionAttributeNames, GSI, etc.) se aplicam.
+
 SEMPRE defina \`partitionKeyType\`/\`sortKeyType\` (e o equivalente nos GSIs) de acordo com o tipo real do dado — ex: \`id: number\` no payload da aplicação → \`partitionKeyType: 'N'\`. Na AWS, DynamoDB rejeita em runtime (\`ValidationException: Type mismatch\`) qualquer escrita/leitura cujo tipo do valor não bata com o tipo declarado na tabela — não dá pra simplesmente enviar um número numa chave declarada como string. Ao alterar o tipo de uma chave existente que já tenha dados, avise no \`warnings\` que a tabela precisa ser recriada (chave primária não é alterável em uma tabela existente).
 
 **REGRA — GSI: só consulte índice que a tabela declara.** Se um handler faz \`QueryCommand({ IndexName: 'X', ... })\`, a \`Database.DynamoDB\` TEM que declarar esse índice em \`globalSecondaryIndexes\` E a Policy.IAM deve liberar \`<TableArn>/index/*\`. Para limpeza por TTL use \`ScanCommand + FilterExpression\` (sem GSI). **PALAVRAS RESERVADAS** (\`name\`, \`status\`, \`date\`, \`timestamp\`, \`ttl\`, etc.) precisam de alias: \`FilterExpression: '#name = :n', ExpressionAttributeNames: { '#name': 'name' }\` — na dúvida, sempre aliase.
