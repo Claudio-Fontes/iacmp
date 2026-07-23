@@ -261,6 +261,58 @@ export function findExistingRetainedResources(templatePath: string, region: stri
   return existing.filter((c) => !ownedByStack.has(c.identifier));
 }
 
+/**
+ * Pré-flight de export cross-stack. Ao ATUALIZAR uma stack, o CloudFormation
+ * recusa remover/renomear um export que outra stack ainda importa
+ * ("Cannot delete export … as it is in use") → o update falha, faz rollback e a
+ * causa vira uma mensagem confusa. Detecta ANTES: se um export que a stack tem
+ * HOJE some no template novo E está EM USO, retorna o conflito para abortar com
+ * orientação (destroy+recreate). Achado no projeto hook-001 (1 role compartilhada
+ * → N roles por handler). Read-only (describe-stacks + list-imports).
+ */
+export function checkExportConflicts(stackName: string, newTemplatePath: string, region: string): string[] {
+  let currentExports: string[];
+  try {
+    const out = execFileSync('aws', [
+      'cloudformation', 'describe-stacks', '--stack-name', stackName, '--region', region,
+      '--query', 'Stacks[0].Outputs[?ExportName].ExportName', '--output', 'json',
+    ], { stdio: 'pipe' }).toString();
+    currentExports = (JSON.parse(out) as string[]) ?? [];
+  } catch {
+    return []; // stack ainda não existe (deploy novo) → nenhum conflito possível
+  }
+  if (currentExports.length === 0) return [];
+
+  const newExports = new Set<string>();
+  try {
+    const tpl = JSON.parse(fs.readFileSync(newTemplatePath, 'utf-8')) as { Outputs?: Record<string, { Export?: { Name?: string } }> };
+    for (const o of Object.values(tpl.Outputs ?? {})) {
+      if (o.Export?.Name) newExports.add(o.Export.Name);
+    }
+  } catch {
+    return []; // template ilegível → não bloqueia
+  }
+
+  const conflicts: string[] = [];
+  for (const exp of currentExports) {
+    if (newExports.has(exp)) continue; // export permanece → ok
+    let importers: string[] = [];
+    try {
+      const out = execFileSync('aws', [
+        'cloudformation', 'list-imports', '--export-name', exp, '--region', region,
+        '--query', 'Imports', '--output', 'json',
+      ], { stdio: 'pipe' }).toString();
+      importers = (JSON.parse(out) as string[]) ?? [];
+    } catch {
+      importers = []; // sem importadores (ou export inexistente) → não bloqueia
+    }
+    if (importers.length > 0) {
+      conflicts.push(`o export "${exp}" some no template novo mas ainda é importado por: ${importers.join(', ')}`);
+    }
+  }
+  return conflicts;
+}
+
 export const awsExecutor: DeployExecutor = {
   provider: 'aws',
   requiredBinary: 'aws',
@@ -270,6 +322,19 @@ export const awsExecutor: DeployExecutor = {
     // `aws cloudformation package` não cria o diretório de destino — garante
     // que existe antes (operação local, sem efeito na nuvem, segura em --dry-run).
     fs.mkdirSync(path.dirname(packaged), { recursive: true });
+    // Pré-flight: bloqueia o update que o CloudFormation rejeitaria por remover um
+    // export ainda em uso — mensagem clara + orientação, em vez de rollback confuso.
+    if (!ctx.dryRun) {
+      const exportConflicts = checkExportConflicts(ctx.stackName, ctx.templatePath, ctx.region);
+      if (exportConflicts.length > 0) {
+        throw new Error(
+          `Deploy incremental bloqueado para a stack "${ctx.stackName}": ${exportConflicts.join('; ')}. ` +
+          `O CloudFormation não deixa remover/renomear um export enquanto outra stack o importa. ` +
+          `Costuma acontecer quando o projeto foi regenerado mudando a topologia (ex: 1 role compartilhada → N roles por handler). ` +
+          `NÃO é update incremental — rode: iacmp destroy && iacmp deploy (recria limpo, sem estado antigo).`,
+        );
+      }
+    }
     // Compila os handlers TS (dist/) antes de empacotar — o synth referencia a
     // saída do build, que o deploy precisa gerar.
     ensureLambdaCodeBuilt(ctx);
