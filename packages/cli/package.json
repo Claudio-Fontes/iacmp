@@ -1,6 +1,6 @@
 {
   "name": "iacmp",
-  "version": "2.2.2",
+  "version": "2.3.0",
   "description": "IaC Multi Plataforma — CLI inteligente para AWS, Azure, GCP e Terraform com geração de stacks via IA",
   "keywords": [
     "iac",
@@ -47,8 +47,8 @@
     "@anthropic-ai/sdk": "^0.105.0",
     "@azure/data-tables": "13.3.2",
     "@azure/storage-blob": "12.33.0",
-    "@iacmp/core": "^2.2.2",
-    "@iacmp/runtime": "^0.1.0",
+    "@iacmp/core": "^2.3.0",
+    "@iacmp/runtime": "^0.2.0",
     "@oclif/core": "^4.0.0",
     "better-sqlite3": "12.11.1",
     "chalk": "^4.1.2",

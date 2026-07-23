@@ -1,6 +1,6 @@
 {
   "name": "@iacmp/runtime",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "MIT",
   "description": "Interface neutra de runtime (Table/Blob) para handlers multi-cloud do iacmp — o adaptador de cada cloud é resolvido no bundle/deploy",
   "author": "Claudio Melo",
@@ -44,12 +44,24 @@
     "mongodb": "*"
   },
   "peerDependenciesMeta": {
-    "@aws-sdk/client-dynamodb": { "optional": true },
-    "@aws-sdk/client-s3": { "optional": true },
-    "@aws-sdk/lib-dynamodb": { "optional": true },
-    "@aws-sdk/s3-request-presigner": { "optional": true },
-    "@azure/storage-blob": { "optional": true },
-    "mongodb": { "optional": true }
+    "@aws-sdk/client-dynamodb": {
+      "optional": true
+    },
+    "@aws-sdk/client-s3": {
+      "optional": true
+    },
+    "@aws-sdk/lib-dynamodb": {
+      "optional": true
+    },
+    "@aws-sdk/s3-request-presigner": {
+      "optional": true
+    },
+    "@azure/storage-blob": {
+      "optional": true
+    },
+    "mongodb": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@aws-sdk/client-dynamodb": "^3.1093.0",
@@ -70,5 +82,8 @@
     "testMatch": [
       "**/test/**/*.test.ts"
     ]
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

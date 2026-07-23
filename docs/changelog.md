@@ -2,6 +2,21 @@
 
 ---
 
+## [2.3.0] — 2026-07-23
+
+Release consolidando distribuição, aprendizado e robustez.
+
+- **Distribuição npm da knowledge base** — corpus (126 exemplos) + seed movidos para `@iacmp/knowledge` (fonte única "corpus + retrieval + seed"), embutido no bundle do CLI e semeado no 1º uso (`ensureSeeded`). Pacote publicado pela primeira vez.
+- **`@iacmp/runtime`** (facade) — handlers usam `table`/`blob` agnósticos; adaptador por cloud resolvido no deploy. Pacote publicado pela primeira vez.
+- **Loop de aprendizado (Modo 1)** — opt-in `knowledge.autolearn: "local"`: após um deploy inédito bem-sucedido, o CLI oferece gravar o padrão na base local (preview + confirmação).
+- **Qualidade da geração** — guard de env vars cobre handlers aninhados; validador anti-monólito (rejeita stack com 4+ domínios de infra); template `fullstack` separado por domínio.
+- **Robustez de deploy/destroy** — pré-flight de export cross-stack (AWS); destroy limpa órfãos com confirmação (RG vazio no Azure, buckets Retain no AWS); mensagem de erro de deploy não crava "autenticação"; compila handlers aninhados sozinho.
+- **APIM compartilhado (Azure)** — `azure.sharedApim` no iacmp.json referencia um APIM existente (elimina o piso de ~30-45min por projeto).
+
+Pacotes: `@iacmp/core` 2.3.0 · `@iacmp/runtime` 0.2.0 · `@iacmp/knowledge` 2.3.0 · `iacmp` 2.3.0 · `@iacmp/mcp` 0.2.0.
+
+---
+
 ## [1.2.0] — 2026-06-29
 
 Refactor de abstração do core: conhecimento de domínio migrado do prompt da IA para código

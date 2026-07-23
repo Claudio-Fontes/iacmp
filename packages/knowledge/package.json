@@ -1,6 +1,6 @@
 {
   "name": "@iacmp/knowledge",
-  "version": "2.2.1",
+  "version": "2.3.0",
   "license": "MIT",
   "description": "Retrieval compartilhado da knowledge base iacmp (FTS5 + boost) — fonte única para o CLI e o servidor MCP",
   "main": "dist/index.js",
@@ -31,5 +31,8 @@
     "testMatch": [
       "**/test/**/*.test.ts"
     ]
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

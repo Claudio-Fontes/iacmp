@@ -1,8 +1,14 @@
 {
   "name": "@iacmp/core",
-  "version": "2.2.2",
+  "version": "2.3.0",
   "description": "Constructs agnósticos de provider para o iacmp — a API que os stacks do usuário importam",
-  "keywords": ["iacmp", "iac", "infrastructure", "cdk", "constructs"],
+  "keywords": [
+    "iacmp",
+    "iac",
+    "infrastructure",
+    "cdk",
+    "constructs"
+  ],
   "license": "MIT",
   "author": "Claudio Melo",
   "repository": {
@@ -16,7 +22,10 @@
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist", "LICENSE"],
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
   "publishConfig": {
     "access": "public"
   },
@@ -40,7 +49,9 @@
   "jest": {
     "preset": "ts-jest",
     "testEnvironment": "node",
-    "testMatch": ["**/test/**/*.test.ts"],
+    "testMatch": [
+      "**/test/**/*.test.ts"
+    ],
     "globals": {
       "ts-jest": {
         "tsconfig": "tsconfig.test.json"
