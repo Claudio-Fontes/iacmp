@@ -24,6 +24,7 @@ import {
   validateHandlerDynamoReservedWords,
   validateDbUserRef,
   validateRedisPortRef,
+  validateStackDomainSeparation,
 } from '../validators';
 
 export default class Synth extends Command {
@@ -148,6 +149,18 @@ export default class Synth extends Command {
 
     if (loadedStacks.length === 0) {
       this.error('Nenhuma stack encontrada em stacks/');
+    }
+
+    // ── Organização das stacks: rejeita monólito ────────────────────────────
+    // A convenção é UMA stack por domínio (rede, dados, compute…), ligadas por
+    // ref() cross-stack. O modelo às vezes gera um main-stack.ts com tudo junto —
+    // a regra escrita no prompt não basta. Barra aqui em synth-time.
+    const monolithErrors = validateStackDomainSeparation(loadedStacks);
+    if (monolithErrors.length > 0) {
+      this.error(
+        `Stack monolítica (mistura domínios de infra num arquivo só):\n\n` +
+        monolithErrors.map(e => `  • ${e}`).join('\n'),
+      );
     }
 
     // ── Validação handler ↔ arquivo de origem ───────────────────────────────

@@ -217,27 +217,57 @@ export default stack;
   },
 
   fullstack: {
-    description: 'Aplicação completa: VPC, compute, banco postgres e bucket',
+    description: 'Aplicação completa (uma stack por domínio): VPC, compute, banco postgres e bucket',
     constructs: ['Network.VPC', 'Compute.Instance', 'Database.SQL', 'Storage.Bucket'],
-    stackContent: (name) => `import { Stack, Network, Compute, Database, Storage } from '@iacmp/core';
+    // Uma stack por domínio (convenção do iacmp) — não um main-stack.ts com tudo
+    // junto (o synth rejeita monólito). Cada camada em sua subpasta de stacks/.
+    stackSubDir: 'stacks/network',
+    stackContent: (name) => `import { Stack, Network } from '@iacmp/core';
 
-const stack = new Stack('${name}');
+const stack = new Stack('${name}-network');
 
 new Network.VPC(stack, 'VPC', {
   cidr: '10.0.0.0/16',
   maxAzs: 3,
 });
 
-new Compute.Instance(stack, 'App', {
-  instanceType: 'medium',
-  image: 'ubuntu-22.04',
-});
+export default stack;
+`,
+    extraFiles: [
+      {
+        path: 'stacks/database/db-stack.ts',
+        content: (name) => `import { Stack, Database } from '@iacmp/core';
+
+const stack = new Stack('${name}-database');
 
 new Database.SQL(stack, 'DB', {
   engine: 'postgres',
   instanceType: 'medium',
   multiAz: true,
 });
+
+export default stack;
+`,
+      },
+      {
+        path: 'stacks/compute/app-stack.ts',
+        content: (name) => `import { Stack, Compute } from '@iacmp/core';
+
+const stack = new Stack('${name}-compute');
+
+new Compute.Instance(stack, 'App', {
+  instanceType: 'medium',
+  image: 'ubuntu-22.04',
+});
+
+export default stack;
+`,
+      },
+      {
+        path: 'stacks/storage/uploads-stack.ts',
+        content: (name) => `import { Stack, Storage } from '@iacmp/core';
+
+const stack = new Stack('${name}-storage');
 
 new Storage.Bucket(stack, 'Uploads', {
   versioning: true,
@@ -246,6 +276,8 @@ new Storage.Bucket(stack, 'Uploads', {
 
 export default stack;
 `,
+      },
+    ],
   },
 };
 

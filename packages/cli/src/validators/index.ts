@@ -8,6 +8,39 @@ export interface LoadedStack {
 }
 
 /**
+ * Resolve o arquivo-fonte de um Fn.Lambda, cobrindo os DOIS layouts de handler:
+ *  - flat: `code: 'dist'` (ou 'src'/'.'), `handler: 'list-messages.handler'`
+ *    → src/list-messages.ts
+ *  - aninhado por pasta: `code: 'dist/handlers/list-messages'`, `handler: 'index.handler'`
+ *    → src/handlers/list-messages/index.ts (o layout que o próprio synth gera).
+ * Antes, os validadores derivavam o fonte só do Handler ('index' → src/index.ts) e
+ * PULAVAM em silêncio nos handlers aninhados — os guards de synth (env vars, VPC…)
+ * não protegiam o caso mais comum. Retorna o path existente ou null.
+ */
+export function resolveHandlerSrc(cwd: string, props: Record<string, unknown>): string | null {
+  const handler = props.handler as string | undefined;
+  if (!handler) return null;
+  const code = (props.code as string) ?? '';
+  const mod = handler.replace(/\.[^./]+$/, '');            // 'index.handler' → 'index'
+  const candidates: string[] = [];
+  // Aninhado: Code é um diretório específico sob dist/ → espelha em src/.
+  if (/^(\.\/)?dist\/.+/.test(code)) {
+    const srcDir = code.replace(/^(\.\/)?dist(\/|$)/, 'src$2');
+    candidates.push(path.join(cwd, srcDir, `${mod}.ts`), path.join(cwd, srcDir, `${mod}.js`));
+  }
+  // Flat (convenção antiga): stem do Handler direto em src/.
+  const stem = mod.replace(/^(\.\/)?(dist|src)\//, '');
+  candidates.push(
+    path.join(cwd, 'src', `${stem}.ts`),
+    path.join(cwd, 'src', `${stem}.js`),
+    path.join(cwd, 'dist', `${stem}.js`),
+    path.join(cwd, `${mod}.ts`),
+    path.join(cwd, `${mod}.js`),
+  );
+  return candidates.find(p => fs.existsSync(p)) ?? null;
+}
+
+/**
  * Para cada Fn.Lambda com runtime Node, confirma que existe um arquivo de
  * origem correspondente ao `handler`. Convenção: `handler: '<dir>/<arquivo>.<export>'`
  * (ou `'<arquivo>.<export>'`) → o código vem de `src/<arquivo>.ts`, que compila
@@ -16,7 +49,6 @@ export interface LoadedStack {
  */
 export function validateHandlerFiles(loaded: LoadedStack[], cwd: string): string[] {
   const errors: string[] = [];
-  const CONVENTION_CODE = new Set(['.', './', 'dist', 'dist/', './dist', './dist/', 'src', 'src/', './src', './src/']);
 
   for (const { stack } of loaded) {
     for (const c of stack.constructs) {
@@ -27,25 +59,21 @@ export function validateHandlerFiles(loaded: LoadedStack[], cwd: string): string
       const handler = props.handler as string | undefined;
       const code = props.code as string | undefined;
       if (!handler || typeof code !== 'string') continue;
-      if (!CONVENTION_CODE.has(code)) continue;
+      // Cobre os dois layouts (flat e aninhado por pasta). Antes, um `code`
+      // não-convencional (dir específico como 'dist/handlers/list-messages') era
+      // PULADO — o handler aninhado sem fonte passava batido no synth e só
+      // quebrava no deploy ("file does not exist").
+      if (resolveHandlerSrc(cwd, props)) continue;
 
-      const modulePath = handler.replace(/\.[^./]+$/, '');
-      const stem = modulePath.replace(/^(\.\/)?(dist|src)\//, '');
-
-      const candidates = [
-        path.join(cwd, 'src', `${stem}.ts`),
-        path.join(cwd, 'src', `${stem}.js`),
-        path.join(cwd, 'dist', `${stem}.js`),
-        path.join(cwd, `${modulePath}.js`),
-        path.join(cwd, `${modulePath}.ts`),
-      ];
-      if (!candidates.some(p => fs.existsSync(p))) {
-        errors.push(
-          `Fn.Lambda "${c.id}": handler '${handler}' não tem arquivo de origem — esperado src/${stem}.ts. ` +
-          `AÇÃO CORRETA: CRIE o arquivo src/${stem}.ts exportando a função do handler. ` +
-          `NÃO altere o campo handler na stack — o path está correto; o que falta é o arquivo src/${stem}.ts.`,
-        );
-      }
+      const mod = handler.replace(/\.[^./]+$/, '');
+      const expected = /^(\.\/)?dist\/.+/.test(code)
+        ? `${code.replace(/^(\.\/)?dist(\/|$)/, 'src$2')}/${mod}.ts`.replace(/\/{2,}/g, '/')
+        : `src/${mod.replace(/^(\.\/)?(dist|src)\//, '')}.ts`;
+      errors.push(
+        `Fn.Lambda "${c.id}": handler '${handler}' não tem arquivo de origem — esperado ${expected}. ` +
+        `AÇÃO CORRETA: CRIE o arquivo ${expected} exportando a função do handler. ` +
+        `NÃO altere o campo handler na stack — o path está correto; o que falta é o arquivo ${expected}.`,
+      );
     }
   }
   return errors;
@@ -171,11 +199,7 @@ export function validateHandlerVpcSecrets(loaded: LoadedStack[], cwd: string): s
       if (c.type !== 'Function.Lambda') continue;
       const props = c.props as Record<string, unknown>;
       if (!props.vpcId) continue;
-      const handler = props.handler as string | undefined;
-      if (!handler) continue;
-      const stem = handler.replace(/\.[^./]+$/, '').replace(/^(\.\/)?(dist|src)\//, '');
-      const srcFile = [path.join(cwd, 'src', `${stem}.ts`), path.join(cwd, 'src', `${stem}.js`)]
-        .find(p => fs.existsSync(p));
+      const srcFile = resolveHandlerSrc(cwd, props);
       if (!srcFile) continue;
       const content = fs.readFileSync(srcFile, 'utf-8');
       if (SECRET_USE.test(content)) {
@@ -439,11 +463,7 @@ export function validateHandlerEnvVars(loaded: LoadedStack[], cwd: string): stri
     for (const c of stack.constructs) {
       if (c.type !== 'Function.Lambda') continue;
       const props = c.props as Record<string, unknown>;
-      const handler = props.handler as string | undefined;
-      if (!handler) continue;
-      const stem = handler.replace(/\.[^./]+$/, '').replace(/^(\.\/)?(dist|src)\//, '');
-      const srcFile = [path.join(cwd, 'src', `${stem}.ts`), path.join(cwd, 'src', `${stem}.js`)]
-        .find(p => fs.existsSync(p));
+      const srcFile = resolveHandlerSrc(cwd, props);
       if (!srcFile) continue;
       const content = fs.readFileSync(srcFile, 'utf-8');
       const used = new Set<string>();
@@ -509,11 +529,7 @@ export function validateLambdaVpcGatewayEndpoint(loaded: LoadedStack[], cwd: str
       if (c.type !== 'Function.Lambda') continue;
       const props = c.props as Record<string, unknown>;
       if (!props.vpcId) continue;
-      const handler = props.handler as string | undefined;
-      if (!handler) continue;
-      const stem = handler.replace(/\.[^./]+$/, '').replace(/^(\.\/)?(dist|src)\//, '');
-      const srcFile = [path.join(cwd, 'src', `${stem}.ts`), path.join(cwd, 'src', `${stem}.js`)]
-        .find(p => fs.existsSync(p));
+      const srcFile = resolveHandlerSrc(cwd, props);
       if (!srcFile) continue;
       const content = fs.readFileSync(srcFile, 'utf-8');
       const usesFacade = /@iacmp\/runtime/.test(content);
@@ -527,6 +543,41 @@ export function validateLambdaVpcGatewayEndpoint(loaded: LoadedStack[], cwd: str
           );
         }
       }
+    }
+  }
+  return errors;
+}
+
+// Domínios de infra "estrutural" — camadas que num projeto organizado ficam em
+// stacks separadas. WAF/CDN/LB/API/Policy/Secret/Monitoring NÃO entram: são
+// serviços de borda/apoio que legitimamente acompanham a camada que servem.
+const STRUCTURAL_DOMAIN: Record<string, string> = {
+  Network: 'rede', Compute: 'compute', Function: 'compute',
+  Database: 'dados', Storage: 'storage', Cache: 'cache',
+  Messaging: 'mensageria', Events: 'mensageria',
+};
+
+/**
+ * Rejeita a stack MONOLÍTICA — o clássico `main-stack.ts` com VPC + Compute +
+ * Database + Storage tudo num arquivo. A convenção do iacmp é UMA stack por
+ * domínio, ligadas por ref() cross-stack. Limiar = 4 domínios estruturais
+ * distintos: combos de 3 são padrões legítimos e comuns (serverless =
+ * compute+dados+storage; API+container+dados) e o maior exemplo do corpus tem 3,
+ * então só 4+ é inequivocamente monólito.
+ */
+export function validateStackDomainSeparation(loaded: LoadedStack[]): string[] {
+  const errors: string[] = [];
+  for (const { stackName, stack } of loaded) {
+    const domains = new Set<string>();
+    for (const c of stack.constructs) {
+      const d = STRUCTURAL_DOMAIN[c.type.split('.')[0]];
+      if (d) domains.add(d);
+    }
+    if (domains.size >= 4) {
+      errors.push(
+        `Stack "${stackName}" junta ${domains.size} domínios de infra (${[...domains].sort().join(', ')}) num único arquivo — isso é um monólito. ` +
+        `SEPARE por domínio: um arquivo de stack para cada camada (ex: stacks/network.ts, stacks/database.ts, stacks/compute.ts, stacks/storage.ts) e ligue-as com ref() cross-stack. NÃO gere um main-stack.ts com tudo junto.`,
+      );
     }
   }
   return errors;
