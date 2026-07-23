@@ -473,6 +473,11 @@ export default class Synth extends Command {
       f => f.endsWith('.json') && !f.startsWith('_') && (!stack || f === `${stack}.json`),
     );
 
+    // Erro de AMBIENTE (sem credencial/região), não de template. Synth é offline:
+    // não deve falhar por falta de AWS configurado — nem em CI, nem no cliente.
+    const isAwsEnvError = (s: string): boolean =>
+      /NoRegion|must specify a region|Unable to locate credentials|NoCredentialProviders|InvalidClientTokenId|ExpiredToken|security token|AuthFailure|The config profile .* could not be found/i.test(s);
+
     let hasError = false;
     for (const file of files) {
       const filePath = path.join(dir, file);
@@ -483,7 +488,12 @@ export default class Synth extends Command {
         { encoding: 'utf-8' },
       );
       if (result.status !== 0) {
-        this.warn(`aws cloudformation validate-template falhou para '${stackName}':\n${result.stderr || result.stdout}`);
+        const out = result.stderr || result.stdout || '';
+        if (isAwsEnvError(out)) {
+          this.log('  aws sem credenciais/região — validate-template skipped (synth é offline; validado no deploy).');
+          return;
+        }
+        this.warn(`aws cloudformation validate-template falhou para '${stackName}':\n${out}`);
         hasError = true;
       } else {
         this.log(`  CFN validate OK: ${stackName}`);
