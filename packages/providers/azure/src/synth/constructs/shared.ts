@@ -265,6 +265,11 @@ export interface BicepResource {
   properties: Record<string, unknown>;
   dependsOn?: string[];
   condition?: string;
+  /** Marca o recurso como `existing` (referência a um recurso já provisionado
+   * fora deste template — ex: APIM compartilhado). Recursos `existing` só
+   * aceitam name/scope/parent no Bicep; location/kind/sku/tags/identity/
+   * dependsOn/properties são ignorados na emissão (ver renderBicep). */
+  existing?: boolean;
 }
 
 export interface BicepOutput {
@@ -297,4 +302,15 @@ export interface SynthContext {
    * sem consumidor com outputs não usados). */
   crossStackSubnetIds: Set<string>;
   crossStackVpcIds: Set<string>;
+  /** APIM compartilhado (iacmp.json → azure.sharedApim). Quando presente,
+   * Function.ApiGateway referencia o serviço como `existing` em vez de criá-lo,
+   * e prefixa os nomes dos filhos (api/backends/namedValues) com `projectSlug`
+   * para não colidir com outros projetos no mesmo APIM. */
+  sharedApim?: {
+    name: string;
+    resourceGroup: string;
+    /** true quando resourceGroup do APIM difere do RG de deploy do projeto — exige `scope: resourceGroup('...')` no existing. */
+    crossRg: boolean;
+    projectSlug: string;
+  };
 }

@@ -355,7 +355,14 @@ export default class Synth extends Command {
 
           case 'azure': {
             const p = new AzureProvider();
-            const bicep = p.synthesize(typedStack, allStacks, { accountTier: (config.accountTier === 'standard' ? 'standard' : 'free') });
+            const projectResourceGroup = config.resourceGroup ?? (config.name ? `${config.name}-rg` : undefined);
+            const bicep = p.synthesize(typedStack, allStacks, {
+              accountTier: (config.accountTier === 'standard' ? 'standard' : 'free'),
+              sharedApim: config.azure?.sharedApim
+                ? { ...config.azure.sharedApim, projectResourceGroup }
+                : undefined,
+              projectName: config.name || undefined,
+            });
             const outPath = path.join(provOutDir, `${stackName}.bicep`);
             fs.writeFileSync(outPath, bicep);
             const { extractAzureFunctionMeta, extractAzureContainerBuilds } = await import('@iacmp/provider-azure');

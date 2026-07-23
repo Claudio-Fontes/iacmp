@@ -43,17 +43,23 @@ function renderBicep(
     if (r.scope) fields.push(['scope', expr(r.scope)]);
     if (r.parent) fields.push(['parent', expr(r.parent)]);
     if (r.name !== undefined) fields.push(['name', r.name]);
-    if (r.location) fields.push(['location', expr(r.location)]);
-    if (r.kind) fields.push(['kind', r.kind]);
-    if (r.sku) fields.push(['sku', r.sku]);
-    if (r.tags) fields.push(['tags', r.tags]);
-    if (r.identity) fields.push(['identity', r.identity]);
-    if (r.dependsOn && r.dependsOn.length > 0) {
-      fields.push(['dependsOn', expr(`[\n    ${r.dependsOn.join('\n    ')}\n  ]`)]);
+    // Recursos `existing` (ex: APIM compartilhado) só aceitam name/scope/parent
+    // no Bicep — location/kind/sku/tags/identity/dependsOn/properties são do
+    // recurso real, não configuráveis aqui. Emiti-los causaria erro do compilador
+    // Bicep ("Existing resources cannot be configured...").
+    if (!r.existing) {
+      if (r.location) fields.push(['location', expr(r.location)]);
+      if (r.kind) fields.push(['kind', r.kind]);
+      if (r.sku) fields.push(['sku', r.sku]);
+      if (r.tags) fields.push(['tags', r.tags]);
+      if (r.identity) fields.push(['identity', r.identity]);
+      if (r.dependsOn && r.dependsOn.length > 0) {
+        fields.push(['dependsOn', expr(`[\n    ${r.dependsOn.join('\n    ')}\n  ]`)]);
+      }
+      fields.push(['properties', r.properties]);
     }
-    fields.push(['properties', r.properties]);
 
-    lines.push(`resource ${r.sym} '${r.type}@${r.apiVersion}' = ${r.condition ? `if (${r.condition}) ` : ''}{`);
+    lines.push(`resource ${r.sym} '${r.type}@${r.apiVersion}'${r.existing ? ' existing' : ''} = ${r.condition ? `if (${r.condition}) ` : ''}{`);
     for (const [k, v] of fields) {
       lines.push(`  ${k}: ${bv(v, 1)}`);
     }
@@ -186,7 +192,14 @@ export function extractAzureContainerBuilds(stack: Stack, projectName?: string):
 }
 
 // ── Main export ───────────────────────────────────────────────────────────────
-export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standard'; allStacks?: Stack[] }): string {
+export function emitBicep(stack: Stack, opts?: {
+  accountTier?: 'free' | 'standard';
+  allStacks?: Stack[];
+  /** APIM compartilhado (iacmp.json → azure.sharedApim) — ver SynthContext.sharedApim. */
+  sharedApim?: { name: string; resourceGroup: string; projectResourceGroup?: string };
+  /** Nome do projeto (iacmp.json → name) — usado para prefixar os filhos do APIM compartilhado. */
+  projectName?: string;
+}): string {
   const accountTier = opts?.accountTier ?? 'standard';
   // Normalização + validação semântica provider-agnóstica (o MESMO ponto de
   // entrada do AWS) — refs quebradas, porta de SG do banco, CIDR de subnet, etc.
@@ -358,6 +371,16 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
     });
   }
 
+  const sharedApim = opts?.sharedApim
+    ? {
+        name: opts.sharedApim.name,
+        resourceGroup: opts.sharedApim.resourceGroup,
+        crossRg: opts.sharedApim.projectResourceGroup !== undefined
+          && opts.sharedApim.projectResourceGroup !== opts.sharedApim.resourceGroup,
+        projectSlug: (opts.projectName ?? stack.name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-+|-+$)/g, '') || 'iacmp',
+      }
+    : undefined;
+
   const ctx: SynthContext = {
     idx,
     globalIdx,
@@ -374,6 +397,7 @@ export function emitBicep(stack: Stack, opts?: { accountTier?: 'free' | 'standar
     dedicatedContainerEnvs: new Map<string, string>(),
     crossStackSubnetIds,
     crossStackVpcIds,
+    sharedApim,
   };
 
   for (const construct of stack.constructs) {

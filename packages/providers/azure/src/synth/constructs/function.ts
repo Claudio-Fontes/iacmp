@@ -113,34 +113,56 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
       const jwtKvSym = kvEntry ? toSym(kvEntry[0]) : undefined;
       const apimNamedValueSym = jwtKvSym ? `${sym}JwtNamedValue` : undefined;
 
-      resources.push({
-        sym,
-        type: 'Microsoft.ApiManagement/service',
-        apiVersion: '2023-05-01-preview',
-        name: apimName,
-        location: 'location',
-        tags: tag(construct.id),
-        sku: { name: 'Consumption', capacity: 0 },
-        ...(jwtKvSym ? { identity: { type: 'SystemAssigned' } } : {}),
-        properties: {
-          publisherEmail: 'admin@example.com',
-          publisherName: construct.id,
-          virtualNetworkType: 'None',
-          customProperties: {
-            'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls10': 'false',
-            'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls11': 'false',
+      // APIM compartilhado (iacmp.json → azure.sharedApim): referencia o serviço
+      // como `existing` em vez de criá-lo — elimina o piso de ~30-45min de
+      // provisionamento de APIM por projeto (Consumption tier). Os filhos
+      // (api/backends/namedValues) são prefixados por projectSlug para não
+      // colidir com outros projetos que compartilham o mesmo APIM — inclusive o
+      // `path` da API, que é rota real no gateway (dois projetos com path 'api'
+      // colidiriam no roteamento, não só no nome do recurso ARM).
+      const namePrefix = ctx.sharedApim ? `${ctx.sharedApim.projectSlug}-` : '';
+
+      if (ctx.sharedApim) {
+        resources.push({
+          sym,
+          type: 'Microsoft.ApiManagement/service',
+          apiVersion: '2023-05-01-preview',
+          name: expr(`'${ctx.sharedApim.name}'`),
+          properties: {},
+          existing: true,
+          ...(ctx.sharedApim.crossRg ? { scope: `resourceGroup('${ctx.sharedApim.resourceGroup}')` } : {}),
+        });
+      } else {
+        resources.push({
+          sym,
+          type: 'Microsoft.ApiManagement/service',
+          apiVersion: '2023-05-01-preview',
+          name: apimName,
+          location: 'location',
+          tags: tag(construct.id),
+          sku: { name: 'Consumption', capacity: 0 },
+          ...(jwtKvSym ? { identity: { type: 'SystemAssigned' } } : {}),
+          properties: {
+            publisherEmail: 'admin@example.com',
+            publisherName: construct.id,
+            virtualNetworkType: 'None',
+            customProperties: {
+              'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls10': 'false',
+              'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls11': 'false',
+            },
           },
-        },
-      });
+        });
+      }
 
       const apiSym = `${sym}Api`;
+      const apiPath = `${namePrefix}${(props.path as string) || 'api'}`;
       resources.push({
         sym: apiSym,
         type: 'Microsoft.ApiManagement/service/apis',
         apiVersion: '2023-05-01-preview',
         parent: sym,
-        name: 'main',
-        properties: { displayName: rawName, path: ((props.path as string) || 'api'), protocols: ['https'], subscriptionRequired: false, serviceUrl: '' },
+        name: `${namePrefix}main`,
+        properties: { displayName: rawName, path: apiPath, protocols: ['https'], subscriptionRequired: false, serviceUrl: '' },
       });
 
       if (props.cors) {
@@ -151,7 +173,7 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
       const uniqueLambdaIds = [...new Set(routes.filter(r => r.lambdaId).map(r => r.lambdaId as string))];
       const backendNameMap = new Map<string, string>();
       for (const lambdaId of uniqueLambdaIds) {
-        const backendName = `backend-${lambdaId.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+        const backendName = `${namePrefix}backend-${lambdaId.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
         backendNameMap.set(lambdaId, backendName);
         let backendUrl: string;
         const lambdaConst = ctx.idx.get(lambdaId);
@@ -205,10 +227,10 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
           },
         });
         if (lambdaId) {
-          const backendId = backendNameMap.get(lambdaId) ?? `backend-${lambdaId.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+          const backendId = backendNameMap.get(lambdaId) ?? `${namePrefix}backend-${lambdaId.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
           const usesJwt = routeAuthId !== undefined && jwtKvSym !== undefined;
           const opXml = usesJwt
-            ? `<policies><inbound><base /><validate-jwt header-name="Authorization" failed-validation-httpcode="401" failed-validation-error-message="Unauthorized" require-expiration-time="false"><issuer-signing-keys><key>{{jwt-signing-key}}</key></issuer-signing-keys></validate-jwt><set-backend-service backend-id="${backendId}" /></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>`
+            ? `<policies><inbound><base /><validate-jwt header-name="Authorization" failed-validation-httpcode="401" failed-validation-error-message="Unauthorized" require-expiration-time="false"><issuer-signing-keys><key>{{${namePrefix}jwt-signing-key}}</key></issuer-signing-keys></validate-jwt><set-backend-service backend-id="${backendId}" /></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>`
             : `<policies><inbound><base /><set-backend-service backend-id="${backendId}" /></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>`;
           resources.push({
             sym: `${sym}Policy${ri}`,
@@ -246,9 +268,9 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
           type: 'Microsoft.ApiManagement/service/namedValues',
           apiVersion: '2023-05-01-preview',
           parent: sym,
-          name: 'jwt-signing-key',
+          name: `${namePrefix}jwt-signing-key`,
           properties: {
-            displayName: 'jwt-signing-key',
+            displayName: `${namePrefix}jwt-signing-key`,
             secret: true,
             keyVault: {
               secretIdentifier: expr(`'\${${jwtKvSym}.properties.vaultUri}secrets/secret-value'`),
@@ -273,13 +295,14 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
           crossParams.set(authFqdnParam, 'string');
           authUrl = expr(`'https://\${${authFqdnParam}}'`);
         }
-        resources.push({ sym: `${sym}AuthorizerBackend`, type: 'Microsoft.ApiManagement/service/backends', apiVersion: '2023-05-01-preview', parent: sym, name: 'authorizer-backend', properties: { description: `Function App authorizer backend (${authorizerLambdaId})`, url: authUrl, protocol: 'http' } });
+        resources.push({ sym: `${sym}AuthorizerBackend`, type: 'Microsoft.ApiManagement/service/backends', apiVersion: '2023-05-01-preview', parent: sym, name: `${namePrefix}authorizer-backend`, properties: { description: `Function App authorizer backend (${authorizerLambdaId})`, url: authUrl, protocol: 'http' } });
       }
 
       // Url inclui o path base da API (paridade com AWS, cujo ApiUrl inclui o
       // stage /prod) — sem ele o consumidor toma 404 do APIM ("Resource not found").
-      const apiBasePath = (props.path as string) || 'api';
-      outputs.push({ name: outputName(construct.id, 'Url'), type: 'string', value: `'\${${sym}.properties.gatewayUrl}/${apiBasePath}'` });
+      // Em APIM compartilhado, apiPath já vem prefixado por projectSlug (é a rota
+      // real no gateway — precisa bater com o `path` declarado na API acima).
+      outputs.push({ name: outputName(construct.id, 'Url'), type: 'string', value: `'\${${sym}.properties.gatewayUrl}/${apiPath}'` });
       break;
     }
 

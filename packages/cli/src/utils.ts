@@ -46,6 +46,20 @@ export interface IacmpConfig {
   knowledge?: {
     autolearn?: 'local' | 'off';
   };
+  /**
+   * Config específica do provider Azure.
+   *  - sharedApim: quando presente, o synth Azure NÃO cria um
+   *    Microsoft.ApiManagement/service próprio — referencia o APIM JÁ EXISTENTE
+   *    (`name` + `resourceGroup`) e cria só os filhos do projeto (apis, backends,
+   *    operations, policies, namedValues) sob ele. Elimina o piso de ~30-45min
+   *    de provisionamento de APIM por projeto.
+   */
+  azure?: {
+    sharedApim?: {
+      name: string;
+      resourceGroup: string;
+    };
+  };
   [key: string]: unknown;
 }
 
