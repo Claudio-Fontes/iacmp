@@ -32,7 +32,20 @@ O `@iacmp/mcp` está em repositório separado (`~/Projetos/iacmp-mcp`), tem vers
 - [ ] Versões sincronizadas entre `@iacmp/core` e `iacmp`
 - [ ] `docs/changelog.md` atualizado
 
-## Publicar
+## Publicar (comando único)
+
+Um script publica tudo na ordem certa, idempotente (pula o que já está no registro):
+
+```bash
+./scripts/publish-release.sh              # publica core → runtime → knowledge → CLI → MCP
+./scripts/publish-release.sh --dry-run    # simula sem enviar nada
+./scripts/publish-release.sh --otp 123456 # se a conta exigir 2FA em cada publish
+```
+
+Usa o authToken do `~/.npmrc` (sem login interativo). Se um OTP expirar no meio, é só
+re-rodar: os pacotes já publicados são pulados.
+
+## Publicar (passo a passo manual)
 
 ```bash
 npm run build
