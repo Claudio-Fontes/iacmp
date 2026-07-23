@@ -13,6 +13,20 @@ export function formatCommand(cmd: NativeCommand): string {
   return `${cmd.bin} ${quoted.join(' ')}`;
 }
 
+/**
+ * Mensagem de falha de um comando de deploy. NÃO afirma que é autenticação — a
+ * causa real está sempre na saída do provider (o stdio é herdado). Cravar "auth"
+ * já enganou (deploy que falha por export cross-stack em uso, ou por handler não
+ * compilado em dist/, nada tem a ver com credencial). Lista as causas comuns em
+ * ordem de probabilidade, deixando auth por último.
+ */
+export function deployFailureMessage(cmd: NativeCommand): string {
+  return `Falha ao executar "${formatCommand(cmd)}" — o motivo está na saída acima (não é necessariamente credencial). ` +
+    `Causas comuns: erro no deploy da nuvem (veja os eventos da stack), ` +
+    `artefato/handler faltando em dist/ (rode o build do projeto antes do deploy), ` +
+    `ou credencial/permissão (rode: iacmp doctor).`;
+}
+
 /** Imprime o plano de comandos sem executar nada (--dry-run). */
 export function printPlan(commands: NativeCommand[]): void {
   for (const cmd of commands) {
@@ -75,10 +89,7 @@ async function runWithPolling(
           finish(e as Error);
         }
       } else {
-        finish(new Error(
-          `Falha ao executar "${formatCommand(cmd)}" — veja a saída acima. ` +
-          `Se for um problema de autenticação, configure a credencial da CLI (${cmd.bin}) e tente novamente, ou rode: iacmp doctor`,
-        ));
+        finish(new Error(deployFailureMessage(cmd)));
       }
     };
 
@@ -134,10 +145,7 @@ export async function runCommands(
         if (cmd.onError) {
           cmd.onError(lastErr);
         } else {
-          throw new Error(
-            `Falha ao executar "${formatCommand(cmd)}" — veja a saída acima. ` +
-            `Se for um problema de autenticação, configure a credencial da CLI (${cmd.bin}) e tente novamente, ou rode: iacmp doctor`
-          );
+          throw new Error(deployFailureMessage(cmd));
         }
       }
       cmd.cleanup?.();
