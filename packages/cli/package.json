@@ -48,6 +48,7 @@
     "@azure/data-tables": "13.3.2",
     "@azure/storage-blob": "12.33.0",
     "@iacmp/core": "^2.2.2",
+    "@iacmp/runtime": "^0.1.0",
     "@oclif/core": "^4.0.0",
     "chalk": "^4.1.2",
     "diff": "^5.2.0",

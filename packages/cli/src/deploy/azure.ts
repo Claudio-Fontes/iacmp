@@ -480,6 +480,20 @@ function buildFunctionBundle(
   ];
   const shimPath = shimCandidates.find(p => fs.existsSync(p)) ?? shimCandidates[0];
   const s3ShimPath = shimPath.replace('azure-dynamo-shim', 'azure-s3-shim');
+
+  // @iacmp/runtime é dependência real do cli (não inlinada — ver tsup.config.ts),
+  // então `require.resolve` a acha via node_modules tanto no monorepo (symlink do
+  // workspace) quanto no pacote publicado. Handler que importa `@iacmp/runtime`
+  // é bundlado direto com o adaptador Azure — sem passar pelo seletor de
+  // IACMP_CLOUD em runtime/src/index.ts (que só existe como fallback).
+  let iacmpRuntimeAzurePath: string | undefined;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    iacmpRuntimeAzurePath = require.resolve('@iacmp/runtime/azure');
+  } catch {
+    // @iacmp/runtime não instalado/linkado — handlers legados (só @aws-sdk/*) seguem via shim acima
+  }
+
   const azureSdkNodePaths: string[] = [];
   for (const pkg of ['@azure/data-tables', '@azure/storage-blob', 'mongodb']) {
     try {
@@ -505,6 +519,7 @@ function buildFunctionBundle(
       '@aws-sdk/lib-dynamodb': shimPath,
       '@aws-sdk/client-s3': s3ShimPath,
       '@aws-sdk/s3-request-presigner': s3ShimPath,
+      ...(iacmpRuntimeAzurePath ? { '@iacmp/runtime': iacmpRuntimeAzurePath } : {}),
     },
     nodePaths: azureSdkNodePaths,
     banner: { js: `const __iacmp_meta_url = require('url').pathToFileURL(__filename).href;` },

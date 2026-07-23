@@ -1,0 +1,74 @@
+{
+  "name": "@iacmp/runtime",
+  "version": "0.1.0",
+  "license": "MIT",
+  "description": "Interface neutra de runtime (Table/Blob) para handlers multi-cloud do iacmp — o adaptador de cada cloud é resolvido no bundle/deploy",
+  "author": "Claudio Melo",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Claudio-Fontes/iacmp",
+    "directory": "packages/runtime"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./aws": {
+      "types": "./dist/aws/index.d.ts",
+      "default": "./dist/aws/index.js"
+    },
+    "./azure": {
+      "types": "./dist/azure/index.d.ts",
+      "default": "./dist/azure/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "test": "jest"
+  },
+  "peerDependencies": {
+    "@aws-sdk/client-dynamodb": "*",
+    "@aws-sdk/client-s3": "*",
+    "@aws-sdk/lib-dynamodb": "*",
+    "@aws-sdk/s3-request-presigner": "*",
+    "@azure/storage-blob": "*",
+    "mongodb": "*"
+  },
+  "peerDependenciesMeta": {
+    "@aws-sdk/client-dynamodb": { "optional": true },
+    "@aws-sdk/client-s3": { "optional": true },
+    "@aws-sdk/lib-dynamodb": { "optional": true },
+    "@aws-sdk/s3-request-presigner": { "optional": true },
+    "@azure/storage-blob": { "optional": true },
+    "mongodb": { "optional": true }
+  },
+  "devDependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1093.0",
+    "@aws-sdk/client-s3": "^3.1093.0",
+    "@aws-sdk/lib-dynamodb": "^3.1093.0",
+    "@aws-sdk/s3-request-presigner": "^3.1093.0",
+    "@azure/storage-blob": "12.33.0",
+    "@types/jest": "^29",
+    "@types/node": "^20",
+    "jest": "^29",
+    "mongodb": "^6.10.0",
+    "ts-jest": "^29",
+    "typescript": "^5.5.0"
+  },
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "node",
+    "testMatch": [
+      "**/test/**/*.test.ts"
+    ]
+  }
+}

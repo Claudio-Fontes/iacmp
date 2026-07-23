@@ -84,6 +84,18 @@ export function ensureLambdaCodeBuilt(ctx: DeployContext): void {
     throw new Error('esbuild não encontrado — não foi possível empacotar os handlers da Lambda. Rode `npm install` no iacmp.');
   }
 
+  // @iacmp/runtime é dependência real do cli (não inlinada — ver tsup.config.ts):
+  // `require.resolve` a acha via node_modules tanto no monorepo quanto no pacote
+  // publicado. Handler que importa `@iacmp/runtime` é bundlado direto com o
+  // adaptador AWS (@aws-sdk/*, que segue external — provido pelo runtime da Lambda).
+  let iacmpRuntimeAwsPath: string | undefined;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    iacmpRuntimeAwsPath = require.resolve('@iacmp/runtime/aws');
+  } catch {
+    // @iacmp/runtime não instalado/linkado — handlers legados (import direto de @aws-sdk/*) seguem normalmente
+  }
+
   for (const [outfile, entry] of jobs) {
     fs.mkdirSync(path.dirname(outfile), { recursive: true });
     try {
@@ -95,6 +107,7 @@ export function ensureLambdaCodeBuilt(ctx: DeployContext): void {
         target: 'node20',
         format: 'cjs',
         external: ['@aws-sdk/*'], // provido pelo runtime da Lambda
+        alias: iacmpRuntimeAwsPath ? { '@iacmp/runtime': iacmpRuntimeAwsPath } : undefined,
         logLevel: 'silent',
       });
     } catch (err) {

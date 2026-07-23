@@ -4,11 +4,13 @@ import { copyFileSync, mkdirSync } from 'fs';
 /**
  * O `iacmp` é distribuído como um pacote único (`npm i -g iacmp`). Os pacotes
  * internos do workspace (@iacmp/ai, providers, dashboard, registry, plugin-sdk)
- * são inlinados no bundle. A EXCEÇÃO é @iacmp/core: ele é publicado no npm como
- * dependência real, pois os stacks do usuário fazem `import from '@iacmp/core'`
- * e o `init` referencia o pacote — então core precisa existir on-disk como
- * módulo resolvível, não inlinado. As deps de terceiros (@oclif/core, chalk,
- * diff, ora, @anthropic-ai/sdk) também ficam externas.
+ * são inlinados no bundle. As EXCEÇÕES são @iacmp/core e @iacmp/runtime: ambos
+ * são publicados no npm como dependência real, pois os stacks/handlers do
+ * usuário fazem `import from '@iacmp/core'` / `'@iacmp/runtime'` — precisam
+ * existir on-disk como módulo resolvível (inclusive via `require.resolve` do
+ * deploy, para achar o adaptador de cada cloud), não inlinados. As deps de
+ * terceiros (@oclif/core, chalk, diff, ora, @anthropic-ai/sdk) também ficam
+ * externas.
  *
  * São dois bundles porque têm raízes diferentes:
  *  - src/  → dist/ (preserva dist/commands/ para a descoberta de comandos do oclif)
@@ -23,8 +25,8 @@ const common = {
   sourcemap: false,
   dts: false,
   shims: false,
-  // inlina @iacmp/* EXCETO @iacmp/core (este fica externo, dep real publicada)
-  noExternal: [/^@iacmp\/(?!core)/],
+  // inlina @iacmp/* EXCETO @iacmp/core e @iacmp/runtime (ficam externos, deps reais publicadas)
+  noExternal: [/^@iacmp\/(?!core|runtime)/],
 };
 
 export default defineConfig([
