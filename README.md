@@ -242,6 +242,19 @@ validada em deploy real). Ela vem **embutida no CLI** — na primeira vez que vo
 `iacmp ai`, o banco `~/.iacmp/knowledge.db` é semeado automaticamente a partir de
 `@iacmp/knowledge`. Nenhum setup manual; o mesmo banco é reaproveitado pelo servidor MCP.
 
+### Auto-aprendizado local (opt-in)
+
+Você pode deixar o iacmp **aprender com os seus próprios deploys**. Com
+
+```json
+{ "knowledge": { "autolearn": "local" } }
+```
+
+no `iacmp.json` (padrão: desligado), sempre que um `iacmp deploy` conclui com sucesso
+um padrão de infraestrutura **inédito**, o CLI mostra um preview e pergunta se você quer
+guardá-lo na **sua base local**. O padrão passa a reforçar as próximas gerações
+(`iacmp ai` e MCP). Fica **só na sua máquina** — nada é enviado para lugar nenhum.
+
 ## Estrutura do monorepo
 
 ```
