@@ -53,12 +53,25 @@ function ensureSchema(db: Database.Database): void {
       content     TEXT NOT NULL,
       tokens      TEXT NOT NULL,
       validated   INTEGER NOT NULL DEFAULT 1,
+      origin      TEXT NOT NULL DEFAULT 'curated',
+      provenance  TEXT,
       created_at  TEXT NOT NULL DEFAULT (datetime('now')),
       embedding   BLOB
     );
     CREATE INDEX IF NOT EXISTS idx_provider ON examples(provider);
     CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
   `);
+  // Migração idempotente de colunas para bancos criados por versões anteriores
+  // (clientes que já tinham ~/.iacmp/knowledge.db).
+  //  - origin: 'curated' (corpus oficial) | 'local' (aprendido no deploy do
+  //    próprio cliente, Modo 1) | (futuro) 'shared' (community, Modo 2).
+  //  - provenance: JSON com { schemaVersion, capturedAt, fingerprint, shareStatus }.
+  //    É o metadado que uma base CENTRAL futura lê para rastrear origem e
+  //    consentimento; nulo nos curados. Colocado aqui desde já para o Modo 1
+  //    nascer forward-compatible com a centralização (Modo 2), sem nova migração.
+  const cols = (db.prepare('PRAGMA table_info(examples)').all() as { name: string }[]).map(c => c.name);
+  if (!cols.includes('origin')) db.exec("ALTER TABLE examples ADD COLUMN origin TEXT NOT NULL DEFAULT 'curated'");
+  if (!cols.includes('provenance')) db.exec('ALTER TABLE examples ADD COLUMN provenance TEXT');
   ensureFtsSchema(db);
 }
 
@@ -85,19 +98,19 @@ function setMeta(db: Database.Database, key: string, value: string): void {
   db.prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
 }
 
-function upsertOne(db: Database.Database, ex: Example): void {
+function upsertOne(db: Database.Database, ex: Example, origin = 'curated', provenance: string | null = null): void {
   const provider = deriveProvider(ex);
   const constructs = deriveConstructs(ex);
   const content = { stacks: ex.stacks, handlers: ex.handlers, notes: ex.notes };
   const tokens = tokenize([ex.title, ...ex.tags, ...constructs, ...ex.notes].join(' '));
   db.prepare(`
-    INSERT INTO examples (id, title, provider, constructs, tags, content, tokens, validated)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO examples (id, title, provider, constructs, tags, content, tokens, validated, origin, provenance)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title, provider = excluded.provider,
       constructs = excluded.constructs, tags = excluded.tags,
       content = excluded.content, tokens = excluded.tokens,
-      validated = excluded.validated
+      validated = excluded.validated, origin = excluded.origin, provenance = excluded.provenance
   `).run(
     ex.id, ex.title, provider,
     JSON.stringify(constructs),
@@ -105,6 +118,8 @@ function upsertOne(db: Database.Database, ex: Example): void {
     JSON.stringify(content),
     JSON.stringify(tokens),
     ex.validated !== false ? 1 : 0,
+    origin,
+    provenance,
   );
   syncFtsRow(db, ex.id, buildFtsText({ title: ex.title, tags: ex.tags, constructs, content }));
 }
@@ -143,6 +158,86 @@ export function ensureSeeded(opts: { db?: Database.Database; dbPath?: string } =
     tx();
     if (ftsNeedsRebuild(db)) rebuildFts(db);
     return { seeded: ALL_EXAMPLES.length, dbPath, skipped: false };
+  } finally {
+    if (!providedDb) db.close();
+  }
+}
+
+// ---- Modo 1: aprendizado local (auto-enriquecimento client-side) ----------
+// O cliente que opta por `knowledge.autolearn: "local"` no iacmp.json passa a
+// gravar, no PRÓPRIO banco, o padrão de um deploy inédito bem-sucedido. Fica só
+// nele (origin='local'); não vaza para ninguém. O corpus oficial continua sendo
+// a única coisa que o re-seed toca — os locais nunca são apagados.
+
+// Assinatura de dedup: provider + conjunto ordenado de constructs. Dois padrões
+// com os mesmos constructs no mesmo provider são "o mesmo padrão" — variações
+// não entram, o banco não incha.
+function signatureOf(provider: string, constructs: string[]): string {
+  return provider + '|' + [...new Set(constructs)].sort().join(',');
+}
+
+/**
+ * Fingerprint estável de um padrão (provider + constructs). DETERMINÍSTICO — o
+ * mesmo padrão gera sempre o mesmo id (`local-<fp>`), então: (a) o próprio cliente
+ * não duplica; (b) uma base CENTRAL futura (Modo 2) deduplica contribuições de
+ * clientes diferentes pelo mesmo fingerprint, sem adivinhação.
+ */
+export function fingerprintOf(provider: string, constructs: string[]): string {
+  return createHash('sha1').update(signatureOf(provider, constructs)).digest('hex').slice(0, 12);
+}
+
+/** Metadado de proveniência gravado com cada exemplo aprendido (forward-compat com o Modo 2). */
+export interface Provenance {
+  schemaVersion: number;
+  capturedAt: string;      // ISO; o chamador (CLI) fornece — o pacote não usa Date
+  fingerprint: string;
+  shareStatus: 'private' | 'pending' | 'shared';
+}
+
+/** true se o banco já tem um exemplo (curado ou local) com o mesmo padrão. */
+export function hasSimilarExample(
+  opts: { db?: Database.Database; dbPath?: string },
+  provider: string,
+  constructs: string[],
+): boolean {
+  const sig = signatureOf(provider, constructs);
+  const providedDb = opts.db;
+  const db = providedDb ?? new Database(opts.dbPath ?? defaultDbPath(), { readonly: true });
+  try {
+    const rows = db.prepare('SELECT provider, constructs FROM examples').all() as { provider: string; constructs: string }[];
+    return rows.some(r => {
+      try { return signatureOf(r.provider, JSON.parse(r.constructs)) === sig; } catch { return false; }
+    });
+  } finally {
+    if (!providedDb) db.close();
+  }
+}
+
+/**
+ * Insere um exemplo aprendido no deploy do próprio cliente (Modo 1). origin='local'
+ * o separa do corpus oficial; o re-seed (ensureSeeded) nunca o apaga. Idempotente
+ * por id. Ids locais devem usar prefixo próprio (ex: 'local-…') para não colidir.
+ */
+export function addLocalExample(
+  opts: { db?: Database.Database; dbPath?: string },
+  ex: Example,
+  provenance?: Provenance,
+): void {
+  const providedDb = opts.db;
+  const dbPath = opts.dbPath ?? defaultDbPath();
+  let db: Database.Database;
+  if (providedDb) {
+    db = providedDb;
+  } else {
+    mkdirSync(dirname(dbPath), { recursive: true });
+    db = new Database(dbPath);
+    db.pragma('journal_mode = WAL');
+    db.pragma('busy_timeout = 3000');
+  }
+  try {
+    ensureSchema(db);
+    upsertOne(db, ex, 'local', provenance ? JSON.stringify(provenance) : null);
+    if (ftsNeedsRebuild(db)) rebuildFts(db);
   } finally {
     if (!providedDb) db.close();
   }

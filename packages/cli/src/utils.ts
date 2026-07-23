@@ -36,6 +36,16 @@ export interface IacmpConfig {
   availabilityZones?: string[];
   projectId?: string;
   language?: string;
+  /**
+   * Auto-enriquecimento da knowledge base (loop de aprendizado).
+   *  - autolearn: 'local' → após um deploy bem-sucedido de um padrão inédito, o
+   *    CLI oferece gravá-lo na base LOCAL do próprio cliente (fica só nele).
+   *    'off' (default) → desligado.
+   *  - `share` (envio à base central, Modo 2) é reservado — ainda não implementado.
+   */
+  knowledge?: {
+    autolearn?: 'local' | 'off';
+  };
   [key: string]: unknown;
 }
 

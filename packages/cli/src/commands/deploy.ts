@@ -8,6 +8,7 @@ import { listTemplates, countResources, orderByDependency, providerOutDir, awsTe
 import { errMessage, loadIacmpConfig, resolveProvider, IacmpConfig } from '../utils';
 import { commandExists } from './doctor';
 import { getExecutor, printPlan, runCommands, formatCommand, resourceGroupExists, getAzureStackOutputs, findExistingRetainedResources, deleteResourceAndWait, DeployContext } from '../deploy';
+import { maybeLearn } from '../learn';
 
 function confirm(message: string): Promise<boolean> {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -221,6 +222,7 @@ export default class Deploy extends Command {
           this.error(errMessage(err));
         }
       }
+      await this.afterDeploy(cwd, provider, config, flags.yes);
       this.log(chalk.green('\nDeploy concluído.'));
       return;
     }
@@ -246,6 +248,7 @@ export default class Deploy extends Command {
           this.error(errMessage(err));
         }
       }
+      if (!dryRun) await this.afterDeploy(cwd, provider, config, flags.yes);
       this.log(chalk.green('\nDeploy concluído.'));
       return;
     }
@@ -393,6 +396,19 @@ export default class Deploy extends Command {
       }
     }
 
+    if (!dryRun) await this.afterDeploy(cwd, provider, config, flags.yes);
     this.log(chalk.green('Deploy concluído.'));
+  }
+
+  // Loop de aprendizado (Modo 1): oferece gravar o padrão deste deploy na base
+  // LOCAL do cliente, se ele optou (`knowledge.autolearn: "local"`). No-op sem
+  // opt-in. Nunca lança — o deploy já concluiu.
+  private async afterDeploy(cwd: string, provider: string, config: IacmpConfig, yes: boolean): Promise<void> {
+    await maybeLearn(cwd, provider, config, {
+      log: (m) => this.log(m),
+      confirm: yes ? async () => true : confirm,
+      isTTY: !!process.stdin.isTTY,
+      now: () => new Date().toISOString(),
+    });
   }
 }

@@ -3,7 +3,10 @@ import type { Database } from 'better-sqlite3';
 // Corpus versionado (os exemplos) + semeadura do SQLite. Reexportados aqui para
 // que `@iacmp/knowledge` seja de fato a fonte única "corpus + retrieval + seed".
 export { ALL_EXAMPLES, getExampleById, type Example } from './corpus/index.js';
-export { ensureSeeded, defaultDbPath, type SeedResult } from './seed.js';
+export {
+  ensureSeeded, defaultDbPath, addLocalExample, hasSimilarExample, fingerprintOf,
+  type SeedResult, type Provenance,
+} from './seed.js';
 
 // Fonte ÚNICA do retrieval da knowledge base iacmp. Antes, esta lógica existia
 // duplicada em iacmp-mcp/src/db/bm25.ts e packages/ai/rag/knowledge-base.ts, e
