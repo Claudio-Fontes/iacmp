@@ -1,0 +1,122 @@
+{
+  "terraform": {
+    "required_providers": {
+      "google": {
+        "source": "hashicorp/google",
+        "version": "~> 5.0"
+      }
+    }
+  },
+  "provider": {
+    "google": {
+      "project": "${var.project_id}",
+      "region": "${var.gcp_region}"
+    }
+  },
+  "variable": {
+    "project_id": {
+      "type": "string"
+    },
+    "gcp_region": {
+      "type": "string",
+      "default": "us-central1"
+    }
+  },
+  "resource": {
+    "google_cloudfunctions2_function": {
+      "alerthandler": {
+        "name": "AlertHandler",
+        "location": "${var.gcp_region}",
+        "build_config": [
+          {
+            "runtime": "nodejs20",
+            "entry_point": "alert.handler",
+            "source": [
+              {
+                "storage_source": [
+                  {
+                    "bucket": "${var.project_id}-artifacts",
+                    "object": "function.zip"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "service_config": [
+          {
+            "available_memory": "128Mi",
+            "timeout_seconds": 30
+          }
+        ]
+      }
+    },
+    "google_pubsub_topic": {
+      "alertstopic": {
+        "name": "AlertsTopic",
+        "message_storage_policy": [
+          {
+            "allowed_persistence_regions": [
+              "${var.gcp_region}"
+            ]
+          }
+        ]
+      }
+    },
+    "google_pubsub_subscription": {
+      "alertstopic_sub_0": {
+        "name": "AlertsTopic-sub-0",
+        "topic": "${google_pubsub_topic.alertstopic.id}",
+        "ack_deadline_seconds": 30,
+        "push_config": [
+          {
+            "push_endpoint": "${google_cloudfunctions2_function.alerthandler.service_config[0].uri}"
+          }
+        ]
+      }
+    },
+    "google_monitoring_notification_channel": {
+      "erroralarm_channel_0": {
+        "display_name": "ErrorAlarm channel 0",
+        "type": "pubsub",
+        "labels": {
+          "topic": "${google_pubsub_topic.alertstopic.id}"
+        }
+      }
+    },
+    "google_monitoring_alert_policy": {
+      "erroralarm": {
+        "display_name": "ErrorAlarm",
+        "conditions": [
+          {
+            "display_name": "Errors condition",
+            "condition_threshold": [
+              {
+                "filter": "metric.type=\"cloudfunctions.googleapis.com/function/Errors\" AND metric.labels.FunctionName=\"AlertHandler\"",
+                "comparison": "COMPARISON_GT",
+                "threshold_value": 10,
+                "duration": "600s",
+                "aggregations": [
+                  {
+                    "alignment_period": "300s",
+                    "per_series_aligner": "ALIGN_MEAN"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "combiner": "OR",
+        "enabled": true,
+        "notification_channels": [
+          "${google_monitoring_notification_channel.erroralarm_channel_0.id}"
+        ]
+      }
+    }
+  },
+  "output": {
+    "AlertHandlerFunctionUrl": {
+      "value": "${google_cloudfunctions2_function.alerthandler.service_config[0].uri}"
+    }
+  }
+}

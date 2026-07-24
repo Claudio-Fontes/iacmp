@@ -1,0 +1,97 @@
+{
+  "terraform": {
+    "required_providers": {
+      "google": {
+        "source": "hashicorp/google",
+        "version": "~> 5.0"
+      }
+    }
+  },
+  "provider": {
+    "google": {
+      "project": "${var.project_id}",
+      "region": "${var.gcp_region}"
+    }
+  },
+  "variable": {
+    "project_id": {
+      "type": "string"
+    },
+    "gcp_region": {
+      "type": "string",
+      "default": "us-central1"
+    }
+  },
+  "resource": {
+    "google_cloudfunctions2_function": {
+      "processfn": {
+        "name": "ProcessFn",
+        "location": "${var.gcp_region}",
+        "build_config": [
+          {
+            "runtime": "nodejs20",
+            "entry_point": "index.handler",
+            "source": [
+              {
+                "storage_source": [
+                  {
+                    "bucket": "${var.project_id}-artifacts",
+                    "object": "function.zip"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "service_config": [
+          {
+            "available_memory": "128Mi",
+            "timeout_seconds": 30,
+            "environment_variables": {
+              "DEST_BUCKET": "OutputBucket.name"
+            }
+          }
+        ]
+      }
+    },
+    "google_storage_bucket": {
+      "inputbucket": {
+        "name": "inputbucket",
+        "location": "US",
+        "versioning": [
+          {
+            "enabled": true
+          }
+        ],
+        "uniform_bucket_level_access": true
+      },
+      "outputbucket": {
+        "name": "outputbucket",
+        "location": "US",
+        "versioning": [
+          {
+            "enabled": false
+          }
+        ],
+        "uniform_bucket_level_access": true
+      }
+    }
+  },
+  "output": {
+    "ProcessFnFunctionUrl": {
+      "value": "${google_cloudfunctions2_function.processfn.service_config[0].uri}"
+    },
+    "InputBucketBucketName": {
+      "value": "${google_storage_bucket.inputbucket.name}"
+    },
+    "InputBucketBucketUrl": {
+      "value": "${google_storage_bucket.inputbucket.url}"
+    },
+    "OutputBucketBucketName": {
+      "value": "${google_storage_bucket.outputbucket.name}"
+    },
+    "OutputBucketBucketUrl": {
+      "value": "${google_storage_bucket.outputbucket.url}"
+    }
+  }
+}
