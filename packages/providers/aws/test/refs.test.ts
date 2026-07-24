@@ -248,6 +248,40 @@ test('Events.EventBridge scheduleExpression completa → ScheduleExpression (nã
   expect(rule.Properties.EventPattern).toBeUndefined();
 });
 
+// ── 9. SNS→SQS fan-out cross-stack: QueuePolicy.Queues via ImportValue ────────
+
+test('Messaging.Topic (sqs subscription) cross-stack → QueuePolicy.Queues vira Fn::ImportValue da QueueUrl', () => {
+  const queueStack = new Stack('queue-stack', { region: 'us-east-1' });
+  new Messaging.Queue(queueStack, 'EmailQueue', {});
+
+  const topicStack = new Stack('topic-stack', { region: 'us-east-1' });
+  new Messaging.Topic(topicStack, 'Topic', {
+    subscriptions: [{ protocol: 'sqs', endpoint: 'EmailQueue' }],
+  });
+
+  const allStacks = [queueStack, topicStack];
+  const tpl = provider.synthesize(topicStack, allStacks) as any;
+
+  const sub = Object.values(tpl.Resources).find((r: any) => r.Type === 'AWS::SNS::Subscription') as any;
+  expect(sub.Properties.Endpoint).toEqual({ 'Fn::ImportValue': 'queue-stack-EmailQueue-Arn' });
+
+  const qp = Object.values(tpl.Resources).find((r: any) => r.Type === 'AWS::SQS::QueuePolicy') as any;
+  expect(qp.Properties.Queues).toEqual([{ 'Fn::ImportValue': 'queue-stack-EmailQueue-QueueUrl' }]);
+  expect(qp.Properties.PolicyDocument.Statement[0].Resource).toEqual({ 'Fn::ImportValue': 'queue-stack-EmailQueue-Arn' });
+});
+
+test('Messaging.Topic (sqs subscription) same-stack → QueuePolicy.Queues continua Ref local (regressão)', () => {
+  const s = new Stack('order-events', { region: 'us-east-1' });
+  new Messaging.Queue(s, 'EmailQueue', {});
+  new Messaging.Topic(s, 'Topic', {
+    subscriptions: [{ protocol: 'sqs', endpoint: 'EmailQueue' }],
+  });
+
+  const tpl = provider.synthesize(s, [s]) as any;
+  const qp = Object.values(tpl.Resources).find((r: any) => r.Type === 'AWS::SQS::QueuePolicy') as any;
+  expect(qp.Properties.Queues).toEqual([{ Ref: 'EmailQueue' }]);
+});
+
 test('ARN com account id placeholder 123456789012 → erro claro no synth (p05aws3)', () => {
   const s = new Stack('p', { region: 'us-east-1' });
   new Messaging.Queue(s, 'Q', {});

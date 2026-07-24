@@ -1,4 +1,4 @@
-import { BaseConstruct, isRef } from '@iacmp/core';
+import { BaseConstruct, isRef, ref } from '@iacmp/core';
 import type { CloudFormationResource, SynthContext } from '../types';
 import { resolveLambdaArnRef, resolveRef, normalizeRate, resolveQueueArn } from '../resolvers';
 import { resourceRef } from '../graph';
@@ -97,12 +97,16 @@ export function synthMessaging(
       });
 
       // SQS::QueuePolicy: autoriza o SNS a enviar mensagens para cada fila inscrita.
+      // Queues[] exige a QueueUrl — mesma resolução cross-stack usada pelo
+      // Endpoint da subscription (resolveQueueArn/resolveRef): same-stack vira
+      // Ref local (idêntico ao antigo resourceRef(qLogical,'Id')), cross-stack
+      // vira Fn::ImportValue do export "-QueueUrl" da stack dona da fila.
       subscribedQueues.forEach(qId => {
         const qLogical = qId.replace(/[^a-zA-Z0-9]/g, '');
         topicEntries.push([`${qLogical}SnsPolicy`, {
           Type: 'AWS::SQS::QueuePolicy',
           Properties: {
-            Queues: [resourceRef(qLogical, 'Id')],
+            Queues: [resolveRef(ref(qId, 'QueueUrl'), ctx)],
             PolicyDocument: {
               Version: '2012-10-17',
               Statement: [{

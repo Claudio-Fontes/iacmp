@@ -7,17 +7,23 @@ export const snsFanout: Example = {
   // validado em deploy real (p07aws): 3x POST 200, filterPolicy roteando (email/push) +
   // 1 fila sem filtro recebendo tudo, ESM drenando; destroy limpo. Este fixture usa 2
   // filas fan-out-a-todas (sem filterPolicy) — mesmo mecanismo (Topic->subscriptions
-  // sqs->QueuePolicy->ESM), variante mais simples da mesma feature já provada
+  // sqs->QueuePolicy->ESM), variante mais simples da mesma feature já provada.
+  // Queues e Topic ficam em STACKS SEPARADAS de propósito: prova o fix cross-stack
+  // do QueuePolicy.Queues (2026-07-24) — antes disso era obrigatório manter as duas
+  // na mesma stack (o Queues[] da QueuePolicy só resolvia Ref same-stack).
   validated: true,
   stacks: {
-    'stacks/messaging/queue-topic-stack.ts': `import { Stack, Messaging } from '@iacmp/core';
-const stack = new Stack('order-events');
-// Queues e Topic NA MESMA STACK: a subscription protocol:'sqs' cria uma
-// AWS::SQS::QueuePolicy que referencia a fila por Ref same-stack — cross-stack
-// (Topic numa stack, Queue noutra) não é suportado hoje (o Queues[] da policy
-// não passa pelo resolvedor cross-stack, só o Endpoint da subscription passa).
+    'stacks/messaging/queues-stack.ts': `import { Stack, Messaging } from '@iacmp/core';
+const stack = new Stack('order-queues');
 new Messaging.Queue(stack, 'ShippingQueue', { visibilityTimeoutSeconds: 60 });
 new Messaging.Queue(stack, 'BillingQueue',  { visibilityTimeoutSeconds: 60 });
+export default stack;`,
+
+    'stacks/messaging/topic-stack.ts': `import { Stack, Messaging } from '@iacmp/core';
+const stack = new Stack('order-events');
+// ShippingQueue/BillingQueue vivem na stack 'order-queues' (outra stack). O
+// synth resolve o Endpoint da subscription E o Queues[] da QueuePolicy gerada
+// via Fn::ImportValue (cross-stack) — não precisa mais estar na mesma stack.
 new Messaging.Topic(stack, 'OrderEventsTopic', {
   displayName: 'order-events',
   subscriptions: [
@@ -96,7 +102,7 @@ export const handler = async (event: any) => {
     'resources: [ref("OrderEventsTopic","Arn")] na policy — NUNCA ARN literal',
     'ShippingWorkerFn/BillingWorkerFn NÃO precisam de Policy.IAM: eventSources[].queueId auto-anexa AWSLambdaSQSQueueExecutionRole, igual ao worker-de-fila simples',
     'subscriptions[].endpoint usa o ID LÓGICO do Messaging.Queue (string) — o synth resolve pro ARN e cria a SQS::QueuePolicy que autoriza o SNS a publicar em cada fila (fan-out)',
-    'Messaging.Queue e Messaging.Topic (com as subscriptions que as ligam) ficam NA MESMA STACK — LACUNA de ferramenta encontrada nesta sessão: a AWS::SQS::QueuePolicy gerada pela subscription protocol:"sqs" referencia a fila com Ref same-stack (não passa pelo resolvedor cross-stack), então Topic e Queue em stacks diferentes falha no synth com "Ref para recurso inexistente". As Lambdas consumer (eventSources[].queueId) SÃO cross-stack normalmente — só a dupla Queue+Topic-com-subscription precisa ficar junta.',
+    'Messaging.Queue e Messaging.Topic (com as subscriptions que as ligam) PODEM ficar em stacks diferentes desde 2026-07-24: a AWS::SQS::QueuePolicy gerada pela subscription protocol:"sqs" resolve o Queues[] pelo mesmo resolvedor cross-stack do Endpoint (Fn::ImportValue da "-QueueUrl" quando a fila vive noutra stack). Antes disso era obrigatório manter a dupla Queue+Topic-com-subscription na mesma stack.',
     'RawMessageDelivery: true é automático para subscriptions protocol:"sqs" — o consumer recebe o JSON puro do Publish em record.body, sem envelope SNS (Message/MessageId/TopicArn)',
     'Cada fila tem seu PRÓPRIO worker — fan-out real (shipping e billing processam o MESMO evento independentemente, não é round-robin)',
   ],
