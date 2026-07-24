@@ -261,7 +261,12 @@ export const CONSTRUCT_TYPES: Record<ConstructType, ConstructTypeInfo> = {
         azure: 'Event Hub',
       },
     },
-    attributes: ['Arn', 'Name'],
+    // ConnectionString é Azure-only (Event Hubs via authorizationRules/listKeys)
+    // — Kinesis (AWS) não tem conceito de connection string (SDK usa IAM+ARN).
+    // Mesmo padrão de Cache.Redis: canônico é a UNIÃO dos providers, o resolver
+    // do AWS (resolvers.ts) simplesmente não tem essa entrada e rejeita com erro
+    // claro em synth-time se algum stack tentar usá-la lá.
+    attributes: ['Arn', 'Name', 'ConnectionString'],
   },
   'Messaging.Topic': {
     layer: 'messaging',

@@ -26,6 +26,9 @@ import { postgresPrivateVnet } from './azure/postgres-private-vnet.js';
 import { staticSiteCdn } from './azure/static-site-cdn.js';
 import { containerAppsIngress } from './azure/container-apps-ingress.js';
 import { workflowLogicApps } from './azure/workflow-logic-apps.js';
+import { streamEventHubs } from './azure/stream-eventhubs.js';
+import { compositeMicroserviceAws } from './aws/composite-microservice.js';
+import { compositeMicroserviceAzure } from './azure/composite-microservice.js';
 import { LEGACY_EXAMPLES } from './legacy/examples.js';
 
 export interface Example {
@@ -64,6 +67,9 @@ export const ALL_EXAMPLES: Example[] = [
   staticSiteCdn,
   containerAppsIngress,
   workflowLogicApps,
+  streamEventHubs,
+  compositeMicroserviceAws,
+  compositeMicroserviceAzure,
   // 105 legados sanados (bulk do insert-batch) — fonte única versionada.
   ...LEGACY_EXAMPLES,
 ];

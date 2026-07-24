@@ -34,7 +34,7 @@ export interface ConstructAttributeMap {
   'Cache.Redis':           'Endpoint' | 'Port' | 'Host' | 'ConnectionString';
   'Messaging.Queue':       'Arn' | 'QueueUrl' | 'QueueArn' | 'ConnectionString';
   'Messaging.Topic':       'Arn' | 'TopicArn' | 'ConnectionString';
-  'Messaging.Stream':      'Arn' | 'Name';
+  'Messaging.Stream':      'Arn' | 'Name' | 'ConnectionString';
   'Function.Lambda':       'Arn' | 'Fqdn' | 'Name';
   'Compute.Container':     'Arn' | 'Fqdn' | 'DnsName';
   'Network.LoadBalancer':  'TargetGroupArn' | 'DnsName';

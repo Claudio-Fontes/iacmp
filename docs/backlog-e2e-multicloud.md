@@ -31,16 +31,24 @@ Status AWS = bateria jun/jul + re-validações pós-refactors. Status Azure = s�
 
 **Legenda:** ✅ validado · 🔄 ciclo em andamento · ❌ pendente · gap = exige feature nova na ferramenta; "não testado" = mapeamento existe, falta deploy real.
 
-## Gaps de runtime Azure (features novas, por ordem de desbloqueio)
+## Gaps de runtime Azure — REVISÃO 2026-07-24: quase tudo já estava feito
 
-1. **Consumer de fila/stream** (desbloqueia 03, 07, 17): Container Apps + KEDA scale rule para Service Bus/Event Hubs; adapter precisa de modo "queue poller" além do HTTP
-2. **Agendamento** (05): Container Apps Jobs com cron
-3. **Trigger de storage** (11): Event Grid subscription → endpoint do Container App
-4. **JWT no APIM** (12): policy `validate-jwt` gerada a partir do authorizer do construct
-5. **Monitor/alertas** (13, 20): metric alerts + Action Group (email/webhook)
-6. **WAF** (15): decisão de mapeamento — Front Door Standard vs App Gateway
-7. **Workflow** (14): decisão — Logic Apps (declarativo, mais próximo do ASL) vs Durable Functions
-8. **WebSocket** (19): Azure Web PubSub + handlers de evento
+Auditoria (2026-07-24) contra a matriz do harness + o synth Azure real revelou que a maioria dos "gaps" JÁ tinha synth. Estado real:
+
+1. ✅ **Consumer de fila/stream** (03, 07): Messaging.Queue/Topic Azure completos, cenários 3/7 Azure:✓.
+2. ✅ **Agendamento** (05): Azure:✓.
+3. ✅ **Trigger de storage** (11): Azure:✓.
+4. ✅ **JWT no APIM** (12): `validate-jwt` policy já gerada do authorizer; Azure:✓.
+5. ✅ **Monitor/alertas** (13): Monitoring.Alarm/Dashboard; Azure:✓.
+6. ✅ **WAF** (15): já emite App Gateway + `Standard_AzureFrontDoor`; Azure:✓.
+7. ✅ **Workflow** (14) — FEITO (iacmp `76be0b2`): synth já era Logic Apps (`Microsoft.Logic/workflows`); faltava só o fixture `azure/workflow-logic-apps.ts`. Azure:✓.
+8. ✅ **Stream/Event Hubs** (17) — FEITO (2026-07-24): synth estava INCOMPLETO (`Messaging.Stream` Azure não exportava `ConnectionString` → consumer não conectava); adicionado output ConnectionString (messaging.ts, via listKeys do namespace authorizationRules) + `ConnectionString` no core (refs.ts, construct-types.ts) + fixture `azure/stream-eventhubs.ts`. AWS Kinesis inalterado (Arn/Name). Azure:✓.
+9. ✅ **Microsserviço composto** (20) — FEITO (2026-07-24): 2 fixtures (`aws/` e `azure/composite-microservice.ts`) — API+Lambda+DynamoDB+Queue em 4 stacks separadas, handlers via `@iacmp/runtime` (mesmo código nos 2 providers). AWS:✓ Azure:✓.
+10. ⏳ **WebSocket** (19) — ÚNICO gap REAL restante: construct NÃO existe no core. Precisa construct novo + synth AWS (API Gateway WebSocket) + synth Azure (Web PubSub) + fixtures. Próxima leva.
+
+**Matriz do harness: AWS 19/20 · Azure 19/20** (só WebSocket falta nos dois). Harness 130/130.
+
+- **Bug menor (achado 2026-07-24 pelo bicep-expert)**: o synth Azure de `Messaging.Stream` lê `props.shardCount`, mas o construct core (`MessagingStreamProps`) declara `shards` — o valor do usuário é ignorado (cai no default 2). Corrigir o nome da prop no synth Azure. Dono: bicep-expert.
 
 ## Correções pré-re-run do p02 (achados do ciclo 2026-07-03; aplicar na janela entre ciclos)
 

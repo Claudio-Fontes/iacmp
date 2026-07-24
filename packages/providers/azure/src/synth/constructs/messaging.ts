@@ -38,6 +38,13 @@ export function synthesizeMessaging(construct: BaseConstruct, ctx: SynthContext)
       });
       outputs.push({ name: outputName(construct.id, 'Id'), type: 'string', value: `${sym}.id` });
       outputs.push({ name: outputName(construct.id, 'Name'), type: 'string', value: `'${construct.id}'` });
+      // Event Hubs namespace já vem com a regra default RootManageSharedAccessKey
+      // (mesmo nome/mecanismo do Service Bus — ver Messaging.Queue/Topic acima).
+      // Sem este output, um consumer cross-stack que usa ref(id,'ConnectionString')
+      // cai no fallback genérico de resolveValue (crossParamName + 'string:optional')
+      // e gera `param ... = ''` vazio — bug silencioso (az bicep build passa, mas
+      // o consumer nunca conecta em runtime).
+      outputs.push({ name: outputName(construct.id, 'ConnectionString'), type: 'string', value: `listKeys(resourceId('Microsoft.EventHub/namespaces/authorizationRules', ${nsSym}.name, 'RootManageSharedAccessKey'), '2022-10-01-preview').primaryConnectionString` });
       break;
     }
 

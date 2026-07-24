@@ -76,7 +76,7 @@ export const AZURE_ATTR_MAP: Record<string, Record<string, string>> = {
   'Database.SQL':          { Endpoint: 'properties.fullyQualifiedDomainName', SecretArn: 'id', Password: 'id', Username: 'id' },
   'Database.DocumentDB':   { Endpoint: 'properties.documentEndpoint', SecretArn: 'id', ConnectionString: '__mongo_connection_string__' },
   'Database.DynamoDB':     { Arn: 'id', Name: 'name', ConnectionString: '__connection_string__' },
-  'Messaging.Stream':      { Arn: 'id', Name: 'name' },
+  'Messaging.Stream':      { Arn: 'id', Name: 'name', ConnectionString: '__eh_connection_string__' },
   'Messaging.Topic':       { Arn: 'id', TopicArn: 'id' },
   'Messaging.Queue':       { Arn: 'id', QueueUrl: 'id', QueueArn: 'id', ConnectionString: '__sb_connection_string__' },
   'Cache.Redis':           { Endpoint: 'properties.hostName', Host: 'properties.hostName', Port: 'properties.sslPort', ConnectionString: '__redis_cs__' },
@@ -198,6 +198,11 @@ export function resolveRef(r: Ref, idx: Map<string, BaseConstruct>, crossParams:
   }
   if ((c.type === 'Messaging.Queue' || c.type === 'Messaging.Topic') && /^(Arn|id|QueueArn|TopicArn|QueueUrl)$/i.test(r.attribute)) {
     return expr(`${sym}Ns.id`);
+  }
+  if (c.type === 'Messaging.Stream' && r.attribute === 'ConnectionString') {
+    // Event Hubs namespace também vem com a regra default RootManageSharedAccessKey
+    // (mesmo mecanismo do Service Bus, ver Messaging.Queue/Topic acima).
+    return expr(`listKeys(resourceId('Microsoft.EventHub/namespaces/authorizationRules', ${sym}Ns.name, 'RootManageSharedAccessKey'), '2022-10-01-preview').primaryConnectionString`);
   }
   if (c.type === 'Cache.Redis' && r.attribute === 'ConnectionString') {
     // ConnectionString usa o database filho (${sym}Db) — listKeys() do cluster
