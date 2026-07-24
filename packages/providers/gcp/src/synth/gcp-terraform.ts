@@ -6,38 +6,21 @@ import {
   K8S_MACHINE_MAP,
   resolveGcpImage,
 } from './common.js';
-
-const RUNTIME_MAP: Record<string, string> = {
-  'nodejs20': 'nodejs20',
-  'nodejs18': 'nodejs18',
-  'python3.12': 'python312',
-  'python3.11': 'python311',
-  'java21': 'java21',
-  'go1.x': 'go121',
-  'dotnet8': 'dotnet8',
-};
-
-export function toTfId(id: string): string {
-  return id.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
-}
-
-interface TFOutput {
-  resources: Record<string, Record<string, unknown>>;
-  outputs: Record<string, { value: string }>;
-  needsZoneVar: boolean;
-}
-
-function addResource(
-  resources: Record<string, Record<string, unknown>>,
-  tfType: string,
-  tfId: string,
-  props: Record<string, unknown>,
-): void {
-  if (!resources[tfType]) resources[tfType] = {};
-  resources[tfType][tfId] = props;
-}
+import { TFOutput, toTfId, addResource } from './constructs/common.js';
+import { synthMonitoring } from './constructs/monitoring.js';
+import { synthStorage } from './constructs/storage.js';
+import { synthFunction } from './constructs/function.js';
+import { synthMessaging } from './constructs/messaging.js';
 
 function synthesizeConstruct(construct: BaseConstruct, ctx: TFOutput): void {
+  if (synthMonitoring(construct, ctx)) return;
+  if (synthStorage(construct, ctx)) return;
+  if (synthFunction(construct, ctx)) return;
+  if (synthMessaging(construct, ctx)) return;
+  synthLegacy(construct, ctx);
+}
+
+function synthLegacy(construct: BaseConstruct, ctx: TFOutput): void {
   const props = construct.props as Record<string, unknown>;
   const id = toTfId(construct.id);
   const r = ctx.resources;
@@ -132,65 +115,6 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: TFOutput): void {
         }];
       }
       addResource(r, 'google_container_cluster', id, clusterProps);
-      break;
-    }
-
-    case 'Storage.Bucket': {
-      const lifecycleRules = (props.lifecycleRules as Array<Record<string, unknown>>) ?? [];
-      const tfRules: Array<Record<string, unknown>> = [];
-      for (const lr of lifecycleRules) {
-        const prefixCond = lr.prefix ? { with_state: 'ANY', matches_prefix: [lr.prefix as string] } : {};
-        if (lr.transitionToGlacierDays) {
-          tfRules.push({
-            action: [{ type: 'SetStorageClass', storage_class: 'ARCHIVE' }],
-            condition: [{ age: lr.transitionToGlacierDays as number, ...prefixCond }],
-          });
-        }
-        if (lr.expireAfterDays) {
-          tfRules.push({
-            action: [{ type: 'Delete' }],
-            condition: [{ age: lr.expireAfterDays as number, ...prefixCond }],
-          });
-        }
-      }
-      addResource(r, 'google_storage_bucket', id, {
-        name: construct.id.toLowerCase().replace(/[^a-z0-9-]/g, '-'),
-        location: (props.location as string) ?? 'US',
-        versioning: [{ enabled: (props.versioning as boolean) ?? false }],
-        uniform_bucket_level_access: !(props.publicAccess as boolean),
-        ...(tfRules.length > 0 ? { lifecycle_rule: tfRules } : {}),
-      });
-      ctx.outputs[`${construct.id}BucketName`] = { value: `\${google_storage_bucket.${id}.name}` };
-      ctx.outputs[`${construct.id}BucketUrl`] = { value: `\${google_storage_bucket.${id}.url}` };
-      break;
-    }
-
-    case 'Storage.FileSystem': {
-      addResource(r, 'google_filestore_instance', id, {
-        name: construct.id,
-        location: '${var.gcp_region}-a',
-        tier: 'STANDARD',
-        networks: [{ network: 'default', modes: ['MODE_IPV4'] }],
-        file_shares: [{ name: construct.id, capacity_gb: 1024 }],
-      });
-      break;
-    }
-
-    case 'Storage.Archive': {
-      const archiveRules: Array<Record<string, unknown>> = [];
-      if (props.retentionDays) {
-        archiveRules.push({
-          action: [{ type: 'Delete' }],
-          condition: [{ age: props.retentionDays as number }],
-        });
-      }
-      addResource(r, 'google_storage_bucket', id, {
-        name: `${construct.id.toLowerCase().replace(/[^a-z0-9-]/g, '-')}-archive`,
-        location: 'US',
-        storage_class: 'ARCHIVE',
-        uniform_bucket_level_access: true,
-        ...(archiveRules.length > 0 ? { lifecycle_rule: archiveRules } : {}),
-      });
       break;
     }
 
@@ -447,115 +371,6 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: TFOutput): void {
       break;
     }
 
-    case 'Function.Lambda': {
-      const environment = (props.environment as Record<string, string>) ?? {};
-      const runtime = RUNTIME_MAP[(props.runtime as string) ?? 'nodejs20'] ?? 'nodejs20';
-      addResource(r, 'google_cloudfunctions2_function', id, {
-        name: construct.id,
-        location: '${var.gcp_region}',
-        build_config: [{
-          runtime,
-          entry_point: (props.handler as string) ?? 'handler',
-          source: [{
-            storage_source: [{
-              bucket: '${var.project_id}-artifacts',
-              object: 'function.zip',
-            }],
-          }],
-        }],
-        service_config: [{
-          available_memory: `${(props.memory as number) ?? 128}Mi`,
-          timeout_seconds: (props.timeout as number) ?? 30,
-          ...(Object.keys(environment).length > 0 ? { environment_variables: environment } : {}),
-        }],
-      });
-      ctx.outputs[`${construct.id}FunctionUrl`] = { value: `\${google_cloudfunctions2_function.${id}.service_config[0].uri}` };
-      break;
-    }
-
-    case 'Function.ApiGateway': {
-      const apiId = toTfId(`${construct.id}_api`);
-      const configId = toTfId(`${construct.id}_config`);
-      const gatewayId = toTfId(`${construct.id}_gw`);
-      const apiName = (props.name as string) ?? construct.id;
-      addResource(r, 'google_api_gateway_api', apiId, {
-        api_id: apiName.toLowerCase().replace(/[^a-z0-9-]/g, '-'),
-        display_name: apiName,
-      });
-      addResource(r, 'google_api_gateway_api_config', configId, {
-        api: `\${google_api_gateway_api.${apiId}.api_id}`,
-        display_name: `${construct.id} config`,
-        openapi_documents: [{
-          document: [{
-            path: 'openapi.yaml',
-            contents: Buffer.from(JSON.stringify({
-              openapi: '3.0.0',
-              info: { title: apiName, version: '1.0' },
-              paths: {},
-            })).toString('base64'),
-          }],
-        }],
-      });
-      addResource(r, 'google_api_gateway_gateway', gatewayId, {
-        api_id: `\${google_api_gateway_api.${apiId}.api_id}`,
-        api_config: `\${google_api_gateway_api_config.${configId}.id}`,
-        gateway_id: `${construct.id}-gateway`.toLowerCase().replace(/[^a-z0-9-]/g, '-'),
-        region: '${var.gcp_region}',
-      });
-      break;
-    }
-
-    case 'Policy.IAM': {
-      const statements = (props.statements as Array<Record<string, unknown>>) ?? [];
-      const attachTo = (props.attachTo as string) ?? construct.id;
-      const accountId = attachTo.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 30);
-      const saId = `${id}_sa`;
-      addResource(r, 'google_service_account', saId, {
-        account_id: accountId,
-        display_name: `Service Account for ${attachTo}`,
-      });
-      statements.forEach((s, i) => {
-        const role = (s.actions as string[])?.[0]?.startsWith('roles/')
-          ? (s.actions as string[])[0]
-          : `roles/viewer`;
-        addResource(r, 'google_project_iam_binding', `${id}_binding_${i}`, {
-          project: '${var.project_id}',
-          role,
-          members: [`serviceAccount:\${google_service_account.${saId}.email}`],
-        });
-      });
-      break;
-    }
-
-    case 'Events.EventBridge': {
-      const rules = (props.rules as Array<Record<string, unknown>>) ?? [];
-      const busName = props.busName as string | undefined;
-      if (busName && busName !== 'default') {
-        const busId = toTfId(busName);
-        addResource(r, 'google_pubsub_topic', busId, {
-          name: busName,
-          message_storage_policy: [{ allowed_persistence_regions: ['${var.gcp_region}'] }],
-        });
-      }
-      for (const rule of rules) {
-        const topicName = `${construct.id}-${(rule.name as string) ?? 'rule'}`;
-        const topicId = toTfId(topicName);
-        addResource(r, 'google_pubsub_topic', topicId, {
-          name: topicName,
-          message_storage_policy: [{ allowed_persistence_regions: ['${var.gcp_region}'] }],
-        });
-        if (rule.targetArn) {
-          addResource(r, 'google_pubsub_subscription', `${topicId}_sub`, {
-            name: `${topicName}-sub`,
-            topic: `\${google_pubsub_topic.${topicId}.id}`,
-            push_config: [{ push_endpoint: rule.targetArn as string }],
-            ack_deadline_seconds: 30,
-          });
-        }
-      }
-      break;
-    }
-
     case 'Workflow.StepFunctions': {
       const steps = (props.steps as Array<Record<string, unknown>>) ?? [];
       const definition = {
@@ -576,42 +391,6 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: TFOutput): void {
       break;
     }
 
-    case 'Messaging.Queue': {
-      addResource(r, 'google_pubsub_topic', id, {
-        name: construct.id,
-        message_storage_policy: [{ allowed_persistence_regions: ['${var.gcp_region}'] }],
-      });
-      addResource(r, 'google_pubsub_subscription', `${id}_sub`, {
-        name: `${construct.id}-sub`,
-        topic: `\${google_pubsub_topic.${id}.id}`,
-        ack_deadline_seconds: (props.visibilityTimeoutSeconds as number) ?? 30,
-        message_retention_duration: `${(props.messageRetentionSeconds as number) ?? 345600}s`,
-      });
-      break;
-    }
-
-    case 'Messaging.Topic': {
-      const subscriptions = (props.subscriptions as Array<Record<string, string>>) ?? [];
-      addResource(r, 'google_pubsub_topic', id, {
-        name: construct.id,
-        message_storage_policy: [{ allowed_persistence_regions: ['${var.gcp_region}'] }],
-      });
-      subscriptions.forEach((s, i) => {
-        const subProps: Record<string, unknown> = {
-          name: `${construct.id}-sub-${i}`,
-          topic: `\${google_pubsub_topic.${id}.id}`,
-          ack_deadline_seconds: 30,
-        };
-        if (s.protocol === 'https' || s.protocol === 'http') {
-          subProps.push_config = [{ push_endpoint: s.endpoint }];
-        } else if (s.protocol === 'lambda') {
-          subProps.push_config = [{ push_endpoint: `\${google_cloudfunctions2_function.${toTfId(s.endpoint)}.service_config[0].uri}` }];
-        }
-        addResource(r, 'google_pubsub_subscription', `${id}_sub_${i}`, subProps);
-      });
-      break;
-    }
-
     case 'Secret.Vault': {
       const secretId = construct.id.replace(/[^a-zA-Z0-9_-]/g, '-');
       addResource(r, 'google_secret_manager_secret', id, {
@@ -628,101 +407,6 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: TFOutput): void {
         name: construct.id.replace(/[^a-zA-Z0-9-]/g, '-'),
         managed: [{ domains: [props.domainName as string, ...sans] }],
       });
-      break;
-    }
-
-    case 'Monitoring.Alarm': {
-      const dimensions = props.dimensions as Record<string, string> | undefined;
-      const operatorMap: Record<string, string> = {
-        GreaterThanThreshold: 'COMPARISON_GT',
-        LessThanThreshold: 'COMPARISON_LT',
-        GreaterThanOrEqualToThreshold: 'COMPARISON_GE',
-        LessThanOrEqualToThreshold: 'COMPARISON_LE',
-      };
-      const dimFilter = dimensions
-        ? Object.entries(dimensions).map(([k, v]) => `metric.labels.${k}="${v}"`).join(' AND ')
-        : '';
-      const filter = [
-        `metric.type="cloudfunctions.googleapis.com/function/${props.metricName}"`,
-        dimFilter,
-      ].filter(Boolean).join(' AND ');
-
-      const alarmActions = (props.alarmActions as string[]) ?? [];
-      const notificationChannels = alarmActions.map((action, i) => {
-        const topicId = toTfId(action.split('.')[0]);
-        const channelId = `${id}_channel_${i}`;
-        addResource(r, 'google_monitoring_notification_channel', channelId, {
-          display_name: `${construct.id} channel ${i}`,
-          type: 'pubsub',
-          labels: { topic: `\${google_pubsub_topic.${topicId}.id}` },
-        });
-        return `\${google_monitoring_notification_channel.${channelId}.id}`;
-      });
-
-      addResource(r, 'google_monitoring_alert_policy', id, {
-        display_name: construct.id,
-        conditions: [{
-          display_name: `${props.metricName} condition`,
-          condition_threshold: [{
-            filter,
-            comparison: operatorMap[(props.comparisonOperator as string) ?? 'GreaterThanThreshold'] ?? 'COMPARISON_GT',
-            threshold_value: props.threshold as number,
-            duration: `${((props.periodSeconds as number) ?? 60) * ((props.evaluationPeriods as number) ?? 2)}s`,
-            aggregations: [{
-              alignment_period: `${(props.periodSeconds as number) ?? 60}s`,
-              per_series_aligner: 'ALIGN_MEAN',
-            }],
-          }],
-        }],
-        combiner: 'OR',
-        enabled: true,
-        notification_channels: notificationChannels,
-      });
-      break;
-    }
-
-    case 'Monitoring.Dashboard': {
-      const widgets = (props.widgets as Array<Record<string, unknown>>) ?? [];
-      const dashboardJson = JSON.stringify({
-        displayName: construct.id,
-        gridLayout: {
-          columns: 3,
-          widgets: widgets.map(w => ({
-            title: w.title as string,
-          })),
-        },
-      });
-      addResource(r, 'google_monitoring_dashboard', id, {
-        dashboard_json: dashboardJson,
-      });
-      break;
-    }
-
-    case 'Logging.Stream': {
-      const filters = (props.subscriptionFilters as Array<Record<string, unknown>>) ?? [];
-      const bucketId = construct.id.replace(/[^a-zA-Z0-9_-]/g, '-');
-      addResource(r, 'google_logging_project_bucket_config', id, {
-        project: '${var.project_id}',
-        location: '${var.gcp_region}',
-        bucket_id: bucketId,
-        retention_days: (props.retentionDays as number) ?? 30,
-      });
-      for (const f of filters) {
-        const sinkId = toTfId(`${construct.id}_sink_${f.name}`);
-        addResource(r, 'google_logging_project_sink', sinkId, {
-          name: `${construct.id}-sink-${(f.name as string).replace(/[^a-zA-Z0-9-]/g, '-')}`,
-          destination: (f.destinationArn as string) ?? '',
-          filter: f.filterPattern as string,
-        });
-      }
-      break;
-    }
-
-    case 'Custom.Resource': {
-      const tf = props.terraform as { type: string; name: string; properties: Record<string, unknown> } | undefined;
-      if (!tf) return;
-      const customId = toTfId(tf.name ?? construct.id);
-      addResource(r, tf.type, customId, tf.properties);
       break;
     }
 
