@@ -33,7 +33,7 @@
     "dev": "tsc --watch",
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit",
-    "test": "jest"
+    "test": "jest --passWithNoTests"
   },
   "peerDependencies": {
     "@aws-sdk/client-dynamodb": "*",

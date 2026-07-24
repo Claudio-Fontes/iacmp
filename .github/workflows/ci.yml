@@ -89,11 +89,14 @@ jobs:
         uses: hashicorp/setup-terraform@v3
 
       - name: Validate AWS golden Terraform JSON templates
+        # Multi-stack goldens (lambda-vpc-redis, rds-secret, websocket-api) são
+        # dicionários JSON com várias stacks — não são .tf.json válidos
+        # individualmente e por isso são excluídos aqui (mesma exclusão do cfn-lint).
         run: |
-          for f in packages/providers/aws/test/golden-tf/*.tf.json; do
+          for f in ecs-alb kinesis-stream s3-lambda-pipeline sns-alarm stepfunctions-approval waf-rest-api; do
             echo "Validating $f..."
             tmpdir=$(mktemp -d)
-            cp "$f" "$tmpdir/main.tf.json"
+            cp "packages/providers/aws/test/golden-tf/$f.tf.json" "$tmpdir/main.tf.json"
             terraform -chdir="$tmpdir" init -backend=false
             terraform -chdir="$tmpdir" validate
             rm -rf "$tmpdir"
