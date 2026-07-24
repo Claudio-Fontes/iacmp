@@ -2,16 +2,20 @@
 
 CLI unificado e inteligente para provisionamento de infraestrutura em nuvem com geração de stacks via IA.
 
-**AWS é o provider de referência**, validado por uma bateria de 20 ciclos de deploy real cobrindo ECS/ALB, Lambda em VPC, RDS, ElastiCache Redis, DynamoDB, Step Functions, WAF, WebSocket API Gateway, Kinesis e SNS. Azure e GCP são **experimentais**: o synth gera templates, mas esses providers nunca passaram por deploy real e carregam as mesmas classes de bug que a bateria encontrou e corrigiu no AWS. Não use Azure ou GCP em produção.
+**Esta versão suporta AWS e Azure.** As duas nuvens estão em paridade de síntese — 19 dos 20 cenários da bateria em cada uma, com o mesmo código de construct gerando CloudFormation na AWS e Bicep no Azure. A AWS é o provider de referência, validado por uma bateria completa de deploy real cobrindo ECS/ALB, Lambda em VPC, RDS, ElastiCache Redis, DynamoDB, Step Functions, WAF, WebSocket API Gateway, Kinesis e SNS. O Azure tem deploy real validado e está concluindo a mesma bateria ponta a ponta.
+
+**Terraform e GCP são versões futuras** e não fazem parte desta release.
 
 ## Status dos providers
 
 | Provider | Status | Observação |
 |---|---|---|
-| `aws` | Estável — deploy real validado | Provider de referência; 20 ciclos de bateria com correções aplicadas |
-| `terraform` | Estável (2 cenários validados por deploy real: sns-alarm e s3-lambda-pipeline) | Gerado via `emitTerraform(buildGraph(...))` — mesmos constructs, mesma validação semântica e CFN do provider aws; plan/apply/destroy confirmados na conta AWS e2e |
-| `azure` | Experimental / congelado | Synth gera ARM templates mas nunca validado em deploy real; não recebe novas features |
-| `gcp` | Experimental / congelado | O Deployment Manager foi descontinuado pela Google; o synth atual será substituído por Terraform |
+| `aws` | **Suportado** — bateria e2e completa | Provider de referência; 20 ciclos de deploy real com correções aplicadas. 19/20 cenários |
+| `azure` | **Suportado** — deploy real validado, bateria e2e em conclusão | Synth em Bicep + Deployment Stacks. Cobre APIM (inclusive compartilhado), Container Apps, Cosmos, Key Vault, Event Hubs, Logic Apps, WAF (App Gateway / Front Door) e Monitor. 19/20 cenários |
+| `terraform` | **Versão futura** | O emissor existe (`emitTerraform(buildGraph(...))`) e 2 cenários foram validados em deploy real, mas o provider não é suportado nesta release |
+| `gcp` | **Versão futura** | O Deployment Manager foi descontinuado pela Google; o suporte será reconstruído sobre Terraform |
+
+> O único cenário ausente é o WebSocket, e ele falta nas duas nuvens — o construct ainda não existe no core.
 
 ## Instalação
 
@@ -52,11 +56,11 @@ iacmp init meu-projeto --template rds
 iacmp init meu-projeto --template serverless
 iacmp init --list                           # ver todos os templates
 
-# Sintetiza as stacks para CloudFormation
+# Sintetiza as stacks para CloudFormation (AWS)
 cd meu-projeto && iacmp synth
 
-# Sintetiza para outro provider
-iacmp synth --provider terraform
+# Sintetiza para Azure (Bicep)
+iacmp synth --provider azure
 
 # Gera diagrama de arquitetura
 iacmp diagram                              # Structurizr DSL
@@ -117,10 +121,10 @@ iacmp init meu-projeto --template rds
 
 | Provider | Output | Status |
 |---|---|---|
-| `aws` | CloudFormation JSON | Estável |
-| `azure` | ARM Template JSON | Experimental / congelado |
-| `gcp` | GCP Deployment Manager JSON | Experimental / congelado |
-| `terraform` | Terraform JSON (`.tf.json`) | Estável (2 cenários validados) |
+| `aws` | CloudFormation JSON | **Suportado** |
+| `azure` | Bicep + Deployment Stacks | **Suportado** |
+| `terraform` | Terraform JSON (`.tf.json`) | Versão futura |
+| `gcp` | — | Versão futura |
 
 ## Configuração de deploy por provider
 
@@ -169,18 +173,6 @@ AZURE_CLIENT_ID=<appId>
 AZURE_CLIENT_SECRET=<password>
 AZURE_TENANT_ID=<tenant>
 AZURE_SUBSCRIPTION_ID=<subscription-id>
-```
-
-### GCP
-
-```bash
-# Instala o Google Cloud CLI
-brew install --cask google-cloud-sdk   # macOS
-
-# Login e configura projeto
-gcloud auth login
-gcloud config set project <project-id>
-gcloud auth application-default login  # credenciais para SDKs
 ```
 
 ## Constructs disponíveis
@@ -283,9 +275,9 @@ packages/
 ├── ai/                   # Geração de stacks via IA (Claude/Copilot)
 ├── providers/
 │   ├── aws/              # CloudFormation
-│   ├── azure/            # ARM Template
-│   ├── gcp/              # Deployment Manager
-│   └── terraform/        # HCL
+│   ├── azure/            # Bicep + Deployment Stacks
+│   ├── gcp/              # (versão futura)
+│   └── terraform/        # (versão futura)
 ├── plugin-sdk/           # SDK para providers customizados
 ├── dashboard/            # Dashboard web
 └── registry/             # Registry de constructs
