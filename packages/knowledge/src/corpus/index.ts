@@ -25,6 +25,7 @@ import { cacheRedis } from './azure/cache-redis.js';
 import { postgresPrivateVnet } from './azure/postgres-private-vnet.js';
 import { staticSiteCdn } from './azure/static-site-cdn.js';
 import { containerAppsIngress } from './azure/container-apps-ingress.js';
+import { workflowLogicApps } from './azure/workflow-logic-apps.js';
 import { LEGACY_EXAMPLES } from './legacy/examples.js';
 
 export interface Example {
@@ -62,6 +63,7 @@ export const ALL_EXAMPLES: Example[] = [
   postgresPrivateVnet,
   staticSiteCdn,
   containerAppsIngress,
+  workflowLogicApps,
   // 105 legados sanados (bulk do insert-batch) — fonte única versionada.
   ...LEGACY_EXAMPLES,
 ];
