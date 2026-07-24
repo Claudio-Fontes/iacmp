@@ -221,6 +221,20 @@ válida; vira **refactor** (redistribuir em `constructs/`). O Passo 0 saiu em ho
 nos 2-4 dias estimados. **Fase 1 revisada para ~3-4,5 semanas.** Os 3 bugs acima são de
 semântica, invisíveis ao `validate`, e entram como itens do G1/Fase 2 (§4).
 
+### 2.2.2 Dívida de nomenclatura GCP (descoberta ao criar os goldens da Fatia 2)
+
+Ao gerar goldens que exercitam compute/database/network (§4, G1b), o `terraform validate`
+expôs um 4º bug de semântica, **sistêmico**: os recursos `google_compute_*`
+(`google_compute_network`, `_subnetwork`, `_instance_template`, `_backend_bucket`,
+`google_container_cluster`, `google_compute_security_policy`…) usam `construct.id` **cru**
+como `name`, mas o GCP exige `^[a-z](?:[-a-z0-9]{0,61}[a-z0-9])?$` (minúsculas). `AppVpc`,
+`PublicSubnet1`, `ApiWaf` etc. são rejeitados. Não é global — `cloudfunctions2`, `storage`,
+`pubsub` aceitam maiúscula (por isso s3-lambda/sns-alarm validam). Fix cirúrgico por tipo
+de recurso (normalizar só onde a API restringe), a fazer **após o refactor da Fatia 2**;
+ao corrigir, os goldens `compute-suite`/`network-suite` regeneram (output muda de propósito).
+Os goldens atuais desses 2 cenários **congelam o output com a dívida** — servem para travar
+o refactor byte-a-byte, não como atestado de validade.
+
 ### 2.3 O que a Fase 1 não pode dizer
 
 Precisa estar escrito, porque é exatamente o erro que acabamos de corrigir no README.
