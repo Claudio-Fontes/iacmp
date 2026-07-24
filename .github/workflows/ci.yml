@@ -88,9 +88,23 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
-      - name: Validate golden Terraform JSON templates
+      - name: Validate AWS golden Terraform JSON templates
         run: |
           for f in packages/providers/aws/test/golden-tf/*.tf.json; do
+            echo "Validating $f..."
+            tmpdir=$(mktemp -d)
+            cp "$f" "$tmpdir/main.tf.json"
+            terraform -chdir="$tmpdir" init -backend=false
+            terraform -chdir="$tmpdir" validate
+            rm -rf "$tmpdir"
+          done
+
+      - name: Validate GCP golden Terraform JSON templates
+        # Goldens do GCP são single-stack (.tf.json válidos individualmente) e
+        # fecham o G1b (docs/roadmap-fase2.md): garante que o synth GCP produz
+        # Terraform que o provider google aceita, a cada push/PR.
+        run: |
+          for f in packages/providers/gcp/test/golden-tf/*.tf.json; do
             echo "Validating $f..."
             tmpdir=$(mktemp -d)
             cp "$f" "$tmpdir/main.tf.json"
