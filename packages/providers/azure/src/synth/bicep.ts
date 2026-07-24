@@ -39,6 +39,27 @@ function renderBicep(
   if (params.length > 0) lines.push('');
 
   for (const r of resources) {
+    // `module` (ex: filhos do APIM compartilhado cross-RG — ver Function.ApiGateway):
+    // sintaxe própria, sem `type@apiVersion` nem `existing` — aponta pra um arquivo
+    // .bicep-irmão, opcionalmente `scope`d pra outro resource group, com `params:`
+    // (reaproveita bv() em cima de r.properties, igual a `properties` de um resource comum).
+    if (r.moduleFile) {
+      const fields: Array<[string, unknown]> = [];
+      if (r.scope) fields.push(['scope', expr(r.scope)]);
+      if (r.name !== undefined) fields.push(['name', r.name]);
+      if (r.dependsOn && r.dependsOn.length > 0) {
+        fields.push(['dependsOn', expr(`[\n    ${r.dependsOn.join('\n    ')}\n  ]`)]);
+      }
+      fields.push(['params', r.properties]);
+      lines.push(`module ${r.sym} '${r.moduleFile}' = {`);
+      for (const [k, v] of fields) {
+        lines.push(`  ${k}: ${bv(v, 1)}`);
+      }
+      lines.push('}');
+      lines.push('');
+      continue;
+    }
+
     const fields: Array<[string, unknown]> = [];
     if (r.scope) fields.push(['scope', expr(r.scope)]);
     if (r.parent) fields.push(['parent', expr(r.parent)]);
@@ -199,6 +220,13 @@ export function emitBicep(stack: Stack, opts?: {
   sharedApim?: { name: string; resourceGroup: string; projectResourceGroup?: string };
   /** Nome do projeto (iacmp.json → name) — usado para prefixar os filhos do APIM compartilhado. */
   projectName?: string;
+  /** Recebe (via push) o conteúdo de módulos Bicep aninhados que este synth
+   * precisar gerar como arquivos-irmãos (ex: filhos do APIM compartilhado quando
+   * sharedApim.resourceGroup difere do RG do projeto — ver Function.ApiGateway).
+   * Quem chama (o comando `synth`) grava cada item em disco ao lado do .bicep
+   * principal, no mesmo diretório (o `module` referencia por nome relativo).
+   * Ausência/array não fornecido = nenhum módulo necessário (regressão zero). */
+  moduleFilesOut?: Array<{ filename: string; content: string }>;
 }): string {
   const accountTier = opts?.accountTier ?? 'standard';
   // Normalização + validação semântica provider-agnóstica (o MESMO ponto de
@@ -378,7 +406,13 @@ export function emitBicep(stack: Stack, opts?: {
         crossRg: opts.sharedApim.projectResourceGroup !== undefined
           && opts.sharedApim.projectResourceGroup !== opts.sharedApim.resourceGroup,
         projectSlug: (opts.projectName ?? stack.name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-+|-+$)/g, '') || 'iacmp',
+        crossRgModuleSym: 'sharedApimChildren',
       }
+    : undefined;
+  // Só existe quando crossRg: acumula os filhos do APIM compartilhado que não
+  // podem ficar no scope do template do projeto (BCP165) — ver Function.ApiGateway.
+  const apimCrossRgChild = sharedApim?.crossRg
+    ? { resources: [] as BicepResource[], outputs: [] as BicepOutput[], params: new Map<string, string>(), existingDeclared: false }
     : undefined;
 
   const ctx: SynthContext = {
@@ -398,6 +432,7 @@ export function emitBicep(stack: Stack, opts?: {
     crossStackSubnetIds,
     crossStackVpcIds,
     sharedApim,
+    apimCrossRgChild,
   };
 
   for (const construct of stack.constructs) {
@@ -486,6 +521,36 @@ export function emitBicep(stack: Stack, opts?: {
       `NÃO concatene refs — use apenas ref() diretamente nos campos que aceitam referência.\n` +
       `No Azure, policies de storage usam RBAC e não precisam de ARN com '/*'.`
     );
+  }
+
+  // APIM compartilhado cross-RG: renderiza os filhos acumulados por
+  // Function.ApiGateway (case sharedApim.crossRg) como um arquivo .bicep-irmão
+  // e adiciona o `module` que o invoca com `scope: resourceGroup(sharedApim.
+  // resourceGroup)` — só roda quando algum API Gateway efetivamente usou o
+  // sharedApim cross-RG (apimCrossRgChild.resources não fica vazio nesse caso).
+  if (apimCrossRgChild && apimCrossRgChild.resources.length > 0 && sharedApim) {
+    const childParams = [...apimCrossRgChild.params.keys()].map(name => ({ name, type: 'string' }));
+    const childContent = renderBicep(childParams, apimCrossRgChild.resources, apimCrossRgChild.outputs);
+    // Prefixo "_" (mesma convenção do _main.bicep): isStackFile (synth-out.ts)
+    // ignora arquivos "_*" ao listar templates/stacks — sem isso, este módulo
+    // companheiro (que só existe pra ser referenciado de DENTRO do .bicep da
+    // stack, nunca deployado sozinho) seria tratado como uma stack própria pelo
+    // _main.bicep e o `param` interno dele exigiria um output inexistente.
+    const childFilename = `_${stack.name}.apim-shared-children.bicep`;
+    opts?.moduleFilesOut?.push({ filename: childFilename, content: childContent });
+
+    const moduleParams: Record<string, unknown> = {};
+    for (const [name, value] of apimCrossRgChild.params) moduleParams[name] = value;
+
+    resources.push({
+      sym: sharedApim.crossRgModuleSym,
+      type: 'module',
+      apiVersion: '',
+      moduleFile: childFilename,
+      name: `${sharedApim.projectSlug}-apim-children-deploy`,
+      scope: `resourceGroup('${sharedApim.resourceGroup}')`,
+      properties: moduleParams,
+    });
   }
 
   const params: Array<{ name: string; type: string; default?: unknown; secure?: boolean }> = [

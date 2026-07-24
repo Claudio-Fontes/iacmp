@@ -109,6 +109,29 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
       const routeAuthorizerIds = [...new Set(routes.filter(r => r.authorizerLambdaId).map(r => r.authorizerLambdaId as string))];
       const hasRouteAuthorizer = routeAuthorizerIds.length > 0;
 
+      // APIM compartilhado cross-RG (sharedApim.resourceGroup != RG do projeto):
+      // os filhos do serviço (apis/backends/namedValues) só podem viver dentro de
+      // um `module` aninhado com scope próprio — Bicep proíbe que um recurso
+      // `parent:`-linkado a um `existing` cross-RG herde um scope diferente do
+      // arquivo (BCP165; ver emitBicep). A autorização JWT via Secret.Vault
+      // (routes com authorizerLambdaId) precisa ler a identity do APIM E
+      // conceder acesso no Key Vault do PROJETO — uma combinação ainda não
+      // implementada para esse modo. Falha explícita em synth-time em vez de
+      // gerar Bicep incorreto/não-testado.
+      const crossRg = !!ctx.sharedApim?.crossRg;
+      if (crossRg && hasRouteAuthorizer) {
+        throw new Error(
+          `Function.ApiGateway "${construct.id}": rotas com authorizerLambdaId (JWT via Secret.Vault) ainda não são ` +
+          `suportadas combinadas com azure.sharedApim num resource group DIFERENTE do projeto ` +
+          `(azure.sharedApim.resourceGroup != resourceGroup do projeto). Use um sharedApim no MESMO resource group ` +
+          `do projeto, ou remova o sharedApim para este projeto ter seu próprio APIM.`,
+        );
+      }
+      const crossRgChild = crossRg ? ctx.apimCrossRgChild : undefined;
+      if (crossRg && !crossRgChild) {
+        throw new Error(`[azure] interno: sharedApim.crossRg=true mas ctx.apimCrossRgChild não foi inicializado (bug em emitBicep).`);
+      }
+
       const kvEntry = hasRouteAuthorizer ? [...ctx.idx.entries()].find(([, c]) => c.type === 'Secret.Vault') : undefined;
       const jwtKvSym = kvEntry ? toSym(kvEntry[0]) : undefined;
       const apimNamedValueSym = jwtKvSym ? `${sym}JwtNamedValue` : undefined;
@@ -122,7 +145,38 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
       // colidiriam no roteamento, não só no nome do recurso ARM).
       const namePrefix = ctx.sharedApim ? `${ctx.sharedApim.projectSlug}-` : '';
 
-      if (ctx.sharedApim) {
+      // crossRg: todo filho (parent:) do serviço APIM vai para o acumulador do
+      // módulo aninhado em vez do template do projeto, e o "parent" passa a ser
+      // o `existing` fixo declarado DENTRO do próprio módulo (sharedApimSvc) —
+      // `sym` (o símbolo local deste construct) não existe nesse arquivo.
+      const targetResources = crossRg ? crossRgChild!.resources : resources;
+      const apimParentSym = crossRg ? 'sharedApimSvc' : sym;
+
+      // Valor computado no escopo do template do PROJETO (pode referenciar
+      // símbolos locais como lambdaSym, ou params cross-stack já existentes) que
+      // precisa virar VALOR de um param do módulo aninhado — Bicep não deixa o
+      // módulo enxergar símbolos do arquivo pai diretamente. Fora do modo
+      // crossRg, é passthrough (nenhuma indireção extra, comportamento idêntico
+      // ao anterior).
+      const toChildParam = (paramName: string, valueExpr: string): string => {
+        if (!crossRg) return valueExpr;
+        crossRgChild!.params.set(paramName, valueExpr);
+        return expr(paramName);
+      };
+
+      if (crossRg) {
+        if (!crossRgChild!.existingDeclared) {
+          crossRgChild!.existingDeclared = true;
+          crossRgChild!.resources.push({
+            sym: 'sharedApimSvc',
+            type: 'Microsoft.ApiManagement/service',
+            apiVersion: '2023-05-01-preview',
+            name: expr(`'${ctx.sharedApim!.name}'`),
+            properties: {},
+            existing: true,
+          });
+        }
+      } else if (ctx.sharedApim) {
         resources.push({
           sym,
           type: 'Microsoft.ApiManagement/service',
@@ -130,7 +184,6 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
           name: expr(`'${ctx.sharedApim.name}'`),
           properties: {},
           existing: true,
-          ...(ctx.sharedApim.crossRg ? { scope: `resourceGroup('${ctx.sharedApim.resourceGroup}')` } : {}),
         });
       } else {
         resources.push({
@@ -156,18 +209,18 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
 
       const apiSym = `${sym}Api`;
       const apiPath = `${namePrefix}${(props.path as string) || 'api'}`;
-      resources.push({
+      targetResources.push({
         sym: apiSym,
         type: 'Microsoft.ApiManagement/service/apis',
         apiVersion: '2023-05-01-preview',
-        parent: sym,
+        parent: apimParentSym,
         name: `${namePrefix}main`,
         properties: { displayName: rawName, path: apiPath, protocols: ['https'], subscriptionRequired: false, serviceUrl: '' },
       });
 
       if (props.cors) {
         const corsXml = `<policies><inbound><base /><cors allow-credentials="false"><allowed-origins><origin>*</origin></allowed-origins><allowed-methods preflight-result-max-age="300"><method>*</method></allowed-methods><allowed-headers><header>*</header></allowed-headers></cors></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>`;
-        resources.push({ sym: `${sym}ApiPolicy`, type: 'Microsoft.ApiManagement/service/apis/policies', apiVersion: '2023-05-01-preview', parent: apiSym, name: 'policy', properties: { value: corsXml, format: 'xml' } });
+        targetResources.push({ sym: `${sym}ApiPolicy`, type: 'Microsoft.ApiManagement/service/apis/policies', apiVersion: '2023-05-01-preview', parent: apiSym, name: 'policy', properties: { value: corsXml, format: 'xml' } });
       }
 
       const uniqueLambdaIds = [...new Set(routes.filter(r => r.lambdaId).map(r => r.lambdaId as string))];
@@ -189,14 +242,15 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
           crossParams.set(fqdnParam, 'string');
           backendUrl = expr(`'https://\${${fqdnParam}}/api/HttpTrigger'`);
         }
-        resources.push({
+        const backendUrlValue = toChildParam(`${sym}Backend${lambdaId.replace(/[^a-zA-Z0-9]/g, '')}Url`, backendUrl);
+        targetResources.push({
           sym: `${sym}Backend${lambdaId.replace(/[^a-zA-Z0-9]/g, '')}`,
           type: 'Microsoft.ApiManagement/service/backends',
           apiVersion: '2023-05-01-preview',
-          parent: sym,
+          parent: apimParentSym,
           name: backendName,
           properties: {
-            url: backendUrl,
+            url: backendUrlValue,
             protocol: 'http',
             description: `Function App backend for ${lambdaId}`,
           },
@@ -212,7 +266,7 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
         const opSym = `${sym}Op${ri}`;
         const sanitizedPath = path.replace(/\{(\w+)\+\}/g, '{$1}').replace(/^\$/, '');
         const templateParams = [...sanitizedPath.matchAll(/\{(\w+)\}/g)].map(m => ({ name: m[1], required: true, type: 'string' }));
-        resources.push({
+        targetResources.push({
           sym: opSym,
           type: 'Microsoft.ApiManagement/service/apis/operations',
           apiVersion: '2023-05-01-preview',
@@ -232,7 +286,7 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
           const opXml = usesJwt
             ? `<policies><inbound><base /><validate-jwt header-name="Authorization" failed-validation-httpcode="401" failed-validation-error-message="Unauthorized" require-expiration-time="false"><issuer-signing-keys><key>{{${namePrefix}jwt-signing-key}}</key></issuer-signing-keys></validate-jwt><set-backend-service backend-id="${backendId}" /></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>`
             : `<policies><inbound><base /><set-backend-service backend-id="${backendId}" /></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>`;
-          resources.push({
+          targetResources.push({
             sym: `${sym}Policy${ri}`,
             type: 'Microsoft.ApiManagement/service/apis/operations/policies',
             apiVersion: '2023-05-01-preview',
@@ -247,6 +301,10 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
         }
       }
 
+      // jwtKvSym só existe quando hasRouteAuthorizer — e crossRg+hasRouteAuthorizer
+      // já lançou lá em cima, então este bloco só roda com APIM próprio ou
+      // sharedApim same-RG (sym é o símbolo real da service resource no template
+      // do projeto — nunca precisa de targetResources/apimParentSym).
       if (jwtKvSym) {
         const apimKvAccessPolicySym = `${sym}KvAccessPolicy`;
         resources.push({
@@ -295,14 +353,24 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
           crossParams.set(authFqdnParam, 'string');
           authUrl = expr(`'https://\${${authFqdnParam}}'`);
         }
-        resources.push({ sym: `${sym}AuthorizerBackend`, type: 'Microsoft.ApiManagement/service/backends', apiVersion: '2023-05-01-preview', parent: sym, name: `${namePrefix}authorizer-backend`, properties: { description: `Function App authorizer backend (${authorizerLambdaId})`, url: authUrl, protocol: 'http' } });
+        const authUrlValue = toChildParam(`${sym}AuthorizerUrl`, authUrl);
+        targetResources.push({ sym: `${sym}AuthorizerBackend`, type: 'Microsoft.ApiManagement/service/backends', apiVersion: '2023-05-01-preview', parent: apimParentSym, name: `${namePrefix}authorizer-backend`, properties: { description: `Function App authorizer backend (${authorizerLambdaId})`, url: authUrlValue, protocol: 'http' } });
       }
 
       // Url inclui o path base da API (paridade com AWS, cujo ApiUrl inclui o
       // stage /prod) — sem ele o consumidor toma 404 do APIM ("Resource not found").
       // Em APIM compartilhado, apiPath já vem prefixado por projectSlug (é a rota
       // real no gateway — precisa bater com o `path` declarado na API acima).
-      outputs.push({ name: outputName(construct.id, 'Url'), type: 'string', value: `'\${${sym}.properties.gatewayUrl}/${apiPath}'` });
+      if (crossRg) {
+        // sym (a service resource) só existe DENTRO do módulo aninhado — o
+        // template do projeto não a enxerga; o módulo exporta a URL final e o
+        // projeto repassa `<module>.outputs.<nome>`.
+        const childOutputName = `${sym}ApiUrl`;
+        crossRgChild!.outputs.push({ name: childOutputName, type: 'string', value: `'\${sharedApimSvc.properties.gatewayUrl}/${apiPath}'` });
+        outputs.push({ name: outputName(construct.id, 'Url'), type: 'string', value: `${ctx.sharedApim!.crossRgModuleSym}.outputs.${childOutputName}` });
+      } else {
+        outputs.push({ name: outputName(construct.id, 'Url'), type: 'string', value: `'\${${sym}.properties.gatewayUrl}/${apiPath}'` });
+      }
       break;
     }
 

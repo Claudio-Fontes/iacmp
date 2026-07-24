@@ -356,15 +356,23 @@ export default class Synth extends Command {
           case 'azure': {
             const p = new AzureProvider();
             const projectResourceGroup = config.resourceGroup ?? (config.name ? `${config.name}-rg` : undefined);
+            const moduleFilesOut: Array<{ filename: string; content: string }> = [];
             const bicep = p.synthesize(typedStack, allStacks, {
               accountTier: (config.accountTier === 'standard' ? 'standard' : 'free'),
               sharedApim: config.azure?.sharedApim
                 ? { ...config.azure.sharedApim, projectResourceGroup }
                 : undefined,
               projectName: config.name || undefined,
+              moduleFilesOut,
             });
             const outPath = path.join(provOutDir, `${stackName}.bicep`);
             fs.writeFileSync(outPath, bicep);
+            // Módulos-irmãos (ex: filhos do APIM compartilhado cross-RG — ver
+            // bicep.ts) vivem no MESMO diretório do .bicep principal, que os
+            // referencia por nome de arquivo relativo.
+            for (const mf of moduleFilesOut) {
+              fs.writeFileSync(path.join(provOutDir, mf.filename), mf.content);
+            }
             const { extractAzureFunctionMeta, extractAzureContainerBuilds } = await import('@iacmp/provider-azure');
             const fnMeta = extractAzureFunctionMeta(typedStack, allStacks);
             const containerBuilds = extractAzureContainerBuilds(typedStack, config.name || undefined);

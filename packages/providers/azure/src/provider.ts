@@ -8,6 +8,7 @@ export class AzureProvider {
     accountTier?: 'free' | 'standard';
     sharedApim?: { name: string; resourceGroup: string; projectResourceGroup?: string };
     projectName?: string;
+    moduleFilesOut?: Array<{ filename: string; content: string }>;
   }): string {
     return emitBicep(stack, { ...opts, allStacks });
   }

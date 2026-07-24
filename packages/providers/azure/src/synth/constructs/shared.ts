@@ -270,6 +270,12 @@ export interface BicepResource {
    * aceitam name/scope/parent no Bicep; location/kind/sku/tags/identity/
    * dependsOn/properties são ignorados na emissão (ver renderBicep). */
   existing?: boolean;
+  /** Quando setado, este item NÃO é um `resource` — é um `module` Bicep apontando
+   * para um arquivo-irmão (ex: filhos do APIM compartilhado quando o RG do APIM
+   * difere do RG do projeto — ver Function.ApiGateway/emitBicep). `type`/`apiVersion`
+   * são ignorados na emissão; `properties` vira o bloco `params:` do module;
+   * `name` vira o nome da implantação (`Microsoft.Resources/deployments`). */
+  moduleFile?: string;
 }
 
 export interface BicepOutput {
@@ -312,5 +318,22 @@ export interface SynthContext {
     /** true quando resourceGroup do APIM difere do RG de deploy do projeto — exige `scope: resourceGroup('...')` no existing. */
     crossRg: boolean;
     projectSlug: string;
+    /** Symbol fixo do `module` que agrega os filhos do APIM quando crossRg=true
+     * (reaproveitado por todos os Function.ApiGateway da stack — um só module
+     * por stack, mesmo com múltiplos API Gateways). Irrelevante quando crossRg=false. */
+    crossRgModuleSym: string;
+  };
+  /** Acumulador dos filhos do APIM compartilhado quando sharedApim.crossRg é true
+   * (ver Function.ApiGateway). Bicep proíbe que um recurso filho (`parent:`) de um
+   * `existing` cross-resource-group herde escopo diferente do arquivo (BCP165) —
+   * a única saída é um module aninhado com `scope: resourceGroup(...)` próprio.
+   * emitBicep renderiza isto como um arquivo .bicep-irmão ao final do synth. */
+  apimCrossRgChild?: {
+    resources: BicepResource[];
+    outputs: BicepOutput[];
+    /** nome do param do módulo-filho → expressão Bicep (calculada no escopo do
+     * template pai) que vira o VALOR desse param na invocação do `module`. */
+    params: Map<string, string>;
+    existingDeclared: boolean;
   };
 }
