@@ -395,7 +395,14 @@ export const awsExecutor: DeployExecutor = {
   async planDestroy(ctx: DestroyContext): Promise<NativeCommand[]> {
     return [
       { bin: 'aws', args: ['cloudformation', 'delete-stack', '--stack-name', ctx.stackName, '--region', ctx.region] },
-      { bin: 'aws', args: ['cloudformation', 'wait', 'stack-delete-complete', '--stack-name', ctx.stackName, '--region', ctx.region] },
+      // O waiter do CLI desiste em ~15min (30 tentativas × 30s). O cleanup de ENI
+      // de Lambda-em-VPC costuma passar disso — sem retries o destroy REPORTAVA
+      // falha enquanto o CloudFormation ainda deletava, e a próxima stack na ordem
+      // reversa (ex: a VPC que a database importa) não era disparada. Com retries,
+      // cada re-execução do waiter continua aguardando o DELETE_IN_PROGRESS até
+      // completar (~1h de tolerância) e só então a próxima stack é destruída; um
+      // DELETE_FAILED real é estado terminal → o waiter falha rápido, sem desperdício.
+      { bin: 'aws', args: ['cloudformation', 'wait', 'stack-delete-complete', '--stack-name', ctx.stackName, '--region', ctx.region], retries: 3 },
     ];
   },
 
