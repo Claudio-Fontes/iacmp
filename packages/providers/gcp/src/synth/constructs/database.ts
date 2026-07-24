@@ -1,6 +1,6 @@
 import { BaseConstruct } from '@iacmp/core';
 import { CACHE_TIER_MAP, CACHE_CAPACITY_MAP } from '../common.js';
-import { TFOutput, toTfId, addResource } from './common.js';
+import { TFOutput, toTfId, addResource, gcpName } from './common.js';
 
 export function synthDatabase(construct: BaseConstruct, ctx: TFOutput): boolean {
   const props = construct.props as Record<string, unknown>;
@@ -21,7 +21,7 @@ export function synthDatabase(construct: BaseConstruct, ctx: TFOutput): boolean 
       };
       const dbVersion = dbVersionMap[engine] ?? 'MYSQL_8_0';
       addResource(r, 'google_sql_database_instance', id, {
-        name: construct.id,
+        name: gcpName(construct.id),
         database_version: dbVersion,
         region: '${var.gcp_region}',
         settings: [{

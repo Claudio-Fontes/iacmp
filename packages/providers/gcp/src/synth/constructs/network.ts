@@ -1,5 +1,5 @@
 import { BaseConstruct } from '@iacmp/core';
-import { TFOutput, toTfId, addResource } from './common.js';
+import { TFOutput, toTfId, addResource, gcpName } from './common.js';
 
 export function synthNetwork(construct: BaseConstruct, ctx: TFOutput): boolean {
   const props = construct.props as Record<string, unknown>;
@@ -10,7 +10,7 @@ export function synthNetwork(construct: BaseConstruct, ctx: TFOutput): boolean {
 
     case 'Network.VPC': {
       addResource(r, 'google_compute_network', id, {
-        name: construct.id,
+        name: gcpName(construct.id),
         auto_create_subnetworks: false,
         routing_mode: 'REGIONAL',
       });
@@ -26,7 +26,7 @@ export function synthNetwork(construct: BaseConstruct, ctx: TFOutput): boolean {
         networkRef = vpcId ?? 'default';
       }
       addResource(r, 'google_compute_subnetwork', id, {
-        name: construct.id,
+        name: gcpName(construct.id),
         network: networkRef,
         ip_cidr_range: props.cidr as string,
         region: '${var.gcp_region}',
@@ -59,7 +59,7 @@ export function synthNetwork(construct: BaseConstruct, ctx: TFOutput): boolean {
             : [`${rule.fromPort}-${rule.toPort}`];
         }
         addResource(r, 'google_compute_firewall', fwId, {
-          name: `${construct.id}-ingress-${i}`,
+          name: `${gcpName(construct.id)}-ingress-${i}`,
           network: networkRef,
           direction: 'INGRESS',
           priority: 1000 + i,
@@ -81,7 +81,7 @@ export function synthNetwork(construct: BaseConstruct, ctx: TFOutput): boolean {
             : [`${rule.fromPort}-${rule.toPort}`];
         }
         addResource(r, 'google_compute_firewall', fwId, {
-          name: `${construct.id}-egress-${i}`,
+          name: `${gcpName(construct.id)}-egress-${i}`,
           network: networkRef,
           direction: 'EGRESS',
           priority: 1000 + i,
@@ -103,7 +103,7 @@ export function synthNetwork(construct: BaseConstruct, ctx: TFOutput): boolean {
         description: (rule.description as string) ?? '',
       }));
       addResource(r, 'google_compute_security_policy', id, {
-        name: construct.id,
+        name: gcpName(construct.id),
         rule: [
           ...securityRules,
           {
@@ -120,21 +120,21 @@ export function synthNetwork(construct: BaseConstruct, ctx: TFOutput): boolean {
     case 'Network.LoadBalancer': {
       const lbType = (props.type as string) ?? 'application';
       addResource(r, 'google_compute_backend_service', `${id}_backend`, {
-        name: `${construct.id}-backend`,
+        name: `${gcpName(construct.id)}-backend`,
         protocol: lbType === 'network' ? 'TCP' : 'HTTP',
         load_balancing_scheme: (props.scheme as string) === 'internal' ? 'INTERNAL' : 'EXTERNAL',
       });
       if (lbType === 'application') {
         addResource(r, 'google_compute_url_map', `${id}_url_map`, {
-          name: `${construct.id}-url-map`,
+          name: `${gcpName(construct.id)}-url-map`,
           default_service: `\${google_compute_backend_service.${id}_backend.id}`,
         });
         addResource(r, 'google_compute_target_http_proxy', `${id}_http_proxy`, {
-          name: `${construct.id}-http-proxy`,
+          name: `${gcpName(construct.id)}-http-proxy`,
           url_map: `\${google_compute_url_map.${id}_url_map.id}`,
         });
         addResource(r, 'google_compute_global_forwarding_rule', `${id}_forwarding_rule`, {
-          name: `${construct.id}-forwarding-rule`,
+          name: `${gcpName(construct.id)}-forwarding-rule`,
           target: `\${google_compute_target_http_proxy.${id}_http_proxy.id}`,
           port_range: '80',
           load_balancing_scheme: 'EXTERNAL',
@@ -147,12 +147,12 @@ export function synthNetwork(construct: BaseConstruct, ctx: TFOutput): boolean {
       const origins = (props.origins as Array<Record<string, unknown>>) ?? [];
       const bucketName = (origins[0]?.bucketName as string) ?? (origins[0]?.domainName as string) ?? construct.id;
       addResource(r, 'google_compute_backend_bucket', `${id}_backend_bucket`, {
-        name: `${construct.id}-backend-bucket`,
+        name: `${gcpName(construct.id)}-backend-bucket`,
         bucket_name: bucketName,
         enable_cdn: true,
       });
       addResource(r, 'google_compute_url_map', `${id}_url_map`, {
-        name: `${construct.id}-url-map`,
+        name: `${gcpName(construct.id)}-url-map`,
         default_service: `\${google_compute_backend_bucket.${id}_backend_bucket.id}`,
       });
       return true;
@@ -163,7 +163,7 @@ export function synthNetwork(construct: BaseConstruct, ctx: TFOutput): boolean {
       const zoneName = (props.zoneName as string).replace(/\./g, '-').replace(/-+$/, '');
       const zoneId = toTfId(`${zoneName}_zone`);
       addResource(r, 'google_dns_managed_zone', zoneId, {
-        name: `${zoneName}-zone`,
+        name: gcpName(`${zoneName}-zone`),
         dns_name: `${props.zoneName as string}.`,
         visibility: 'public',
       });

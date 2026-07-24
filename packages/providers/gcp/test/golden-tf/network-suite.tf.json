@@ -25,21 +25,21 @@
   "resource": {
     "google_compute_network": {
       "appvpc": {
-        "name": "AppVpc",
+        "name": "appvpc",
         "auto_create_subnetworks": false,
         "routing_mode": "REGIONAL"
       }
     },
     "google_compute_subnetwork": {
       "publicsubnet1": {
-        "name": "PublicSubnet1",
+        "name": "publicsubnet1",
         "network": "${google_compute_network.appvpc.id}",
         "ip_cidr_range": "10.0.1.0/24",
         "region": "${var.gcp_region}",
         "private_ip_google_access": false
       },
       "publicsubnet2": {
-        "name": "PublicSubnet2",
+        "name": "publicsubnet2",
         "network": "${google_compute_network.appvpc.id}",
         "ip_cidr_range": "10.0.2.0/24",
         "region": "${var.gcp_region}",
@@ -48,7 +48,7 @@
     },
     "google_compute_firewall": {
       "albsg_ingress_0": {
-        "name": "AlbSg-ingress-0",
+        "name": "albsg-ingress-0",
         "network": "${google_compute_network.appvpc.id}",
         "direction": "INGRESS",
         "priority": 1000,
@@ -65,7 +65,7 @@
         ]
       },
       "albsg_egress_0": {
-        "name": "AlbSg-egress-0",
+        "name": "albsg-egress-0",
         "network": "${google_compute_network.appvpc.id}",
         "direction": "EGRESS",
         "priority": 1000,
@@ -81,30 +81,30 @@
     },
     "google_compute_backend_service": {
       "applb_backend": {
-        "name": "AppLb-backend",
+        "name": "applb-backend",
         "protocol": "HTTP",
         "load_balancing_scheme": "EXTERNAL"
       }
     },
     "google_compute_url_map": {
       "applb_url_map": {
-        "name": "AppLb-url-map",
+        "name": "applb-url-map",
         "default_service": "${google_compute_backend_service.applb_backend.id}"
       },
       "assetscdn_url_map": {
-        "name": "AssetsCdn-url-map",
+        "name": "assetscdn-url-map",
         "default_service": "${google_compute_backend_bucket.assetscdn_backend_bucket.id}"
       }
     },
     "google_compute_target_http_proxy": {
       "applb_http_proxy": {
-        "name": "AppLb-http-proxy",
+        "name": "applb-http-proxy",
         "url_map": "${google_compute_url_map.applb_url_map.id}"
       }
     },
     "google_compute_global_forwarding_rule": {
       "applb_forwarding_rule": {
-        "name": "AppLb-forwarding-rule",
+        "name": "applb-forwarding-rule",
         "target": "${google_compute_target_http_proxy.applb_http_proxy.id}",
         "port_range": "80",
         "load_balancing_scheme": "EXTERNAL"
@@ -112,7 +112,7 @@
     },
     "google_compute_backend_bucket": {
       "assetscdn_backend_bucket": {
-        "name": "AssetsCdn-backend-bucket",
+        "name": "assetscdn-backend-bucket",
         "bucket_name": "assets-bucket-name",
         "enable_cdn": true
       }
@@ -137,7 +137,7 @@
     },
     "google_compute_security_policy": {
       "apiwaf": {
-        "name": "ApiWaf",
+        "name": "apiwaf",
         "rule": [
           {
             "priority": 1,

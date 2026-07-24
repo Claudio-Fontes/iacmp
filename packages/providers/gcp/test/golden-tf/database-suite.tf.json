@@ -29,7 +29,7 @@
   "resource": {
     "google_sql_database_instance": {
       "maindb": {
-        "name": "MainDb",
+        "name": "maindb",
         "database_version": "POSTGRES_15",
         "region": "${var.gcp_region}",
         "settings": [

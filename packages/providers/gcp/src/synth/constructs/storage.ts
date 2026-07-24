@@ -1,5 +1,5 @@
 import { BaseConstruct } from '@iacmp/core';
-import { TFOutput, toTfId, addResource } from './common.js';
+import { TFOutput, toTfId, addResource, gcpName } from './common.js';
 
 export function synthStorage(construct: BaseConstruct, ctx: TFOutput): boolean {
   const props = construct.props as Record<string, unknown>;
@@ -40,7 +40,7 @@ export function synthStorage(construct: BaseConstruct, ctx: TFOutput): boolean {
 
     case 'Storage.FileSystem': {
       addResource(r, 'google_filestore_instance', id, {
-        name: construct.id,
+        name: gcpName(construct.id),
         location: '${var.gcp_region}-a',
         tier: 'STANDARD',
         networks: [{ network: 'default', modes: ['MODE_IPV4'] }],

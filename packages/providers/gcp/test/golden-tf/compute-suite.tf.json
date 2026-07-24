@@ -29,21 +29,21 @@
   "resource": {
     "google_compute_network": {
       "appvpc": {
-        "name": "AppVpc",
+        "name": "appvpc",
         "auto_create_subnetworks": false,
         "routing_mode": "REGIONAL"
       }
     },
     "google_compute_subnetwork": {
       "privatesubnet1": {
-        "name": "PrivateSubnet1",
+        "name": "privatesubnet1",
         "network": "${google_compute_network.appvpc.id}",
         "ip_cidr_range": "10.0.1.0/24",
         "region": "${var.gcp_region}",
         "private_ip_google_access": true
       },
       "privatesubnet2": {
-        "name": "PrivateSubnet2",
+        "name": "privatesubnet2",
         "network": "${google_compute_network.appvpc.id}",
         "ip_cidr_range": "10.0.2.0/24",
         "region": "${var.gcp_region}",
@@ -52,7 +52,7 @@
     },
     "google_compute_instance": {
       "webserver": {
-        "name": "WebServer",
+        "name": "webserver",
         "machine_type": "e2-small",
         "zone": "${var.gcp_zone}",
         "boot_disk": [
@@ -73,7 +73,7 @@
     },
     "google_compute_instance_template": {
       "appfleet_template": {
-        "name": "AppFleet-template",
+        "name": "appfleet-template",
         "machine_type": "e2-medium",
         "disk": [
           {
@@ -89,8 +89,8 @@
     },
     "google_compute_region_instance_group_manager": {
       "appfleet": {
-        "name": "AppFleet",
-        "base_instance_name": "AppFleet",
+        "name": "appfleet",
+        "base_instance_name": "appfleet",
         "region": "${var.gcp_region}",
         "version": [
           {
@@ -102,7 +102,7 @@
     },
     "google_compute_region_autoscaler": {
       "appfleet_autoscaler": {
-        "name": "AppFleet-autoscaler",
+        "name": "appfleet-autoscaler",
         "region": "${var.gcp_region}",
         "target": "${google_compute_region_instance_group_manager.appfleet.id}",
         "autoscaling_policy": [
@@ -162,7 +162,7 @@
     },
     "google_container_cluster": {
       "appcluster": {
-        "name": "AppCluster",
+        "name": "appcluster",
         "location": "${var.gcp_region}",
         "initial_node_count": 3,
         "node_config": [

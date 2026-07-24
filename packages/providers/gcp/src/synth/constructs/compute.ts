@@ -1,6 +1,6 @@
 import { BaseConstruct } from '@iacmp/core';
 import { INSTANCE_TYPE_MAP, K8S_MACHINE_MAP, resolveGcpImage } from '../common.js';
-import { TFOutput, toTfId, addResource } from './common.js';
+import { TFOutput, toTfId, addResource, gcpName } from './common.js';
 
 export function synthCompute(construct: BaseConstruct, ctx: TFOutput): boolean {
   const props = construct.props as Record<string, unknown>;
@@ -12,7 +12,7 @@ export function synthCompute(construct: BaseConstruct, ctx: TFOutput): boolean {
     case 'Compute.Instance': {
       ctx.needsZoneVar = true;
       addResource(r, 'google_compute_instance', id, {
-        name: construct.id,
+        name: gcpName(construct.id),
         machine_type: INSTANCE_TYPE_MAP[(props.instanceType as string) ?? 'small'] ?? 'e2-small',
         zone: '${var.gcp_zone}',
         boot_disk: [{ initialize_params: [{ image: resolveGcpImage(props.image as string) }] }],
@@ -26,14 +26,14 @@ export function synthCompute(construct: BaseConstruct, ctx: TFOutput): boolean {
       const machineType = INSTANCE_TYPE_MAP[(props.instanceType as string) ?? 'small'] ?? 'e2-small';
       const templateId = `${id}_template`;
       addResource(r, 'google_compute_instance_template', templateId, {
-        name: `${construct.id}-template`,
+        name: `${gcpName(construct.id)}-template`,
         machine_type: machineType,
         disk: [{ source_image: resolveGcpImage(props.image as string) }],
         network_interface: [{ network: 'default' }],
       });
       addResource(r, 'google_compute_region_instance_group_manager', id, {
-        name: construct.id,
-        base_instance_name: construct.id,
+        name: gcpName(construct.id),
+        base_instance_name: gcpName(construct.id),
         region: '${var.gcp_region}',
         version: [{ instance_template: `\${google_compute_instance_template.${templateId}.id}` }],
         target_size: (props.desiredCapacity as number) ?? (props.minCapacity as number) ?? 1,
@@ -41,7 +41,7 @@ export function synthCompute(construct: BaseConstruct, ctx: TFOutput): boolean {
       if (props.minCapacity !== undefined || props.targetCpuUtilization) {
         const autoscalerId = `${id}_autoscaler`;
         addResource(r, 'google_compute_region_autoscaler', autoscalerId, {
-          name: `${construct.id}-autoscaler`,
+          name: `${gcpName(construct.id)}-autoscaler`,
           region: '${var.gcp_region}',
           target: `\${google_compute_region_instance_group_manager.${id}.id}`,
           autoscaling_policy: [{
@@ -83,7 +83,7 @@ export function synthCompute(construct: BaseConstruct, ctx: TFOutput): boolean {
     case 'Compute.Kubernetes': {
       const machineType = K8S_MACHINE_MAP[(props.nodeInstanceType as string) ?? 'medium'] ?? 'e2-standard-4';
       const clusterProps: Record<string, unknown> = {
-        name: construct.id,
+        name: gcpName(construct.id),
         location: '${var.gcp_region}',
         initial_node_count: (props.desiredNodes as number) ?? 2,
         node_config: [{ machine_type: machineType }],
