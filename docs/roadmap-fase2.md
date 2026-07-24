@@ -286,15 +286,16 @@ Fica registrado aqui e **não entra na Fase 1** — sem deploy, não há runtime
 
 ## 4. Sequência
 
-### Fase 1 — até o `synth` (5 a 6 semanas)
+### Fase 1 — até o `synth` (revisada para ~3–4,5 semanas, §2.2.1)
 
-| # | Etapa | Estimativa | Toca aws/azure? |
+| # | Etapa | Estimativa | Status |
 |---|---|---|---|
-| **0** | **Spike: 2 cenários, `synth` + `validate` (+ `plan`), sem modificar nada** | **2–4 dias** | não |
-| T1 | Extrair camada de formato `.tf.json` para um pacote neutro — **por cópia, não por mudança** | 4–6 dias | **não** |
-| G1 | `providers/gcp/src/synth/constructs/*.ts` — redistribuir o `gcp-terraform.ts` no padrão de AWS/Azure, com `resolveRef` | **2–3 semanas** | não |
-| G1b | **Goldens `.tf.json` do GCP** + `terraform validate` no CI | 3–5 dias | não |
-| **GO/NO-GO** | Repetir os 2 cenários pelo caminho novo | 2–3 dias | não |
+| **0** | **Spike: 2 cenários, `synth` + `validate`, sem modificar nada** | 2–4 dias | ✅ **FEITO** 24/07 (§2.2.1) — 2 cenários validam; expôs 3 bugs de semântica (corrigidos, `e16946b`) |
+| T1 | Extrair camada de formato `.tf.json` para um pacote neutro — por cópia | 4–6 dias | ⏸️ **ADIADO** — auditoria mostrou que o comum é só o envelope (~40 linhas); vai junto do T2 (Fase 2), não vale o pacote novo agora |
+| G1 | `providers/gcp/src/synth/constructs/*.ts` — redistribuir o `gcp-terraform.ts` no padrão AWS/Azure | 2–3 sem | ✅ **FEITO** 24/07 (`4ae1189` fatia 1 + `cf32f23` fatia 2) — 764→68 linhas, 8 domínios modulares, `synthLegacy` eliminado. Mantido o mecanismo de refs por string do GCP (sem `resolveRef` novo) |
+| G1b | **Goldens `.tf.json` do GCP** + `terraform validate` no CI | 3–5 dias | 🟡 **PARCIAL** — goldens FEITOS 24/07 (`4405fbd` + `44317b1`, 6 cenários); `terraform validate` no CI ainda pendente |
+| — | **Fix dívida de nomes GCP** (§2.2.2) — normalizar `name` dos `google_compute_*` | 1–2 dias | ⏳ **PRÓXIMO** — faz compute-suite/network-suite validarem; regenera esses 2 goldens |
+| **GO/NO-GO** | Repetir os cenários pelo caminho novo | 2–3 dias | ⏳ pendente |
 
 **Saída da Fase 1:** *"o GCP sintetiza Terraform válido, com goldens e validate no CI."*
 Não mais que isso (§2.3).
