@@ -8,6 +8,7 @@ import { GCPProvider } from '@iacmp/provider-gcp';
 import { TerraformProvider } from '@iacmp/provider-terraform';
 import { Stack, tsCompilerOptions } from '@iacmp/core';
 import { loadIacmpConfig, resolveProvider, profileFromConfig } from '../utils';
+import { tierWarnings, AccountTier } from '../deploy/resource-tier-map';
 import { loadPlugins } from '@iacmp/plugin-sdk';
 import { synthRoot, providerOutDir, templateExt, listTemplates, orderByDependency, generateAzureMainBicep, AZURE_MAIN_FILE, TemplateRef } from '../synth-out';
 import {
@@ -149,6 +150,16 @@ export default class Synth extends Command {
 
     if (loadedStacks.length === 0) {
       this.error('Nenhuma stack encontrada em stacks/');
+    }
+
+    // ── Aviso de tier/disponibilidade ───────────────────────────────────────
+    // O check de tier (free vs standard) só rodava no `iacmp ai`. Agora roda no
+    // synth também — se um construct é restrito/indisponível no tier da conta, o
+    // usuário é avisado aqui, antes do deploy real falhar. Só avisa, não bloqueia.
+    if (provider === 'aws' || provider === 'azure') {
+      const tier = (config.accountTier as AccountTier) ?? 'free';
+      const constructTypes = loadedStacks.flatMap(l => l.stack.constructs.map(c => c.type));
+      for (const w of tierWarnings(constructTypes, provider, tier)) this.warn(w);
     }
 
     // ── Organização das stacks: rejeita monólito ────────────────────────────

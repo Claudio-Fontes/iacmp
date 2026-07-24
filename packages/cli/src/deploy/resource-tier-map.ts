@@ -289,3 +289,30 @@ export function getTierEntry(
   const info = RESOURCE_TIER_MAP.find(r => r.construct === construct);
   return info?.[provider][tier];
 }
+
+/**
+ * Avisos de tier/disponibilidade para os construct types de um projeto. Vazio
+ * quando tudo está `available`. Pensado para rodar no synth/deploy (não só no
+ * `iacmp ai`): informa que um recurso é `restricted`/`unavailable` no tier antes
+ * do deploy real falhar. Só AVISA — não bloqueia (a região pode ter capacidade,
+ * ou o usuário sabe o que faz).
+ */
+export function tierWarnings(constructs: string[], provider: Provider, tier: AccountTier): string[] {
+  const warnings: string[] = [];
+  const seen = new Set<string>();
+  for (const c of constructs) {
+    if (seen.has(c)) continue;
+    seen.add(c);
+    const entry = getTierEntry(c, provider, tier);
+    if (!entry || entry.availability === 'available') continue;
+    const info = RESOURCE_TIER_MAP.find(r => r.construct === c);
+    const label = info?.name ?? c;
+    const sev = entry.availability === 'unavailable' ? 'INDISPONÍVEL' : 'restrito';
+    warnings.push(
+      `${label} (${c}) — ${sev} no tier '${tier}' do ${provider.toUpperCase()}` +
+      (entry.reason ? `: ${entry.reason}` : '') +
+      (entry.alternative ? ` — alternativa: ${entry.alternative}` : ''),
+    );
+  }
+  return warnings;
+}

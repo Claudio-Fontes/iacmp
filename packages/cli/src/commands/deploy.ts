@@ -9,6 +9,8 @@ import { errMessage, loadIacmpConfig, resolveProvider, IacmpConfig } from '../ut
 import { commandExists } from './doctor';
 import { getExecutor, printPlan, runCommands, formatCommand, resourceGroupExists, getAzureStackOutputs, findExistingRetainedResources, deleteResourceAndWait, DeployContext } from '../deploy';
 import { maybeLearn } from '../learn';
+import { loadStacks } from '../audit';
+import { tierWarnings, AccountTier } from '../deploy/resource-tier-map';
 
 function confirm(message: string): Promise<boolean> {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -56,6 +58,17 @@ export default class Deploy extends Command {
     }
     const provider = resolveProvider(config, flags.provider);
     const region = (provider === 'azure' ? config.azureRegion : undefined) ?? config.region ?? 'us-east-1';
+
+    // Aviso de tier/disponibilidade também no deploy (não só synth/ai) — cobre o
+    // deploy direto sem re-synth. Só avisa; falha ao carregar as stacks é ignorada
+    // (o deploy opera sobre os templates já sintetizados).
+    if (provider === 'aws' || provider === 'azure') {
+      try {
+        const tier = (config.accountTier as AccountTier) ?? 'free';
+        const constructTypes = loadStacks(cwd).flatMap(s => s.stack.constructs.map(c => c.type));
+        for (const w of tierWarnings(constructTypes, provider, tier)) this.warn(w);
+      } catch { /* stacks não carregam — segue */ }
+    }
 
     let executor;
     try {
