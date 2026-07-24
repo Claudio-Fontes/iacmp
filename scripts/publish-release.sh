@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 #
 # Publica todos os pacotes do iacmp no npm, na ORDEM de dependência:
-#   @iacmp/core → @iacmp/runtime → @iacmp/knowledge → iacmp (CLI) → @iacmp/mcp
+#   @iacmp/core → @iacmp/runtime → @iacmp/knowledge → @iacmp/mcp → iacmp (CLI)
+#
+# O @iacmp/mcp vem ANTES do CLI: a CLI passou a depender de @iacmp/mcp (para
+# `iacmp mcp serve` / `iacmp setup`). Publicar o CLI antes do mcp abriria uma
+# janela em que `iacmp` existe mas seu dep `@iacmp/mcp` ainda não — quebrando o
+# `npm install -g iacmp` de quem instalasse nesse intervalo.
 #
 # Idempotente: pula os pacotes cuja versão já está no registro — se um OTP
 # expirar ou algo falhar no meio, é só re-executar que ele continua de onde parou.
@@ -47,11 +52,13 @@ publish_pkg() {
 publish_pkg "$ROOT/packages/core"
 publish_pkg "$ROOT/packages/runtime"
 publish_pkg "$ROOT/packages/knowledge"
-publish_pkg "$ROOT/packages/cli"
 
+# @iacmp/mcp (repo separado) ANTES do CLI — a CLI depende dele.
 echo "▸ Build do @iacmp/mcp (repo separado: $MCP) ..."
 ( cd "$MCP" && npm run build )
 publish_pkg "$MCP"
+
+publish_pkg "$ROOT/packages/cli"
 
 echo ""
 if [[ $DRY -eq 1 ]]; then

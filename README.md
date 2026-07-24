@@ -29,6 +29,21 @@ node packages/cli/bin/run.js --help
 
 **Requisitos:** Node.js 20+, npm 10+
 
+## Integração com o Claude (MCP)
+
+O iacmp já vem com o servidor MCP (`@iacmp/mcp`) como dependência. Um único comando
+registra as ferramentas do iacmp (`write_stack`, `synth_project`, `deploy_project`…)
+no Claude Code e no Claude Desktop:
+
+```bash
+npm install -g iacmp
+iacmp setup            # registra o MCP no Claude Code + Desktop (idempotente)
+```
+
+Reinicie o Claude e as ferramentas do iacmp aparecem. `iacmp setup --dry-run` mostra o
+que seria escrito sem alterar nada. Você não precisa rodar o servidor à mão — o Claude
+o executa sozinho; para depurar, `iacmp mcp serve` roda o servidor no terminal.
+
 ## Uso rápido
 
 ```bash
@@ -59,6 +74,8 @@ iacmp ai --chat
 
 | Comando | Descrição |
 |---|---|
+| `iacmp setup` | Integra o iacmp ao Claude (registra o MCP no Claude Code/Desktop) |
+| `iacmp mcp serve` | Roda o servidor MCP (o Claude chama sozinho; use só p/ depurar) |
 | `iacmp init [nome]` | Inicializa novo projeto |
 | `iacmp synth` | Gera template nativo do provider |
 | `iacmp deploy` | Faz deploy no provider |

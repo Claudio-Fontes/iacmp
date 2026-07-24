@@ -26,7 +26,10 @@ const common = {
   dts: false,
   shims: false,
   // inlina @iacmp/* EXCETO @iacmp/core e @iacmp/runtime (ficam externos, deps reais publicadas)
-  noExternal: [/^@iacmp\/(?!core|runtime)/],
+  // inlina @iacmp/* EXCETO core, runtime e mcp (deps reais externas): core/runtime
+  // porque os stacks/handlers do usuário os importam; mcp porque é o servidor MCP
+  // (ESM + better-sqlite3 nativo) que `iacmp mcp serve` resolve on-disk.
+  noExternal: [/^@iacmp\/(?!core|runtime|mcp)/],
 };
 
 export default defineConfig([
