@@ -65,7 +65,7 @@ if [[ $DRY -eq 1 ]]; then
   echo "✅ Dry-run concluído — NADA foi publicado. Rode sem --dry-run para publicar de verdade."
 else
   echo "✅ Release publicado."
-  echo "   Valide num diretório limpo:"
+  echo "   Valide numa máquina limpa (o @iacmp/mcp vem junto como dependência):"
   echo "     npm install -g iacmp && iacmp --version      # esperado: 2.3.0"
-  echo "     npm install -g @iacmp/mcp && iacmp-mcp --version"
+  echo "     iacmp setup                                  # registra o MCP no Claude"
 fi
