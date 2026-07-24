@@ -604,6 +604,8 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: TFOutput): void {
         };
         if (s.protocol === 'https' || s.protocol === 'http') {
           subProps.push_config = [{ push_endpoint: s.endpoint }];
+        } else if (s.protocol === 'lambda') {
+          subProps.push_config = [{ push_endpoint: `\${google_cloudfunctions2_function.${toTfId(s.endpoint)}.service_config[0].uri}` }];
         }
         addResource(r, 'google_pubsub_subscription', `${id}_sub_${i}`, subProps);
       });
@@ -645,6 +647,18 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: TFOutput): void {
         dimFilter,
       ].filter(Boolean).join(' AND ');
 
+      const alarmActions = (props.alarmActions as string[]) ?? [];
+      const notificationChannels = alarmActions.map((action, i) => {
+        const topicId = toTfId(action.split('.')[0]);
+        const channelId = `${id}_channel_${i}`;
+        addResource(r, 'google_monitoring_notification_channel', channelId, {
+          display_name: `${construct.id} channel ${i}`,
+          type: 'pubsub',
+          labels: { topic: `\${google_pubsub_topic.${topicId}.id}` },
+        });
+        return `\${google_monitoring_notification_channel.${channelId}.id}`;
+      });
+
       addResource(r, 'google_monitoring_alert_policy', id, {
         display_name: construct.id,
         conditions: [{
@@ -662,7 +676,7 @@ function synthesizeConstruct(construct: BaseConstruct, ctx: TFOutput): void {
         }],
         combiner: 'OR',
         enabled: true,
-        notification_channels: (props.alarmActions as string[]) ?? [],
+        notification_channels: notificationChannels,
       });
       break;
     }
