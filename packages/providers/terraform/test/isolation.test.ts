@@ -1,20 +1,27 @@
 /**
- * Trava de isolamento de arquitetura — Terraform (camada de formato).
+ * Trava de isolamento de arquitetura — matriz completa dos providers.
  *
- * O Terraform não é um provider de nuvem: é a camada que serializa em .tf.json
- * o que outro provider já resolveu. Hoje ele importa o emissor de
- * `@iacmp/provider-aws` — uma EXCEÇÃO conhecida e uma dívida (docs/roadmap-fase2.md
- * T2: extrair a serialização para um pacote neutro e remover este import).
+ * Fica AQUI (no pacote terraform, camada de formato da fase GCP/Terraform) de
+ * propósito: `providers/aws` e `providers/azure` não podem receber NADA novo —
+ * nem um teste. Este teste lê o `src/` dos quatro providers via filesystem e
+ * falha se qualquer um importar um pacote `@iacmp/*` fora do permitido.
  *
- * Esta trava CONGELA a exceção: `@iacmp/core` e `@iacmp/provider-aws` são o
- * único acoplamento tolerado. Qualquer outro import @iacmp (ex.: provider-azure,
- * provider-gcp) faz o teste falhar — a dívida pode ser paga (T2), nunca crescer.
+ * Enquanto passar, nenhum trabalho em GCP/Terraform tem como alcançar o synth de
+ * AWS (CloudFormation) ou Azure (Bicep) — não existe a aresta de dependência.
+ * Ver docs/roadmap-fase2.md §0. Import proibido → remova-o, não relaxe a regra.
  */
 import * as fs from 'fs';
 import * as path from 'path';
 
-// core = abstração; provider-aws = exceção conhecida (dívida do T2, a remover).
-const PACOTES_IACMP_PERMITIDOS = new Set(['@iacmp/core', '@iacmp/provider-aws']);
+// AWS e Azure: só a abstração. GCP: só a abstração (não pode reusar o emissor
+// Terraform que vive no aws). Terraform: core + provider-aws (exceção conhecida
+// e congelada — a dívida do T2 pode ser paga, nunca crescer).
+const MATRIX: Array<{ pkg: string; src: string; allowed: string[] }> = [
+  { pkg: 'aws', src: '../../aws/src', allowed: ['@iacmp/core'] },
+  { pkg: 'azure', src: '../../azure/src', allowed: ['@iacmp/core'] },
+  { pkg: 'gcp', src: '../../gcp/src', allowed: ['@iacmp/core'] },
+  { pkg: 'terraform', src: '../src', allowed: ['@iacmp/core', '@iacmp/provider-aws'] },
+];
 
 function arquivosTs(dir: string): string[] {
   const out: string[] = [];
@@ -34,19 +41,19 @@ function importsIacmp(conteudo: string): string[] {
   return achados;
 }
 
-describe('isolamento de arquitetura — Terraform (formato)', () => {
-  const srcDir = path.join(__dirname, '..', 'src');
-
-  it('importa só @iacmp/core e @iacmp/provider-aws (exceção congelada, não pode crescer)', () => {
-    const violacoes: string[] = [];
-    for (const arquivo of arquivosTs(srcDir)) {
-      const conteudo = fs.readFileSync(arquivo, 'utf8');
-      for (const pkg of importsIacmp(conteudo)) {
-        if (!PACOTES_IACMP_PERMITIDOS.has(pkg)) {
-          violacoes.push(`${path.relative(srcDir, arquivo)} → ${pkg}`);
+describe('isolamento de arquitetura — matriz dos providers', () => {
+  for (const { pkg, src, allowed } of MATRIX) {
+    it(`${pkg} importa só ${allowed.join(' + ')}`, () => {
+      const srcDir = path.join(__dirname, src);
+      const permitidos = new Set(allowed);
+      const violacoes: string[] = [];
+      for (const arquivo of arquivosTs(srcDir)) {
+        const conteudo = fs.readFileSync(arquivo, 'utf8');
+        for (const p of importsIacmp(conteudo)) {
+          if (!permitidos.has(p)) violacoes.push(`${pkg}/${path.relative(srcDir, arquivo)} → ${p}`);
         }
       }
-    }
-    expect(violacoes).toEqual([]);
-  });
+      expect(violacoes).toEqual([]);
+    });
+  }
 });
