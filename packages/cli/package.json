@@ -48,7 +48,7 @@
     "@azure/data-tables": "13.3.2",
     "@azure/storage-blob": "12.33.0",
     "@iacmp/core": "^2.3.0",
-    "@iacmp/mcp": "^0.2.0",
+    "@iacmp/mcp": "file:../../../iacmp-mcp",
     "@iacmp/runtime": "^0.2.0",
     "@oclif/core": "^4.0.0",
     "better-sqlite3": "12.11.1",
