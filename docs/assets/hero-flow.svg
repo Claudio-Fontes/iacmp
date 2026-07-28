@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 640" font-family="'Avenir Next','Segoe UI',system-ui,sans-serif">
+<style>
+  .march { stroke-dasharray: 7 6; animation: march 1.5s linear infinite; }
+  @keyframes march { to { stroke-dashoffset: -13; } }
+  .pulse { fill: #D97E00; }
+  .p1 { offset-path: path('M488 305 L 540 305'); animation: tr 3s linear infinite; }
+  .p2 { offset-path: path('M700 305 C 735 305 720 231 756 231'); animation: tr 3s linear infinite .4s; }
+  .p3 { offset-path: path('M700 305 L 756 329'); animation: tr 3s linear infinite .8s; }
+  .p4 { offset-path: path('M700 305 C 735 305 720 427 756 427'); animation: tr 3s linear infinite 1.2s; }
+  @keyframes tr { from { offset-distance: 0%; opacity: 0; } 15% { opacity: 1; } 85% { opacity: 1; } to { offset-distance: 100%; opacity: 0; } }
+  .card { animation: glow 4.5s ease-in-out infinite; }
+  .c2 { animation-delay: .7s; } .c3 { animation-delay: 1.4s; }
+  @keyframes glow { 0%, 100% { stroke: #D8DDDB; } 30% { stroke: #1E6E7E; } }
+  text { fill: #16262E; }
+  .code { fill: #E7EFF4; }
+  .mono { font-family: ui-monospace,'SF Mono',Menlo,Consolas,monospace; }
+</style>
+<rect width="1200" height="640" fill="#FBFBFA"/>
+<text x="52" y="64" class="mono" font-size="13" letter-spacing="3" font-weight="600" fill="#1E6E7E">IACMP · INFRAESTRUTURA COMO CÓDIGO</text>
+<text x="50" y="118" font-size="44" font-weight="700">Um código. <tspan fill="#1E6E7E">Três</tspan> <tspan fill="#D97E00">nuvens.</tspan></text>
+
+<!-- código -->
+<rect x="52" y="200" width="430" height="212" rx="14" fill="#10202B"/>
+<text x="84" y="255" class="mono code" font-size="19"><tspan fill="#FFB454">new</tspan> Database.<tspan fill="#6FD0E0">SQL</tspan>(stack, <tspan fill="#7FD08F">'AppDB'</tspan>, {</text>
+<text x="84" y="290" class="mono code" font-size="19">  engine: <tspan fill="#7FD08F">'postgres'</tspan>,</text>
+<text x="84" y="325" class="mono code" font-size="19">  vpcId: <tspan fill="#6FD0E0">ref</tspan>(<tspan fill="#7FD08F">'AppVpc'</tspan>)</text>
+<text x="84" y="360" class="mono code" font-size="19">});</text>
+
+<!-- iacmp -->
+<rect x="545" y="268" width="150" height="74" rx="12" fill="rgba(30,110,126,.07)" stroke="#1E6E7E" stroke-width="2.4"/>
+<text x="620" y="298" font-size="22" font-weight="700" fill="#1E6E7E" text-anchor="middle">iacmp</text>
+<text x="620" y="322" class="mono" font-size="11" fill="#44555C" text-anchor="middle">synth · valida · deploya</text>
+
+<!-- setas -->
+<g stroke="#5F7370" stroke-width="2.2" fill="none">
+  <path class="march" d="M488 305 L 536 305"/><path d="M540 305 l -9 -6 M540 305 l -9 6"/>
+  <path class="march" d="M700 305 C 735 305 720 231 752 231"/><path d="M756 231 l -9 -6 M756 231 l -9 6"/>
+  <path class="march" d="M700 305 L 752 329"/><path d="M756 331 l -10 -2 M756 331 l -7 -8"/>
+  <path class="march" d="M700 305 C 735 305 720 427 752 427"/><path d="M756 427 l -9 -6 M756 427 l -9 6"/>
+</g>
+<circle class="pulse p1" r="4.5"/><circle class="pulse p2" r="4.5"/><circle class="pulse p3" r="4.5"/><circle class="pulse p4" r="4.5"/>
+
+<!-- saídas -->
+<g>
+  <rect class="card" x="760" y="188" width="390" height="86" rx="12" fill="#fff" stroke-width="1.8"/>
+  <text x="786" y="240" font-size="20" font-weight="700">AWS</text>
+  <rect x="866" y="218" width="132" height="28" rx="7" fill="rgba(30,110,126,.08)"/>
+  <text x="932" y="237" class="mono" font-size="13" fill="#1E6E7E" text-anchor="middle">CloudFormation</text>
+  <text x="1128" y="226" font-size="14" fill="#44555C" text-anchor="end">Amazon RDS</text>
+  <text x="1128" y="248" font-size="14" fill="#44555C" text-anchor="end">subnet group · SG · SSL</text>
+</g>
+<g>
+  <rect class="card c2" x="760" y="286" width="390" height="86" rx="12" fill="#fff" stroke-width="1.8"/>
+  <text x="786" y="338" font-size="20" font-weight="700">Azure</text>
+  <rect x="866" y="316" width="62" height="28" rx="7" fill="rgba(30,110,126,.08)"/>
+  <text x="897" y="335" class="mono" font-size="13" fill="#1E6E7E" text-anchor="middle">Bicep</text>
+  <text x="1128" y="324" font-size="14" fill="#44555C" text-anchor="end">PostgreSQL Flexible Server</text>
+  <text x="1128" y="346" font-size="14" fill="#44555C" text-anchor="end">VNet delegada · senha do run</text>
+</g>
+<g>
+  <rect class="card c3" x="760" y="384" width="390" height="86" rx="12" fill="#fff" stroke-width="1.8"/>
+  <text x="786" y="436" font-size="20" font-weight="700">GCP</text>
+  <rect x="866" y="414" width="102" height="28" rx="7" fill="rgba(30,110,126,.08)"/>
+  <text x="917" y="433" class="mono" font-size="13" fill="#1E6E7E" text-anchor="middle">Terraform</text>
+  <text x="1128" y="422" font-size="14" fill="#44555C" text-anchor="end">Cloud SQL · IP privado</text>
+  <text x="1128" y="444" font-size="14" fill="#44555C" text-anchor="end">service networking · peering</text>
+</g>
+
+<text x="52" y="600" class="mono" font-size="16" font-weight="600">$ npm i -g <tspan fill="#D97E00" font-weight="700">iacmp</tspan></text>
+<text x="1148" y="600" font-size="14" fill="#6E7F7B" text-anchor="end">open source · Apache-2.0</text>
+</svg>

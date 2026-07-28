@@ -2,6 +2,8 @@
 
 CLI de infraestrutura como código que gera **CloudFormation (AWS), Bicep (Azure) e Terraform (GCP)** a partir dos mesmos constructs TypeScript — com deploy, destroy, diff, auditoria e diagramas no mesmo fluxo.
 
+![Um código, três nuvens](docs/assets/hero-flow.svg)
+
 ```typescript
 import { Stack, Fn, Database, ref } from '@iacmp/core';
 
@@ -28,6 +30,8 @@ iacmp deploy                    # deploya de verdade, na sua conta
 ```
 
 ## Por que iacmp
+
+![Validado em deploy real](docs/assets/e2e-cycle.svg)
 
 - **Validado em deploy real, não só em synth.** Cada provider passou por uma bateria de 20 cenários ponta a ponta (deploy → teste de runtime → destroy) em contas reais de AWS, Azure e GCP. Dezenas de bugs que só aparecem na nuvem de verdade — ordering do ARM, quotas, IAM de service accounts, TLS de Redis, peering de VPC — foram encontrados e corrigidos na ferramenta.
 - **Um construct, três nuvens.** `Database.SQL` vira RDS na AWS, PostgreSQL Flexible Server no Azure e Cloud SQL (com private service access) no GCP — com as amarrações corretas de rede, senha e SSL em cada uma.

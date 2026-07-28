@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 620" font-family="'Avenir Next','Segoe UI',system-ui,sans-serif">
+<style>
+  text { fill: #16262E; }
+  .mono { font-family: ui-monospace,'SF Mono',Menlo,Consolas,monospace; }
+  .sub { fill: #6E7F7B; }
+  .wire { fill: none; stroke: #5F7370; stroke-width: 2.4; stroke-dasharray: 8 6; animation: march 1.5s linear infinite; }
+  .wire.fix { stroke: #D97E00; }
+  .tip { fill: none; stroke: #5F7370; stroke-width: 2.4; }
+  .tip.fix { stroke: #D97E00; }
+  @keyframes march { to { stroke-dashoffset: -14; } }
+  .pulse { fill: #D97E00; }
+  .p1 { offset-path: path('M340 193 L 482 193'); animation: tr 3s linear infinite; }
+  .p2 { offset-path: path('M720 193 L 862 193'); animation: tr 3s linear infinite .75s; }
+  .p3 { offset-path: path('M985 236 L 985 252 L 1160 252 L 1160 453 L 728 453'); animation: tr 3s linear infinite 1.5s; }
+  .p4 { offset-path: path('M490 453 L 80 453 L 80 193 L 100 193'); animation: tr 3s linear infinite 2.25s; }
+  @keyframes tr { from { offset-distance: 0%; opacity: 0; } 10% { opacity: 1; } 90% { opacity: 1; } to { offset-distance: 100%; opacity: 0; } }
+</style>
+<rect width="1200" height="620" fill="#FBFBFA"/>
+<text x="52" y="60" class="mono" font-size="13" letter-spacing="3" font-weight="600" fill="#1E6E7E">IACMP · COMO CADA NUVEM FOI VALIDADA</text>
+<text x="50" y="112" font-size="42" font-weight="700">Validado em <tspan fill="#1E6E7E">deploy</tspan> <tspan fill="#D97E00">real</tspan>. Não em demo.</text>
+
+<!-- nós do ciclo -->
+<g>
+  <rect x="110" y="150" width="230" height="86" rx="12" fill="#fff" stroke="#D8DDDB" stroke-width="1.6"/>
+  <text x="225" y="186" font-size="20" font-weight="700" text-anchor="middle">deploy real</text>
+  <text x="225" y="210" font-size="14" class="sub" text-anchor="middle">na conta da nuvem, sem mock</text>
+</g>
+<g>
+  <rect x="490" y="150" width="230" height="86" rx="12" fill="#fff" stroke="#D8DDDB" stroke-width="1.6"/>
+  <text x="605" y="186" font-size="20" font-weight="700" text-anchor="middle">testa o runtime</text>
+  <text x="605" y="210" font-size="14" class="sub" text-anchor="middle">chama a API, publica na fila…</text>
+</g>
+<g>
+  <rect x="870" y="150" width="230" height="86" rx="12" fill="#fff" stroke="#D8DDDB" stroke-width="1.6"/>
+  <text x="985" y="186" font-size="20" font-weight="700" text-anchor="middle">destrói limpo</text>
+  <text x="985" y="210" font-size="14" class="sub" text-anchor="middle">zero recurso órfão</text>
+</g>
+<g>
+  <rect x="490" y="410" width="230" height="86" rx="12" fill="#fff" stroke="#D97E00" stroke-width="2.2"/>
+  <text x="605" y="446" font-size="20" font-weight="700" text-anchor="middle">fix na FERRAMENTA</text>
+  <text x="605" y="470" font-size="14" class="sub" text-anchor="middle">nunca remendo no template</text>
+</g>
+
+<!-- setas -->
+<path class="wire" d="M340 193 L 478 193"/><path class="tip" d="M482 193 l -10 -7 M482 193 l -10 7"/>
+<path class="wire" d="M720 193 L 858 193"/><path class="tip" d="M862 193 l -10 -7 M862 193 l -10 7"/>
+<path class="wire" d="M985 236 L 985 252 L 1160 252 L 1160 453 L 732 453"/><path class="tip" d="M728 453 l 10 -7 M728 453 l 10 7"/>
+<text x="860" y="442" class="mono" font-size="13" fill="#44555C">a nuvem disse não?</text>
+<path class="wire fix" d="M490 453 L 80 453 L 80 197"/><path class="tip fix" d="M80 193 l -7 10 M80 193 l 7 10"/>
+<text x="150" y="442" class="mono" font-size="13" font-weight="600" fill="#B36400">próximo projeto nasce corrigido</text>
+
+<!-- badge -->
+<rect x="140" y="285" width="400" height="88" rx="14" fill="rgba(30,110,126,.07)" stroke="#1E6E7E" stroke-width="2.2"/>
+<text x="222" y="343" font-size="40" font-weight="700" fill="#1E6E7E" text-anchor="middle">60×</text>
+<text x="290" y="323" font-size="16" font-weight="600" fill="#44555C">cenários e2e completos</text>
+<text x="290" y="349" font-size="16" font-weight="600" fill="#44555C">20 por nuvem · AWS Azure GCP</text>
+
+<!-- bugs -->
+<text x="800" y="300" font-size="15" fill="#44555C">bugs que só a nuvem real mostra:</text>
+<text x="800" y="326" font-size="14" class="sub">· service account sem role no GCP novo</text>
+<text x="800" y="350" font-size="14" class="sub">· ordering do ARM · quota de free tier</text>
+<text x="800" y="374" font-size="14" class="sub">· TLS do Redis · peering preso no destroy</text>
+
+<circle class="pulse p1" r="5"/><circle class="pulse p2" r="5"/><circle class="pulse p3" r="5"/><circle class="pulse p4" r="5"/>
+
+<text x="52" y="580" class="mono" font-size="16" font-weight="600">$ npm i -g <tspan fill="#D97E00" font-weight="700">iacmp</tspan></text>
+<text x="1148" y="580" font-size="14" fill="#6E7F7B" text-anchor="end">open source · Apache-2.0</text>
+</svg>
