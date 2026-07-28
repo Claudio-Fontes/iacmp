@@ -37,12 +37,14 @@ const common = {
 
 const MCP_SERVER_ENTRY = '../../../iacmp-mcp/src/server.ts';
 
-// GUARD DE PUBLICAÇÃO: o mcp-server.js bundla o @iacmp/knowledge (o corpus —
-// conteúdo Pro). Ele NUNCA pode entrar no tarball do npm. O prepack builda com
-// IACMP_PUBLIC_BUILD=1, que força o build público mesmo na máquina de dev que
-// tem o checkout do iacmp-mcp ao lado.
-const includeMcpServer =
-  existsSync(MCP_SERVER_ENTRY) && process.env.IACMP_PUBLIC_BUILD !== '1';
+// GUARD DE PUBLICAÇÃO: no build público (IACMP_PUBLIC_BUILD=1, usado pelo
+// prepack) o @iacmp/knowledge (o corpus — conteúdo Pro) fica EXTERNAL no
+// bundle do mcp-server: o servidor embutido vai pro tarball SÓ com as
+// ferramentas mecânicas (write_stack/synth/deploy/destroy/...) — o server.ts
+// carrega o módulo de knowledge dinamicamente e degrada quando ausente.
+// No build de dev/Pro o corpus é inlinado (comportamento completo).
+const isPublicBuild = process.env.IACMP_PUBLIC_BUILD === '1';
+const includeMcpServer = existsSync(MCP_SERVER_ENTRY);
 
 export default defineConfig([
   {
@@ -65,9 +67,10 @@ export default defineConfig([
     outDir: 'dist',
     clean: false,
   },
-  // Servidor MCP embutido: bundla @modelcontextprotocol/sdk e @iacmp/knowledge.
-  // better-sqlite3 está nas deps da CLI → fica externo automaticamente (addon
-  // nativo). Entry CONDICIONAL: só quando o checkout do iacmp-mcp existe.
+  // Servidor MCP embutido: bundla @modelcontextprotocol/sdk (e, no build
+  // dev/Pro, o @iacmp/knowledge). better-sqlite3 está nas deps da CLI → fica
+  // externo automaticamente (addon nativo). Entry só existe quando o checkout
+  // do iacmp-mcp está ao lado (sempre verdadeiro na máquina que publica).
   ...(includeMcpServer ? [{
     format: ['cjs'] as const,
     platform: 'node' as const,
@@ -80,5 +83,6 @@ export default defineConfig([
     entry: { 'mcp-server': MCP_SERVER_ENTRY },
     outDir: 'dist',
     clean: false,
+    ...(isPublicBuild ? { external: ['@iacmp/knowledge'] } : {}),
   }] : []),
 ]);
