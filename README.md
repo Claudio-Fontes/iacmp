@@ -77,6 +77,7 @@ iacmp destroy               # remove tudo (com confirmação)
 | `audit` / `audit-all` | Auditorias de segurança, alta disponibilidade e DR |
 | `doctor` | Diagnóstico do ambiente (CLIs, credenciais, versões) |
 | `registry` | Catálogo de constructs e exemplos |
+| `setup` | Registra o servidor MCP embutido no Claude Code e no Claude Desktop |
 | `ai` / `from-diagram` | Geração via IA (parte do **iacmp Pro** — ver abaixo) |
 
 ## Organização das stacks
@@ -93,9 +94,33 @@ src/handlers/…              # handlers TypeScript (facade @iacmp/runtime)
 
 O synth resolve as referências para o mecanismo certo de cada nuvem: Export/ImportValue no CloudFormation, referência simbólica de módulo no Bicep, referência direta de recurso no Terraform.
 
+## Claude Code integrado de fábrica
+
+O iacmp embute um servidor MCP. Um comando registra as ferramentas no Claude
+Code e no Claude Desktop:
+
+```bash
+iacmp setup
+```
+
+O agente ganha `write_stack`, `synth_project`, `deploy_project`,
+`destroy_project`, `validate_stack` e `read_synth_output` — chamadas
+estruturadas para escrever stacks e operar o CLI, todas locais e sem IA
+embutida. O `iacmp init` também gera um `CLAUDE.md` no projeto que orienta
+qualquer agente a usar o fluxo correto (escrever stack → `iacmp synth` até
+passar), com ou sem MCP.
+
 ## iacmp Pro
 
-A geração via IA (`iacmp ai`, `from-diagram`, busca de exemplos via MCP) é parte do **iacmp Pro**: um corpus de exemplos em que cada padrão foi validado em deploy real nas três nuvens, servido por RAG para a geração. O CLI aberto funciona 100% sem ele — os comandos Pro apenas indicam a ausência.
+A geração via IA (`iacmp ai`, `from-diagram`) e a busca no corpus pelo MCP
+(`search_examples`/`list_examples`) são parte do **iacmp Pro**: um corpus de
+exemplos em que cada padrão foi validado em deploy real nas três nuvens,
+servido por RAG para a geração. O CLI aberto funciona 100% sem ele — os
+comandos Pro apenas indicam a ausência.
+
+## Documentação
+
+[Manual de uso](docs/manual-de-uso.md) · [Constructs (tabela AWS ↔ Azure ↔ GCP)](docs/constructs.md) · [Providers](docs/providers.md) · [Arquitetura interna](docs/arquitetura.md) · [FAQ](docs/faq.md) · [Changelog](docs/changelog.md)
 
 ## Contribuindo
 
