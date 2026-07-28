@@ -1,0 +1,95 @@
+{
+  "terraform": {
+    "required_providers": {
+      "google": {
+        "source": "hashicorp/google",
+        "version": "~> 5.0"
+      }
+    }
+  },
+  "provider": {
+    "google": {
+      "project": "${var.project_id}",
+      "region": "${var.gcp_region}"
+    }
+  },
+  "variable": {
+    "project_id": {
+      "type": "string"
+    },
+    "gcp_region": {
+      "type": "string",
+      "default": "us-central1"
+    }
+  },
+  "resource": {
+    "google_storage_bucket": {
+      "uploadbucket": {
+        "name": "${var.project_id}-uploadbucket",
+        "location": "US",
+        "force_destroy": true,
+        "versioning": [
+          {
+            "enabled": false
+          }
+        ],
+        "uniform_bucket_level_access": true
+      }
+    },
+    "google_cloudfunctions2_function": {
+      "processfn": {
+        "name": "ProcessFn",
+        "location": "${var.gcp_region}",
+        "build_config": [
+          {
+            "runtime": "nodejs20",
+            "entry_point": "handler",
+            "source": [
+              {
+                "storage_source": [
+                  {
+                    "bucket": "${var.project_id}-artifacts",
+                    "object": "processfn.zip"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "service_config": [
+          {
+            "available_memory": "128Mi",
+            "timeout_seconds": 30,
+            "environment_variables": {
+              "IACMP_CLOUD": "gcp"
+            }
+          }
+        ],
+        "event_trigger": [
+          {
+            "trigger_region": "${var.gcp_region}",
+            "event_type": "google.cloud.storage.object.v1.finalized",
+            "event_filters": [
+              {
+                "attribute": "bucket",
+                "value": "${google_storage_bucket.uploadbucket.name}"
+              }
+            ],
+            "retry_policy": "RETRY_POLICY_RETRY"
+          }
+        ]
+      }
+    }
+  },
+  "output": {
+    "UploadBucketBucketName": {
+      "value": "${google_storage_bucket.uploadbucket.name}"
+    },
+    "UploadBucketBucketUrl": {
+      "value": "${google_storage_bucket.uploadbucket.url}"
+    },
+    "ProcessFnFunctionUrl": {
+      "value": "${google_cloudfunctions2_function.processfn.service_config[0].uri}"
+    }
+  }
+}

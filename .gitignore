@@ -1,0 +1,33 @@
+node_modules/
+dist/
+*.js.map
+*.d.ts.map
+.turbo/
+cdk.out/
+synth-out/
+audit/
+*.env
+.env
+.env.*
+!.env.example
+.npmrc
+
+# build artifacts
+oclif.manifest.json
+*.tgz
+
+# LICENSE copiado em prepack para os packages publicados — fonte de verdade fica na raiz
+packages/cli/LICENSE
+packages/core/LICENSE
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+
+# runtime artefatos do iacmp (sessao, cache de IA, indices RAG)
+.iacmp/
+
+# diretorio de testes locais — nao commitar
+tmp/
+.claude/worktrees/
+.claude/

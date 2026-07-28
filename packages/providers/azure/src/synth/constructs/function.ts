@@ -1,0 +1,603 @@
+import { BaseConstruct, isRef } from '@iacmp/core';
+import type { Ref } from '@iacmp/core';
+import { expr, tag, toSym, crossParamName, outputName, resolveValue, resolveRef, SynthContext } from './shared';
+
+export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext): void {
+  const { resources, outputs, crossParams, functionImageParams } = ctx;
+  const props = (construct.props ?? {}) as Record<string, unknown>;
+  const sym = toSym(construct.id);
+
+  switch (construct.type) {
+    case 'Function.Lambda': {
+      // Azure: Fn.Lambda → Azure Function App em Consumption (Y1/Dynamic) Linux.
+      //
+      // NUNCA declarar `Microsoft.Web/serverfarms` explicitamente — validado por
+      // deploy real: subscriptions free-tier/restritas retornam
+      // "ServerFarmCreationNotAllowed" para QUALQUER PUT direto nesse tipo de
+      // recurso, mesmo Y1/Dynamic (não é só o FC1/FlexConsumption que é barrado).
+      // O caminho que funciona: PUT em `Microsoft.Web/sites` (kind
+      // 'functionapp,linux', properties.reserved=true) SEM `serverFarmId` nas
+      // properties — o ARM cria/reaproveita implicitamente o plano Dynamic
+      // compartilhado da região (nome tipo "EastUS2LinuxDynamicPlan"), por um
+      // caminho que não passa pela mesma checagem de política. É exatamente o
+      // que `az functionapp create --consumption-plan-location` faz por baixo
+      // (confirmado via --debug: o corpo do PUT em sites nunca inclui
+      // serverFarmId nem um recurso serverfarms é criado à parte).
+      const environment = (props.environment as Record<string, string>) ?? {};
+
+      const fnAppName = `${construct.id.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 20)}`;
+
+      // Connection string (não identity-based): Consumption clássico não precisa
+      // de role assignment/identidade para storage — listKeys() direto, igual ao
+      // que o `az functionapp create` gera.
+      const connStr = ctx.sharedFunctionStorageSym
+        ? expr(`'DefaultEndpointsProtocol=https;AccountName=\${${ctx.sharedFunctionStorageSym}.name};AccountKey=\${${ctx.sharedFunctionStorageSym}.listKeys().keys[0].value};EndpointSuffix=core.windows.net'`)
+        : '';
+      // WEBSITE_CONTENTSHARE: nome de Azure File share (lowercase/dígitos/hífen, 3-63 chars).
+      const contentShareName = `${fnAppName}-content`.slice(0, 63);
+      // AzureFunctionsWebHost__hostid: várias Function Apps compartilham a MESMA
+      // storage account (AzureWebJobsStorage) — sem um hostid distinto por app,
+      // o runtime pode colidir em locks internos (singleton/host id). Máx 32 chars.
+      const hostId = `${fnAppName}-host`.slice(0, 32);
+
+      const appSettings: Array<{ name: string; value: unknown }> = [
+        { name: 'AzureWebJobsStorage', value: connStr },
+        { name: 'WEBSITE_CONTENTAZUREFILECONNECTIONSTRING', value: connStr },
+        { name: 'WEBSITE_CONTENTSHARE', value: contentShareName },
+        { name: 'FUNCTIONS_EXTENSION_VERSION', value: '~4' },
+        { name: 'FUNCTIONS_WORKER_RUNTIME', value: 'node' },
+        { name: 'AzureFunctionsWebHost__hostid', value: hostId },
+      ];
+
+      for (const [k, v] of Object.entries(environment)) {
+        const value = resolveValue(v, ctx.idx, crossParams);
+        if (value === undefined || value === null) {
+          throw new Error(`Fn.Lambda "${construct.id}": env var "${k}" resolveu para undefined. No código da STACK, o valor de environment deve ser uma string literal ou ref('X','Attr') — nunca process.env.${k} (isso é runtime, não existe no synth).`);
+        }
+        appSettings.push({ name: k, value });
+
+        if (isRef(v)) {
+          const ref = v as Ref;
+          const c = ctx.globalIdx.get(ref.constructId) ?? ctx.idx.get(ref.constructId);
+          if (c?.type === 'Database.DynamoDB' && ref.attribute === 'Name') {
+            const alreadyHasMongoUri = appSettings.some(s => s.name === 'MONGO_URI');
+            if (!alreadyHasMongoUri) {
+              const mongoUri = resolveRef({ ...ref, attribute: 'ConnectionString' } as Ref, ctx.idx, crossParams);
+              appSettings.push({ name: 'MONGO_URI', value: mongoUri });
+              appSettings.push({ name: 'DB_NAME', value: resolveRef({ ...ref, attribute: 'Name' } as Ref, ctx.idx, crossParams) });
+            }
+          }
+          if (c?.type === 'Storage.Bucket' && ref.attribute === 'Name') {
+            const connKey = `${k}_CONNECTION_STRING`;
+            const connVal = resolveRef({ ...ref, attribute: 'ConnectionString' } as Ref, ctx.idx, crossParams);
+            appSettings.push({ name: connKey, value: connVal });
+          }
+        }
+      }
+
+      // Múltiplos Function Apps no mesmo stack causam conflito de criação
+      // paralela do serverFarm implícito (EastUS2LinuxDynamicPlan) — serializar
+      // via dependsOn quando já existe outro functionapp,linux no template.
+      const prevFnSym = resources.filter(r => r.type === 'Microsoft.Web/sites' && r.kind === 'functionapp,linux').map(r => r.sym).pop();
+      resources.push({
+        sym,
+        type: 'Microsoft.Web/sites',
+        apiVersion: '2023-12-01',
+        name: expr(`'${fnAppName}-\${uniqueString(resourceGroup().id)}'`),
+        location: 'location',
+        kind: 'functionapp,linux',
+        tags: tag(construct.id),
+        identity: { type: 'SystemAssigned' },
+        properties: {
+          reserved: true,
+          httpsOnly: true,
+          siteConfig: { linuxFxVersion: 'Node|20', appSettings },
+        },
+        ...(prevFnSym ? { dependsOn: [prevFnSym] } : {}),
+      });
+
+      const outputKey = `${construct.id.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}functionappname`;
+      outputs.push({ name: outputKey, type: 'string', value: `${sym}.name` });
+      outputs.push({ name: outputName(construct.id, 'Id'), type: 'string', value: `${sym}.id` });
+      outputs.push({ name: outputName(construct.id, 'PrincipalId'), type: 'string', value: `${sym}.identity.principalId` });
+      outputs.push({ name: crossParamName(construct.id, 'Fqdn'), type: 'string', value: `${sym}.properties.defaultHostName` });
+      break;
+    }
+
+    case 'Function.ApiGateway': {
+      const rawName = (props.name as string) ?? construct.id;
+      const routes = (props.routes as Array<Record<string, unknown>>) ?? [];
+
+      // WEBSOCKET: nada de APIM aqui — o equivalente gerenciado de WebSocket no
+      // Azure é o Web PubSub (Microsoft.SignalRService/WebPubSub). O modelo
+      // routes→lambdaId é o mesmo do HTTP/REST, só que o "roteamento" é por tipo
+      // de evento CloudEvents (systemEvents connect/disconnected, userEventPattern
+      // para mensagens) em vez de método+path — ver
+      // https://learn.microsoft.com/azure/azure-web-pubsub/reference-cloud-events.
+      // As routes especiais $connect/$disconnect/$default do modelo agnóstico
+      // (mesma forma usada no synth AWS, API Gateway v2 WEBSOCKET) mapeiam 1:1
+      // para os event handlers do hub.
+      if ((props.type as string) === 'WEBSOCKET') {
+        const wpsBase = rawName.replace(/[^a-zA-Z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').toLowerCase().slice(0, 40) || 'wps';
+        const wpsName = expr(`'${wpsBase}-\${uniqueString(resourceGroup().id)}'`);
+        // Hub name do Web PubSub NÃO aceita hífen (^[A-Za-z][A-Za-z0-9_]{0,127}$,
+        // diferente do nome do serviço) — sanitização própria.
+        const hubNameRaw = rawName.replace(/[^a-zA-Z0-9_]/g, '_').replace(/^[^A-Za-z]/, 'h').slice(0, 128);
+        const hubName = hubNameRaw || 'hub';
+
+        resources.push({
+          sym,
+          type: 'Microsoft.SignalRService/WebPubSub',
+          apiVersion: '2023-08-01-preview',
+          name: wpsName,
+          location: 'location',
+          tags: tag(construct.id),
+          sku: { name: 'Free_F1', tier: 'Free', capacity: 1 },
+          properties: {},
+        });
+
+        // Resolve o endpoint HTTP da Function correspondente ao lambdaId da rota
+        // — mesmo padrão (same-stack via símbolo local / cross-stack via param+
+        // output) já usado pelos backends do APIM logo abaixo neste arquivo.
+        const lambdaEventUrl = (lambdaId: string): string => {
+          const lambdaConst = ctx.idx.get(lambdaId);
+          if (lambdaConst) {
+            const lambdaSym = toSym(lambdaId);
+            return lambdaConst.type === 'Function.Lambda'
+              ? `'https://\${${lambdaSym}.properties.defaultHostName}/api/HttpTrigger'`
+              : `'https://\${${lambdaSym}.properties.configuration.ingress.fqdn}'`;
+          }
+          const fqdnParam = crossParamName(lambdaId, 'Fqdn');
+          crossParams.set(fqdnParam, 'string');
+          return `'https://\${${fqdnParam}}/api/HttpTrigger'`;
+        };
+
+        const connectRoute = routes.find(r => (r.path as string) === '$connect');
+        const disconnectRoute = routes.find(r => (r.path as string) === '$disconnect');
+        const defaultRoute = routes.find(r => (r.path as string) === '$default');
+
+        const eventHandlers: Array<Record<string, unknown>> = [];
+        if (connectRoute?.lambdaId) {
+          eventHandlers.push({
+            urlTemplate: expr(lambdaEventUrl(connectRoute.lambdaId as string)),
+            systemEvents: ['connect'],
+          });
+        }
+        if (disconnectRoute?.lambdaId) {
+          eventHandlers.push({
+            urlTemplate: expr(lambdaEventUrl(disconnectRoute.lambdaId as string)),
+            systemEvents: ['connected', 'disconnected'],
+          });
+        }
+        if (defaultRoute?.lambdaId) {
+          eventHandlers.push({
+            urlTemplate: expr(lambdaEventUrl(defaultRoute.lambdaId as string)),
+            userEventPattern: '*',
+          });
+        }
+        // Rotas customizadas (fora de $connect/$disconnect/$default) — roteadas
+        // por userEventPattern == path (sem o "$"), mesmo mecanismo do $default.
+        for (const route of routes) {
+          const path = (route.path as string) ?? '';
+          if (path === '$connect' || path === '$disconnect' || path === '$default' || !route.lambdaId) continue;
+          eventHandlers.push({
+            urlTemplate: expr(lambdaEventUrl(route.lambdaId as string)),
+            userEventPattern: path.replace(/^\$/, ''),
+          });
+        }
+
+        const hubSym = `${sym}Hub`;
+        resources.push({
+          sym: hubSym,
+          type: 'Microsoft.SignalRService/WebPubSub/hubs',
+          apiVersion: '2023-08-01-preview',
+          parent: sym,
+          name: hubName,
+          properties: {
+            eventHandlers,
+            anonymousConnectPolicy: 'allow',
+          },
+        });
+
+        outputs.push({ name: outputName(construct.id, 'Url'), type: 'string', value: `${sym}.properties.hostName` });
+        outputs.push({ name: crossParamName(construct.id, 'Arn'), type: 'string', value: `${sym}.id` });
+        break;
+      }
+
+      const apimBase = rawName.replace(/[^a-zA-Z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').toLowerCase().slice(0, 36);
+      const apimName = expr(`'${apimBase}-\${uniqueString(resourceGroup().id)}'`);
+      const authorizerLambdaId = props.authorizerLambdaId as string | undefined;
+
+      const routeAuthorizerIds = [...new Set(routes.filter(r => r.authorizerLambdaId).map(r => r.authorizerLambdaId as string))];
+      const hasRouteAuthorizer = routeAuthorizerIds.length > 0;
+      // top-level authorizer: aplica validate-jwt em toda a API (não por rota)
+      const topLevelAuthorizer = props.authorizer as { type?: string; secretId?: string } | undefined;
+      const hasTopLevelJwt = topLevelAuthorizer?.type === 'JWT' && !!topLevelAuthorizer?.secretId;
+      const jwtTopLevelSecretId = topLevelAuthorizer?.secretId as string | undefined;
+      const needsJwt = hasRouteAuthorizer || hasTopLevelJwt;
+
+      // APIM compartilhado cross-RG (sharedApim.resourceGroup != RG do projeto):
+      // os filhos do serviço (apis/backends/namedValues) só podem viver dentro de
+      // um `module` aninhado com scope próprio — Bicep proíbe que um recurso
+      // `parent:`-linkado a um `existing` cross-RG herde um scope diferente do
+      // arquivo (BCP165; ver emitBicep). A autorização JWT via Secret.Vault
+      // (routes com authorizerLambdaId) precisa ler a identity do APIM E
+      // conceder acesso no Key Vault do PROJETO — uma combinação ainda não
+      // implementada para esse modo. Falha explícita em synth-time em vez de
+      // gerar Bicep incorreto/não-testado.
+      const crossRg = !!ctx.sharedApim?.crossRg;
+      if (crossRg && (hasRouteAuthorizer || hasTopLevelJwt)) {
+        throw new Error(
+          `Function.ApiGateway "${construct.id}": rotas com authorizerLambdaId (JWT via Secret.Vault) ainda não são ` +
+          `suportadas combinadas com azure.sharedApim num resource group DIFERENTE do projeto ` +
+          `(azure.sharedApim.resourceGroup != resourceGroup do projeto). Use um sharedApim no MESMO resource group ` +
+          `do projeto, ou remova o sharedApim para este projeto ter seu próprio APIM.`,
+        );
+      }
+      const crossRgChild = crossRg ? ctx.apimCrossRgChild : undefined;
+      if (crossRg && !crossRgChild) {
+        throw new Error(`[azure] interno: sharedApim.crossRg=true mas ctx.apimCrossRgChild não foi inicializado (bug em emitBicep).`);
+      }
+
+      const kvEntry = needsJwt
+        ? (jwtTopLevelSecretId && !hasRouteAuthorizer
+          ? [...ctx.idx.entries()].find(([id]) => id === jwtTopLevelSecretId)
+          : [...ctx.idx.entries()].find(([, c]) => c.type === 'Secret.Vault'))
+        : undefined;
+      const jwtKvSym = kvEntry ? toSym(kvEntry[0]) : undefined;
+      const apimNamedValueSym = jwtKvSym ? `${sym}JwtNamedValue` : undefined;
+
+      // APIM compartilhado (iacmp.json → azure.sharedApim): referencia o serviço
+      // como `existing` em vez de criá-lo — elimina o piso de ~30-45min de
+      // provisionamento de APIM por projeto (Consumption tier). Os filhos
+      // (api/backends/namedValues) são prefixados por projectSlug para não
+      // colidir com outros projetos que compartilham o mesmo APIM — inclusive o
+      // `path` da API, que é rota real no gateway (dois projetos com path 'api'
+      // colidiriam no roteamento, não só no nome do recurso ARM).
+      const namePrefix = ctx.sharedApim ? `${ctx.sharedApim.projectSlug}-` : '';
+
+      // crossRg: todo filho (parent:) do serviço APIM vai para o acumulador do
+      // módulo aninhado em vez do template do projeto, e o "parent" passa a ser
+      // o `existing` fixo declarado DENTRO do próprio módulo (sharedApimSvc) —
+      // `sym` (o símbolo local deste construct) não existe nesse arquivo.
+      const targetResources = crossRg ? crossRgChild!.resources : resources;
+      const apimParentSym = crossRg ? 'sharedApimSvc' : sym;
+
+      // Valor computado no escopo do template do PROJETO (pode referenciar
+      // símbolos locais como lambdaSym, ou params cross-stack já existentes) que
+      // precisa virar VALOR de um param do módulo aninhado — Bicep não deixa o
+      // módulo enxergar símbolos do arquivo pai diretamente. Fora do modo
+      // crossRg, é passthrough (nenhuma indireção extra, comportamento idêntico
+      // ao anterior).
+      const toChildParam = (paramName: string, valueExpr: string): string => {
+        if (!crossRg) return valueExpr;
+        crossRgChild!.params.set(paramName, valueExpr);
+        return expr(paramName);
+      };
+
+      if (crossRg) {
+        if (!crossRgChild!.existingDeclared) {
+          crossRgChild!.existingDeclared = true;
+          crossRgChild!.resources.push({
+            sym: 'sharedApimSvc',
+            type: 'Microsoft.ApiManagement/service',
+            apiVersion: '2023-05-01-preview',
+            name: expr(`'${ctx.sharedApim!.name}'`),
+            properties: {},
+            existing: true,
+          });
+        }
+      } else if (ctx.sharedApim) {
+        resources.push({
+          sym,
+          type: 'Microsoft.ApiManagement/service',
+          apiVersion: '2023-05-01-preview',
+          name: expr(`'${ctx.sharedApim.name}'`),
+          properties: {},
+          existing: true,
+        });
+      } else {
+        resources.push({
+          sym,
+          type: 'Microsoft.ApiManagement/service',
+          apiVersion: '2023-05-01-preview',
+          name: apimName,
+          location: 'location',
+          tags: tag(construct.id),
+          sku: { name: 'Consumption', capacity: 0 },
+          ...(jwtKvSym ? { identity: { type: 'SystemAssigned' } } : {}),
+          properties: {
+            publisherEmail: 'admin@example.com',
+            publisherName: construct.id,
+            virtualNetworkType: 'None',
+            customProperties: {
+              'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls10': 'false',
+              'Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls11': 'false',
+            },
+          },
+        });
+      }
+
+      const apiSym = `${sym}Api`;
+      const apiPath = `${namePrefix}${(props.path as string) || 'api'}`;
+      targetResources.push({
+        sym: apiSym,
+        type: 'Microsoft.ApiManagement/service/apis',
+        apiVersion: '2023-05-01-preview',
+        parent: apimParentSym,
+        name: `${namePrefix}main`,
+        properties: { displayName: rawName, path: apiPath, protocols: ['https'], subscriptionRequired: false, serviceUrl: '' },
+      });
+
+      if (props.cors) {
+        const corsXml = `<policies><inbound><base /><cors allow-credentials="false"><allowed-origins><origin>*</origin></allowed-origins><allowed-methods preflight-result-max-age="300"><method>*</method></allowed-methods><allowed-headers><header>*</header></allowed-headers></cors></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>`;
+        targetResources.push({ sym: `${sym}ApiPolicy`, type: 'Microsoft.ApiManagement/service/apis/policies', apiVersion: '2023-05-01-preview', parent: apiSym, name: 'policy', properties: { value: corsXml, format: 'xml' } });
+      } else if (hasTopLevelJwt && jwtKvSym && apimNamedValueSym) {
+        // top-level JWT authorizer: aplica validate-jwt em todas as operações via API policy
+        const jwtApiXml = `<policies><inbound><base /><validate-jwt header-name="Authorization" failed-validation-httpcode="401" failed-validation-error-message="Unauthorized" require-expiration-time="false"><issuer-signing-keys><key>{{${namePrefix}jwt-signing-key}}</key></issuer-signing-keys></validate-jwt></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>`;
+        targetResources.push({ sym: `${sym}ApiPolicy`, type: 'Microsoft.ApiManagement/service/apis/policies', apiVersion: '2023-05-01-preview', parent: apiSym, name: 'policy', properties: { value: jwtApiXml, format: 'xml' }, dependsOn: [apimNamedValueSym] });
+      }
+
+      const uniqueLambdaIds = [...new Set(routes.filter(r => r.lambdaId).map(r => r.lambdaId as string))];
+      const backendNameMap = new Map<string, string>();
+      for (const lambdaId of uniqueLambdaIds) {
+        const backendName = `${namePrefix}backend-${lambdaId.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+        backendNameMap.set(lambdaId, backendName);
+        let backendUrl: string;
+        const lambdaConst = ctx.idx.get(lambdaId);
+        if (lambdaConst) {
+          const lambdaSym = toSym(lambdaId);
+          if (lambdaConst.type === 'Function.Lambda') {
+            backendUrl = expr(`'https://\${${lambdaSym}.properties.defaultHostName}/api/HttpTrigger'`);
+          } else {
+            backendUrl = expr(`'https://\${${lambdaSym}.properties.configuration.ingress.fqdn}'`);
+          }
+        } else {
+          const fqdnParam = crossParamName(lambdaId, 'Fqdn');
+          crossParams.set(fqdnParam, 'string');
+          backendUrl = expr(`'https://\${${fqdnParam}}/api/HttpTrigger'`);
+        }
+        const backendUrlValue = toChildParam(`${sym}Backend${lambdaId.replace(/[^a-zA-Z0-9]/g, '')}Url`, backendUrl);
+        targetResources.push({
+          sym: `${sym}Backend${lambdaId.replace(/[^a-zA-Z0-9]/g, '')}`,
+          type: 'Microsoft.ApiManagement/service/backends',
+          apiVersion: '2023-05-01-preview',
+          parent: apimParentSym,
+          name: backendName,
+          properties: {
+            url: backendUrlValue,
+            protocol: 'http',
+            description: `Function App backend for ${lambdaId}`,
+          },
+        });
+      }
+
+      for (let ri = 0; ri < routes.length; ri++) {
+        const route = routes[ri];
+        const method = (route.method as string) ?? 'GET';
+        const path = (route.path as string) ?? '/';
+        const lambdaId = route.lambdaId as string | undefined;
+        const routeAuthId = route.authorizerLambdaId as string | undefined;
+        const opSym = `${sym}Op${ri}`;
+        const sanitizedPath = path.replace(/\{(\w+)\+\}/g, '{$1}').replace(/^\$/, '');
+        const templateParams = [...sanitizedPath.matchAll(/\{(\w+)\}/g)].map(m => ({ name: m[1], required: true, type: 'string' }));
+        targetResources.push({
+          sym: opSym,
+          type: 'Microsoft.ApiManagement/service/apis/operations',
+          apiVersion: '2023-05-01-preview',
+          parent: apiSym,
+          name: `op-${method.toLowerCase()}-${ri}`,
+          properties: {
+            displayName: `${method} ${path}`,
+            method,
+            urlTemplate: sanitizedPath,
+            description: (route.description as string) ?? `${method} ${path}`,
+            ...(templateParams.length > 0 ? { templateParameters: templateParams } : {}),
+          },
+        });
+        if (lambdaId) {
+          const backendId = backendNameMap.get(lambdaId) ?? `${namePrefix}backend-${lambdaId.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+          const usesJwt = routeAuthId !== undefined && jwtKvSym !== undefined;
+          const opXml = usesJwt
+            ? `<policies><inbound><base /><validate-jwt header-name="Authorization" failed-validation-httpcode="401" failed-validation-error-message="Unauthorized" require-expiration-time="false"><issuer-signing-keys><key>{{${namePrefix}jwt-signing-key}}</key></issuer-signing-keys></validate-jwt><set-backend-service backend-id="${backendId}" /></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>`
+            : `<policies><inbound><base /><set-backend-service backend-id="${backendId}" /></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>`;
+          targetResources.push({
+            sym: `${sym}Policy${ri}`,
+            type: 'Microsoft.ApiManagement/service/apis/operations/policies',
+            apiVersion: '2023-05-01-preview',
+            parent: opSym,
+            name: 'policy',
+            properties: { value: opXml, format: 'xml' },
+            dependsOn: [
+              `${sym}Backend${lambdaId.replace(/[^a-zA-Z0-9]/g, '')}`,
+              ...(usesJwt && apimNamedValueSym ? [apimNamedValueSym] : []),
+            ],
+          });
+        }
+      }
+
+      // jwtKvSym existe quando needsJwt (hasRouteAuthorizer ou hasTopLevelJwt).
+      // crossRg+needsJwt já lançou lá em cima, então este bloco só roda com
+      // APIM próprio ou sharedApim same-RG.
+      // O KV é criado com enableRbacAuthorization:true (ver policy.ts) — access
+      // policies de vault são ignoradas nesse modo. Usar roleAssignment com o role
+      // builtin "Key Vault Secrets User" (4633458b-17de-408a-b874-0445c86b69e0).
+      if (jwtKvSym) {
+        const apimKvAccessPolicySym = `${sym}KvRoleAssign`;
+        resources.push({
+          sym: apimKvAccessPolicySym,
+          type: 'Microsoft.Authorization/roleAssignments',
+          apiVersion: '2022-04-01',
+          scope: jwtKvSym,
+          name: expr(`guid(${jwtKvSym}.id, ${sym}.id, 'KeyVaultSecretsUser')`),
+          properties: {
+            roleDefinitionId: expr(`subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')`),
+            principalId: expr(`${sym}.identity.principalId`),
+            principalType: 'ServicePrincipal',
+          },
+        });
+        resources.push({
+          sym: `${sym}JwtNamedValue`,
+          type: 'Microsoft.ApiManagement/service/namedValues',
+          apiVersion: '2023-05-01-preview',
+          parent: sym,
+          name: `${namePrefix}jwt-signing-key`,
+          properties: {
+            displayName: `${namePrefix}jwt-signing-key`,
+            secret: true,
+            keyVault: {
+              secretIdentifier: expr(`'\${${jwtKvSym}.properties.vaultUri}secrets/secret-value'`),
+            },
+          },
+          dependsOn: [apimKvAccessPolicySym],
+        });
+      }
+
+      if (authorizerLambdaId) {
+        let authUrl: string;
+        const authConst = ctx.idx.get(authorizerLambdaId);
+        if (authConst) {
+          const authFnSym = toSym(authorizerLambdaId);
+          if (authConst.type === 'Function.Lambda') {
+            authUrl = expr(`'https://\${${authFnSym}.properties.defaultHostName}'`);
+          } else {
+            authUrl = expr(`'https://\${${authFnSym}.properties.configuration.ingress.fqdn}'`);
+          }
+        } else {
+          const authFqdnParam = crossParamName(authorizerLambdaId, 'Fqdn');
+          crossParams.set(authFqdnParam, 'string');
+          authUrl = expr(`'https://\${${authFqdnParam}}'`);
+        }
+        const authUrlValue = toChildParam(`${sym}AuthorizerUrl`, authUrl);
+        targetResources.push({ sym: `${sym}AuthorizerBackend`, type: 'Microsoft.ApiManagement/service/backends', apiVersion: '2023-05-01-preview', parent: apimParentSym, name: `${namePrefix}authorizer-backend`, properties: { description: `Function App authorizer backend (${authorizerLambdaId})`, url: authUrlValue, protocol: 'http' } });
+      }
+
+      // Url inclui o path base da API (paridade com AWS, cujo ApiUrl inclui o
+      // stage /prod) — sem ele o consumidor toma 404 do APIM ("Resource not found").
+      // Em APIM compartilhado, apiPath já vem prefixado por projectSlug (é a rota
+      // real no gateway — precisa bater com o `path` declarado na API acima).
+      if (crossRg) {
+        // sym (a service resource) só existe DENTRO do módulo aninhado — o
+        // template do projeto não a enxerga; o módulo exporta a URL final e o
+        // projeto repassa `<module>.outputs.<nome>`.
+        const childOutputName = `${sym}ApiUrl`;
+        crossRgChild!.outputs.push({ name: childOutputName, type: 'string', value: `'\${sharedApimSvc.properties.gatewayUrl}/${apiPath}'` });
+        outputs.push({ name: outputName(construct.id, 'Url'), type: 'string', value: `${ctx.sharedApim!.crossRgModuleSym}.outputs.${childOutputName}` });
+      } else {
+        outputs.push({ name: outputName(construct.id, 'Url'), type: 'string', value: `'\${${sym}.properties.gatewayUrl}/${apiPath}'` });
+      }
+      break;
+    }
+
+    case 'Events.EventBridge': {
+      const rules = (props.rules as Array<Record<string, unknown>>) ?? [];
+      for (let ri = 0; ri < rules.length; ri++) {
+        const r = rules[ri];
+        const ruleSym = `${sym}Rule${ri}`;
+        const ruleName = ((r.name as string) ?? `${construct.id}-rule-${ri}`).toLowerCase();
+
+        let recurrence: Record<string, unknown> = { frequency: 'Day', interval: 1 };
+        if (r.cron) {
+          const parts = (r.cron as string).trim().split(/\s+/);
+          const minute = parseInt(parts[0] ?? '0', 10) || 0;
+          const hour   = parseInt(parts[1] ?? '0', 10) || 0;
+          recurrence = { frequency: 'Day', interval: 1, timeZone: 'UTC', schedule: { hours: [String(hour)], minutes: [minute] } };
+        } else if (r.rate) {
+          const m = (r.rate as string).toLowerCase().match(/^(\d+)\s+(minute|minutes|hour|hours|day|days)$/);
+          if (m) {
+            const freqMap: Record<string, string> = { minute: 'Minute', minutes: 'Minute', hour: 'Hour', hours: 'Hour', day: 'Day', days: 'Day' };
+            recurrence = { frequency: freqMap[m[2]] ?? 'Hour', interval: parseInt(m[1], 10) };
+          }
+        }
+
+        let targetUrl: unknown = '';
+        const targetLambdaId = r.targetLambdaId as string | undefined;
+        if (targetLambdaId) {
+          const targetConst = ctx.idx.get(targetLambdaId);
+          if (targetConst) {
+            const lSym = toSym(targetLambdaId);
+            if (targetConst.type === 'Function.Lambda') {
+              targetUrl = expr(`'https://\${${lSym}.properties.defaultHostName}/api/invoke'`);
+            } else {
+              targetUrl = expr(`'https://\${${lSym}.properties.configuration.ingress.fqdn}/invoke'`);
+            }
+          } else {
+            const fqdnParam = crossParamName(targetLambdaId, 'Fqdn');
+            crossParams.set(fqdnParam, 'string');
+            targetUrl = expr(`'https://\${${fqdnParam}}/api/invoke'`);
+          }
+        }
+
+        resources.push({
+          sym: ruleSym,
+          type: 'Microsoft.Logic/workflows',
+          apiVersion: '2019-05-01',
+          name: ruleName,
+          location: 'location',
+          tags: tag(construct.id),
+          properties: {
+            definition: {
+              '$schema': 'https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#',
+              contentVersion: '1.0.0.0',
+              triggers: {
+                Recurrence: { type: 'Recurrence', recurrence },
+              },
+              actions: {
+                InvokeTarget: {
+                  type: 'Http',
+                  inputs: { method: 'POST', uri: targetUrl, body: { rule: ruleName, time: '@{utcNow()}' } },
+                  runAfter: {},
+                },
+              },
+            },
+            parameters: {},
+          },
+        });
+      }
+      break;
+    }
+
+    case 'Workflow.StepFunctions': {
+      const steps = (props.steps as Array<Record<string, unknown>>) ?? [];
+      const actions: Record<string, unknown> = {};
+      for (let si = 0; si < steps.length; si++) {
+        const s = steps[si];
+        const stepName = s.name as string;
+        const runAfter = si > 0 ? { [steps[si - 1].name as string]: ['Succeeded'] } : {};
+        const stepType = (s.type as string) ?? 'Task';
+        if (stepType === 'Wait') {
+          const secs = (s.seconds as number) ?? 60;
+          const mins = Math.max(1, Math.ceil(secs / 60));
+          actions[stepName] = { type: 'Wait', inputs: { interval: { count: mins, unit: 'Minute' } }, runAfter };
+        } else {
+          let uri: unknown = '';
+          const rawResource = s.resource;
+          if (isRef(rawResource)) {
+            const refObj = rawResource as Ref;
+            const refConstruct = ctx.idx.get(refObj.constructId);
+            if (refConstruct && (refConstruct.type === 'Function.Lambda' || refConstruct.type === 'Compute.Container')) {
+              const lambdaSym = toSym(refObj.constructId);
+              if (refConstruct.type === 'Function.Lambda') {
+                uri = expr(`'https://\${${lambdaSym}.properties.defaultHostName}'`);
+              } else {
+                uri = expr(`'https://\${${lambdaSym}.properties.configuration.ingress.fqdn}'`);
+              }
+            } else if (!refConstruct) {
+              const fqdnParam = crossParamName(refObj.constructId, 'Fqdn');
+              crossParams.set(fqdnParam, 'string');
+              uri = expr(`'https://\${${fqdnParam}}'`);
+            } else {
+              uri = resolveRef(refObj, ctx.idx, crossParams);
+            }
+          } else if (typeof rawResource === 'string') {
+            uri = rawResource;
+          }
+          actions[stepName] = { type: 'Http', inputs: { method: 'POST', uri }, runAfter };
+        }
+      }
+      resources.push({ sym, type: 'Microsoft.Logic/workflows', apiVersion: '2019-05-01', name: construct.id, location: 'location', tags: tag(construct.id), properties: { definition: { '$schema': 'https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#', contentVersion: '1.0.0.0', triggers: {}, actions } } });
+      outputs.push({ name: crossParamName(construct.id, 'Arn'), type: 'string', value: `${sym}.id` });
+      break;
+    }
+  }
+}

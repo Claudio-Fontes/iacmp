@@ -1,0 +1,27 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "inputs": ["src/**", "bin/**", "tsconfig.json", "tsconfig.*.json", "tsup.config.ts", "package.json"],
+      "outputs": ["dist/**", "oclif.manifest.json"]
+    },
+    "dev": {
+      "dependsOn": ["^build"],
+      "persistent": true
+    },
+    "clean": {
+      "cache": false
+    },
+    "typecheck": {
+      "dependsOn": ["^build"],
+      "inputs": ["src/**", "tsconfig.json", "tsconfig.*.json"]
+    },
+    "test": {
+      "dependsOn": ["build"],
+      "inputs": ["src/**", "test/**", "tsconfig.json", "tsconfig.*.json", "jest.config.*", "package.json"],
+      "outputs": ["coverage/**"],
+      "outputLogs": "new-only"
+    }
+  }
+}

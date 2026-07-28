@@ -1,0 +1,156 @@
+{
+  "terraform": {
+    "required_providers": {
+      "aws": {
+        "source": "hashicorp/aws",
+        "version": "~> 5.0"
+      },
+      "archive": {
+        "source": "hashicorp/archive",
+        "version": "~> 2.0"
+      }
+    }
+  },
+  "provider": {
+    "aws": {
+      "region": "${var.aws_region}"
+    }
+  },
+  "variable": {
+    "aws_region": {
+      "type": "string",
+      "default": "us-east-1"
+    }
+  },
+  "data": {
+    "archive_file": {
+      "processfn_archive": {
+        "type": "zip",
+        "source_dir": "dist/",
+        "output_path": "processfn.zip"
+      }
+    },
+    "aws_caller_identity": {
+      "current": {}
+    }
+  },
+  "resource": {
+    "aws_iam_role": {
+      "processfndefaultrole": {
+        "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"lambda.amazonaws.com\"},\"Action\":\"sts:AssumeRole\"}]}",
+        "managed_policy_arns": [
+          "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        ]
+      }
+    },
+    "aws_lambda_function": {
+      "processfn": {
+        "function_name": "ProcessFn",
+        "runtime": "nodejs20.x",
+        "handler": "index.handler",
+        "filename": "${data.archive_file.processfn_archive.output_path}",
+        "source_code_hash": "${data.archive_file.processfn_archive.output_base64sha256}",
+        "memory_size": 128,
+        "timeout": 30,
+        "role": "${aws_iam_role.processfndefaultrole.arn}",
+        "environment": {
+          "variables": {
+            "DEST_BUCKET": "${aws_s3_bucket.outputbucket.bucket}"
+          }
+        }
+      }
+    },
+    "aws_s3_bucket": {
+      "inputbucket": {
+        "depends_on": [
+          "aws_lambda_permission.inputbucketinvokepermission0"
+        ],
+        "lifecycle": {
+          "prevent_destroy": true
+        }
+      },
+      "outputbucket": {
+        "lifecycle": {
+          "prevent_destroy": true
+        }
+      }
+    },
+    "aws_s3_bucket_versioning": {
+      "inputbucket_versioning": {
+        "bucket": "${aws_s3_bucket.inputbucket.id}",
+        "versioning_configuration": {
+          "status": "Enabled"
+        }
+      },
+      "outputbucket_versioning": {
+        "bucket": "${aws_s3_bucket.outputbucket.id}",
+        "versioning_configuration": {
+          "status": "Suspended"
+        }
+      }
+    },
+    "aws_s3_bucket_public_access_block": {
+      "inputbucket_public_access_block": {
+        "bucket": "${aws_s3_bucket.inputbucket.id}",
+        "block_public_acls": true,
+        "block_public_policy": true,
+        "ignore_public_acls": true,
+        "restrict_public_buckets": true
+      },
+      "outputbucket_public_access_block": {
+        "bucket": "${aws_s3_bucket.outputbucket.id}",
+        "block_public_acls": true,
+        "block_public_policy": true,
+        "ignore_public_acls": true,
+        "restrict_public_buckets": true
+      }
+    },
+    "aws_s3_bucket_notification": {
+      "inputbucket_notification": {
+        "bucket": "${aws_s3_bucket.inputbucket.id}",
+        "lambda_function": [
+          {
+            "lambda_function_arn": "${aws_lambda_function.processfn.arn}",
+            "events": [
+              "s3:ObjectCreated:*"
+            ]
+          }
+        ]
+      }
+    },
+    "aws_lambda_permission": {
+      "inputbucketinvokepermission0": {
+        "action": "lambda:InvokeFunction",
+        "function_name": "${aws_lambda_function.processfn.arn}",
+        "principal": "s3.amazonaws.com",
+        "source_account": "${data.aws_caller_identity.current.account_id}"
+      }
+    }
+  },
+  "output": {
+    "ProcessFnArn": {
+      "value": "${aws_lambda_function.processfn.arn}",
+      "description": "s3-lambda-pipeline-ProcessFn-Arn"
+    },
+    "ProcessFnName": {
+      "value": "${aws_lambda_function.processfn.function_name}",
+      "description": "s3-lambda-pipeline-ProcessFn-Name"
+    },
+    "InputBucketName": {
+      "value": "${aws_s3_bucket.inputbucket.bucket}",
+      "description": "s3-lambda-pipeline-InputBucket-Name"
+    },
+    "InputBucketArn": {
+      "value": "${aws_s3_bucket.inputbucket.arn}",
+      "description": "s3-lambda-pipeline-InputBucket-Arn"
+    },
+    "OutputBucketName": {
+      "value": "${aws_s3_bucket.outputbucket.bucket}",
+      "description": "s3-lambda-pipeline-OutputBucket-Name"
+    },
+    "OutputBucketArn": {
+      "value": "${aws_s3_bucket.outputbucket.arn}",
+      "description": "s3-lambda-pipeline-OutputBucket-Arn"
+    }
+  }
+}

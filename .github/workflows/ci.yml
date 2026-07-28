@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: build / typecheck / test (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20.x']
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Cache Turbo
+        uses: actions/cache@v4
+        with:
+          path: .turbo
+          key: ${{ runner.os }}-turbo-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-turbo-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npx turbo run typecheck
+
+      - name: Test
+        run: npx turbo run test
+
+      - name: Build
+        run: npx turbo run build
+
+  cfn-lint:
+    name: cfn-lint (golden templates)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install cfn-lint
+        run: pip install cfn-lint
+
+      - name: Lint CloudFormation golden templates
+        # Multi-stack goldens (lambda-vpc-redis, rds-secret, websocket-api) são
+        # dicionários JSON com várias stacks — não são templates CFN válidos
+        # individualmente e por isso são excluídos aqui.
+        run: |
+          cfn-lint \
+            packages/providers/aws/test/golden/ecs-alb.json \
+            packages/providers/aws/test/golden/kinesis-stream.json \
+            packages/providers/aws/test/golden/s3-lambda-pipeline.json \
+            packages/providers/aws/test/golden/sns-alarm.json \
+            packages/providers/aws/test/golden/stepfunctions-approval.json \
+            packages/providers/aws/test/golden/waf-rest-api.json
+
+  terraform-validate:
+    name: terraform validate (golden-tf templates)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Validate AWS golden Terraform JSON templates
+        # Multi-stack goldens (lambda-vpc-redis, rds-secret, websocket-api) são
+        # dicionários JSON com várias stacks — não são .tf.json válidos
+        # individualmente e por isso são excluídos aqui (mesma exclusão do cfn-lint).
+        run: |
+          for f in ecs-alb kinesis-stream s3-lambda-pipeline sns-alarm stepfunctions-approval waf-rest-api; do
+            echo "Validating $f..."
+            tmpdir=$(mktemp -d)
+            cp "packages/providers/aws/test/golden-tf/$f.tf.json" "$tmpdir/main.tf.json"
+            terraform -chdir="$tmpdir" init -backend=false
+            terraform -chdir="$tmpdir" validate
+            rm -rf "$tmpdir"
+          done
+
+      - name: Validate GCP golden Terraform JSON templates
+        # Goldens do GCP são single-stack (.tf.json válidos individualmente) e
+        # fecham o G1b (docs/roadmap-fase2.md): garante que o synth GCP produz
+        # Terraform que o provider google aceita, a cada push/PR.
+        run: |
+          for f in packages/providers/gcp/test/golden-tf/*.tf.json; do
+            echo "Validating $f..."
+            tmpdir=$(mktemp -d)
+            cp "$f" "$tmpdir/main.tf.json"
+            terraform -chdir="$tmpdir" init -backend=false
+            terraform -chdir="$tmpdir" validate
+            rm -rf "$tmpdir"
+          done

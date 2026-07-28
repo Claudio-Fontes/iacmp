@@ -1,0 +1,294 @@
+import { Stack, Database, Fn, Messaging, Secret, Storage, Monitoring, Policy, ref } from '@iacmp/core';
+import { AWSProvider } from '../src';
+
+const provider = new AWSProvider();
+
+// ── 1. Getter same-stack: db.endpoint → GetAtt idêntico ao string equivalente ─
+
+test('Ref getter same-stack (db.endpoint) produz mesmo GetAtt que string "AppDB.Endpoint"', () => {
+  const mkStack = (useGetter: boolean) => {
+    const s = new Stack('app-stack', { region: 'us-east-1' });
+    const db = new Database.SQL(s, 'AppDB', { engine: 'postgres' });
+    new Fn.Lambda(s, 'ApiFn', {
+      runtime: 'nodejs20',
+      handler: 'index.handler',
+      code: 'dist/',
+      environment: {
+        DB_HOST: useGetter ? db.endpoint : 'AppDB.Endpoint',
+      },
+    });
+    return s;
+  };
+
+  const tplGetter = provider.synthesize(mkStack(true), [mkStack(true)]) as any;
+  const tplString = provider.synthesize(mkStack(false), [mkStack(false)]) as any;
+
+  const envGetter = tplGetter.Resources.ApiFn.Properties.Environment.Variables.DB_HOST;
+  const envString = tplString.Resources.ApiFn.Properties.Environment.Variables.DB_HOST;
+
+  expect(envGetter).toEqual(envString);
+  expect(envGetter).toEqual({ 'Fn::GetAtt': ['AppDB', 'Endpoint.Address'] });
+});
+
+// ── 2. ref() cross-stack → ImportValue correto ────────────────────────────────
+
+test('ref() cross-stack → Fn::ImportValue com sufixo correto', () => {
+  const dbStack = new Stack('db-stack', { region: 'us-east-1' });
+  new Database.SQL(dbStack, 'AppDB', { engine: 'postgres' });
+
+  const lambdaStack = new Stack('lambda-stack', { region: 'us-east-1' });
+  new Fn.Lambda(lambdaStack, 'ApiFn', {
+    runtime: 'nodejs20',
+    handler: 'index.handler',
+    code: 'dist/',
+    environment: {
+      DB_HOST: ref('AppDB', 'Endpoint'),
+    },
+  });
+
+  const allStacks = [dbStack, lambdaStack];
+  const tpl = provider.synthesize(lambdaStack, allStacks) as any;
+  const dbHost = tpl.Resources.ApiFn.Properties.Environment.Variables.DB_HOST;
+
+  expect(dbHost).toEqual({ 'Fn::ImportValue': 'db-stack-AppDB-Endpoint' });
+});
+
+// ── 3. Atributo inválido → erro claro citando atributos válidos ───────────────
+
+test('ref() com atributo inválido lança erro com atributos válidos listados', () => {
+  const s = new Stack('app-stack', { region: 'us-east-1' });
+  new Database.SQL(s, 'AppDB', { engine: 'postgres' });
+  new Fn.Lambda(s, 'ApiFn', {
+    runtime: 'nodejs20',
+    handler: 'index.handler',
+    code: 'dist/',
+    environment: {
+      BROKEN: ref('AppDB', 'FooBar'),
+    },
+  });
+
+  expect(() => provider.synthesize(s, [s])).toThrow('FooBar');
+  expect(() => provider.synthesize(s, [s])).toThrow('Atributos válidos');
+});
+
+// ── 4. expectType violado: lambdaId apontando para Queue via Ref → erro claro ─
+
+test('eventNotifications.lambdaId apontando para Queue via Ref lança erro de tipo', () => {
+  const s = new Stack('app-stack', { region: 'us-east-1' });
+  const queue = new Messaging.Queue(s, 'UploadQueue', {});
+  new Storage.Bucket(s, 'Assets', {
+    eventNotifications: [
+      { lambdaId: queue.arn },
+    ],
+  });
+
+  expect(() => provider.synthesize(s, [s])).toThrow('Fn.Lambda');
+});
+
+// ── 5. alarmActions getter → mesmo output que string equivalente ──────────────
+
+test('alarmActions: [topic.arn] produz mesmo Ref que alarmActions: ["AlertsTopic"]', () => {
+  const mkStack = (useGetter: boolean) => {
+    const s = new Stack('app-stack', { region: 'us-east-1' });
+    const topic = new Messaging.Topic(s, 'AlertsTopic', {});
+    new Monitoring.Alarm(s, 'HighCpu', {
+      metricName: 'CPUUtilization',
+      threshold: 80,
+      alarmActions: useGetter ? [topic.arn] : ['AlertsTopic'],
+    });
+    return s;
+  };
+
+  const tplGetter = provider.synthesize(mkStack(true), [mkStack(true)]) as any;
+  const tplString = provider.synthesize(mkStack(false), [mkStack(false)]) as any;
+
+  expect(tplGetter.Resources.HighCpu.Properties.AlarmActions)
+    .toEqual(tplString.Resources.HighCpu.Properties.AlarmActions);
+  expect(tplGetter.Resources.HighCpu.Properties.AlarmActions).toEqual([{ Ref: 'AlertsTopic' }]);
+});
+
+// ── 6. Policy resources getter → mesmo output que string equivalente ──────────
+
+test('policy resources: [vault.secretArn] produz mesmo output que ["MyVault.SecretArn"]', () => {
+  const mkStack = (useGetter: boolean) => {
+    const s = new Stack('app-stack', { region: 'us-east-1' });
+    const vault = new Secret.Vault(s, 'MyVault', {});
+    new Fn.Lambda(s, 'ApiFn', { runtime: 'nodejs20', handler: 'index.handler', code: 'dist/' });
+    new Policy.IAM(s, 'SecretPolicy', {
+      attachTo: 'ApiFn',
+      attachType: 'lambda',
+      statements: [{
+        effect: 'Allow',
+        actions: ['secretsmanager:GetSecretValue'],
+        resources: useGetter ? [vault.secretArn] : ['MyVault.SecretArn'],
+      }],
+    });
+    return s;
+  };
+
+  const tplGetter = provider.synthesize(mkStack(true), [mkStack(true)]) as any;
+  const tplString = provider.synthesize(mkStack(false), [mkStack(false)]) as any;
+
+  const stmtsGetter = tplGetter.Resources.SecretPolicyRole.Properties.Policies[0].PolicyDocument.Statement;
+  const stmtsString = tplString.Resources.SecretPolicyRole.Properties.Policies[0].PolicyDocument.Statement;
+
+  expect(stmtsGetter[0].Resource).toEqual(stmtsString[0].Resource);
+  expect(stmtsGetter[0].Resource).toEqual([{ Ref: 'MyVault' }]);
+});
+
+// ── 7. dlqArn via getter (caso p03e2e: dlq.arn crashava resolveQueueArn) ─────
+
+test('Messaging.Queue com dlqArn via getter (dlq.arn) → RedrivePolicy com GetAtt', () => {
+  const s = new Stack('task-queue', { region: 'us-east-1' });
+  const dlq = new Messaging.Queue(s, 'TaskDLQ', {});
+  new Messaging.Queue(s, 'TaskQueue', { dlqArn: dlq.arn, maxReceiveCount: 3 });
+
+  const tpl = provider.synthesize(s, [s]) as any;
+  const redrive = tpl.Resources.TaskQueue.Properties.RedrivePolicy;
+  expect(redrive.deadLetterTargetArn).toEqual({ 'Fn::GetAtt': ['TaskDLQ', 'Arn'] });
+  expect(redrive.maxReceiveCount).toBe(3);
+});
+
+test('vpcId/subnetIds/securityGroupIds aceitam Ref sem crashar (guards nos resolvers)', () => {
+  const s = new Stack('net-stack', { region: 'us-east-1' });
+  new Fn.Lambda(s, 'VpcFn', {
+    runtime: 'nodejs20', handler: 'i.h', code: 'dist/',
+    vpcId: ref('AppVpc', 'VpcId') as any,
+    subnetIds: [ref('PrivateSubnet1', 'SubnetId') as any],
+    securityGroupIds: [ref('LambdaSG', 'GroupId') as any],
+  });
+  // AppVpc/subnet/SG não existem no universo — resolveRef lança erro CLARO de
+  // referência não encontrada (não TypeError de .startsWith em objeto).
+  expect(() => provider.synthesize(s, [s])).toThrow(/não foi encontrada|not found|Referência/);
+});
+
+// ── 8. streamId/queueId com tipo errado → erro de SYNTH (caso p03e2eb: SQS via
+//    streamId caía no branch Kinesis → StartingPosition → 400 só no deploy) ──
+
+test('eventSources.streamId apontando para Messaging.Queue → erro claro no synth', () => {
+  const s = new Stack('worker', { region: 'us-east-1' });
+  const q = new Messaging.Queue(s, 'TaskQueue', {});
+  new Fn.Lambda(s, 'WorkerFn', {
+    runtime: 'nodejs20', handler: 'i.h', code: 'dist/',
+    eventSources: [{ streamId: q.arn }],
+  });
+  expect(() => provider.synthesize(s, [s])).toThrow(/streamId.*Messaging\.Queue.*queueId/s);
+});
+
+test('eventSources.queueId via getter (queue.arn) → EventSourceMapping SQS correto', () => {
+  const s = new Stack('worker', { region: 'us-east-1' });
+  const q = new Messaging.Queue(s, 'TaskQueue', {});
+  new Fn.Lambda(s, 'WorkerFn', {
+    runtime: 'nodejs20', handler: 'i.h', code: 'dist/',
+    eventSources: [{ queueId: q.arn, batchSize: 5 }],
+  });
+  const tpl = provider.synthesize(s, [s]) as any;
+  const esm = tpl.Resources.WorkerFnEventSource1.Properties;
+  expect(esm.EventSourceArn).toEqual({ 'Fn::GetAtt': ['TaskQueue', 'Arn'] });
+  expect(esm.StartingPosition).toBeUndefined(); // SQS NUNCA leva StartingPosition
+  expect(esm.BisectBatchOnFunctionError).toBeUndefined();
+});
+
+// ── Fix 1: guard de atributo não-ARN em Policy.IAM resources ─────────────────
+
+test('Policy.IAM: ref com atributo não-ARN (Endpoint) em resources lança erro no synth', () => {
+  const s = new Stack('app-stack', { region: 'us-east-1' });
+  new Database.SQL(s, 'AppDB', { engine: 'postgres' });
+  new Fn.Lambda(s, 'ApiFn', { runtime: 'nodejs20', handler: 'index.handler', code: 'dist/' });
+  new Policy.IAM(s, 'DbPolicy', {
+    attachTo: 'ApiFn',
+    attachType: 'lambda',
+    statements: [{
+      effect: 'Allow',
+      actions: ['rds:DescribeDBInstances'],
+      resources: [ref('AppDB', 'Endpoint')],
+    }],
+  });
+  expect(() => provider.synthesize(s, [s])).toThrow(/Policy\.IAM.*AppDB.*Endpoint.*não é um ARN/);
+});
+
+test('Policy.IAM: "AppDB.Endpoint" (string) em resources lança erro no synth', () => {
+  const s = new Stack('app-stack', { region: 'us-east-1' });
+  new Database.SQL(s, 'AppDB', { engine: 'postgres' });
+  new Fn.Lambda(s, 'ApiFn', { runtime: 'nodejs20', handler: 'index.handler', code: 'dist/' });
+  new Policy.IAM(s, 'DbPolicy', {
+    attachTo: 'ApiFn',
+    attachType: 'lambda',
+    statements: [{
+      effect: 'Allow',
+      actions: ['rds:DescribeDBInstances'],
+      resources: ['AppDB.Endpoint'],
+    }],
+  });
+  expect(() => provider.synthesize(s, [s])).toThrow(/Policy\.IAM.*AppDB.*Endpoint.*não é um ARN/);
+});
+
+test('ref concatenado com string ([object Object]) → erro claro no synth (p04aws2)', () => {
+  const s = new Stack('s3', { region: 'us-east-1' });
+  const b = new Storage.Bucket(s, 'UploadsBucket', {});
+  // padrão errado que o modelo gerou: ref + '/*' vira "[object Object]/*"
+  new Policy.IAM(s, 'P', {
+    attachTo: 'Fn', attachType: 'lambda',
+    statements: [{ effect: 'Allow', actions: ['s3:PutObject'], resources: [(b.arn as any) + '/*'] }],
+  });
+  new Fn.Lambda(s, 'Fn', { runtime: 'nodejs20', handler: 'i.h', code: 'dist/' });
+  expect(() => provider.synthesize(s, [s])).toThrow(/object Object|MeuBucket\/\*|não concatene/i);
+});
+
+test('Events.EventBridge scheduleExpression completa → ScheduleExpression (não EventPattern) [p05aws2]', () => {
+  const s = new Stack('sched', { region: 'us-east-1' });
+  new Fn.Lambda(s, 'ReportFn', { runtime: 'nodejs20', handler: 'i.h', code: 'dist/' });
+  // modelo emitiu scheduleExpression completa em vez de cron/rate crus
+  new (require('@iacmp/core').Events).EventBridge(s, 'Sched', {
+    rules: [{ name: 'Daily', scheduleExpression: 'cron(0 8 * * ? *)', targetLambdaId: 'ReportFn' } as any],
+  });
+  const tpl = provider.synthesize(s, [s]) as any;
+  const rule = Object.values(tpl.Resources).find((r: any) => r.Type === 'AWS::Events::Rule') as any;
+  expect(rule.Properties.ScheduleExpression).toBe('cron(0 8 * * ? *)');
+  expect(rule.Properties.EventPattern).toBeUndefined();
+});
+
+// ── 9. SNS→SQS fan-out cross-stack: QueuePolicy.Queues via ImportValue ────────
+
+test('Messaging.Topic (sqs subscription) cross-stack → QueuePolicy.Queues vira Fn::ImportValue da QueueUrl', () => {
+  const queueStack = new Stack('queue-stack', { region: 'us-east-1' });
+  new Messaging.Queue(queueStack, 'EmailQueue', {});
+
+  const topicStack = new Stack('topic-stack', { region: 'us-east-1' });
+  new Messaging.Topic(topicStack, 'Topic', {
+    subscriptions: [{ protocol: 'sqs', endpoint: 'EmailQueue' }],
+  });
+
+  const allStacks = [queueStack, topicStack];
+  const tpl = provider.synthesize(topicStack, allStacks) as any;
+
+  const sub = Object.values(tpl.Resources).find((r: any) => r.Type === 'AWS::SNS::Subscription') as any;
+  expect(sub.Properties.Endpoint).toEqual({ 'Fn::ImportValue': 'queue-stack-EmailQueue-Arn' });
+
+  const qp = Object.values(tpl.Resources).find((r: any) => r.Type === 'AWS::SQS::QueuePolicy') as any;
+  expect(qp.Properties.Queues).toEqual([{ 'Fn::ImportValue': 'queue-stack-EmailQueue-QueueUrl' }]);
+  expect(qp.Properties.PolicyDocument.Statement[0].Resource).toEqual({ 'Fn::ImportValue': 'queue-stack-EmailQueue-Arn' });
+});
+
+test('Messaging.Topic (sqs subscription) same-stack → QueuePolicy.Queues continua Ref local (regressão)', () => {
+  const s = new Stack('order-events', { region: 'us-east-1' });
+  new Messaging.Queue(s, 'EmailQueue', {});
+  new Messaging.Topic(s, 'Topic', {
+    subscriptions: [{ protocol: 'sqs', endpoint: 'EmailQueue' }],
+  });
+
+  const tpl = provider.synthesize(s, [s]) as any;
+  const qp = Object.values(tpl.Resources).find((r: any) => r.Type === 'AWS::SQS::QueuePolicy') as any;
+  expect(qp.Properties.Queues).toEqual([{ Ref: 'EmailQueue' }]);
+});
+
+test('ARN com account id placeholder 123456789012 → erro claro no synth (p05aws3)', () => {
+  const s = new Stack('p', { region: 'us-east-1' });
+  new Messaging.Queue(s, 'Q', {});
+  new Policy.IAM(s, 'Pol', {
+    attachTo: 'Fn', attachType: 'lambda',
+    statements: [{ effect: 'Allow', actions: ['dynamodb:Scan'], resources: ['arn:aws:dynamodb:us-east-1:123456789012:table/ReportsTable'] }],
+  });
+  new Fn.Lambda(s, 'Fn', { runtime: 'nodejs20', handler: 'i.h', code: 'dist/' });
+  expect(() => provider.synthesize(s, [s])).toThrow(/123456789012|placeholder|AWS::AccountId/);
+});

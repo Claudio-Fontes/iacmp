@@ -1,0 +1,107 @@
+{
+  "name": "iacmp",
+  "version": "2.5.0",
+  "description": "IaC Multi Plataforma — CLI inteligente para AWS, Azure, GCP e Terraform com geração de stacks via IA",
+  "keywords": [
+    "iac",
+    "cli",
+    "aws",
+    "azure",
+    "gcp",
+    "terraform",
+    "ai",
+    "devops",
+    "infrastructure",
+    "cdk"
+  ],
+  "author": "Claudio Melo",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Claudio-Fontes/iacmp"
+  },
+  "homepage": "https://github.com/Claudio-Fontes/iacmp#readme",
+  "bugs": {
+    "url": "https://github.com/Claudio-Fontes/iacmp/issues"
+  },
+  "bin": {
+    "iacmp": "./bin/run.js"
+  },
+  "main": "dist/index.js",
+  "files": [
+    "/bin/run.js",
+    "/dist",
+    "/scripts/postinstall.js",
+    "/oclif.manifest.json",
+    "/LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup && oclif manifest",
+    "manifest": "oclif manifest",
+    "postinstall": "node scripts/postinstall.js",
+    "prepack": "cp ../../LICENSE ./LICENSE && IACMP_PUBLIC_BUILD=1 tsup && oclif manifest",
+    "dev": "tsup --watch",
+    "clean": "rm -rf dist oclif.manifest.json",
+    "typecheck": "tsc --noEmit",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.105.0",
+    "@azure/data-tables": "13.3.2",
+    "@azure/storage-blob": "12.33.0",
+    "@google-cloud/firestore": "^7.11.0",
+    "@google-cloud/secret-manager": "^5.0.0",
+    "@google-cloud/storage": "^7.14.0",
+    "@iacmp/core": "^2.4.0",
+    "@iacmp/runtime": "^0.4.0",
+    "@oclif/core": "^4.0.0",
+    "better-sqlite3": "12.11.1",
+    "chalk": "^4.1.2",
+    "diff": "^5.2.0",
+    "esbuild": "^0.27.0",
+    "mongodb": "^6.10.0",
+    "ora": "^5.4.1"
+  },
+  "devDependencies": {
+    "@iacmp/dashboard": "*",
+    "@iacmp/plugin-sdk": "*",
+    "@iacmp/provider-aws": "*",
+    "@iacmp/provider-azure": "*",
+    "@iacmp/provider-gcp": "*",
+    "@iacmp/provider-terraform": "*",
+    "@iacmp/registry": "*",
+    "@oclif/dev-cli": "^1.26.10",
+    "@types/diff": "^5.2.1",
+    "@types/jest": "^29",
+    "@types/node": "^20",
+    "jest": "^29",
+    "oclif": "^4.0.0",
+    "ts-jest": "^29",
+    "tsup": "^8.0.0",
+    "typescript": "^5.5.0"
+  },
+  "oclif": {
+    "bin": "iacmp",
+    "dirname": "iacmp",
+    "commands": "./dist/commands",
+    "helpClass": "./dist/help.js",
+    "topicSeparator": " ",
+    "plugins": []
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "node",
+    "testMatch": [
+      "**/test/**/*.test.ts"
+    ],
+    "testTimeout": 30000,
+    "globals": {
+      "ts-jest": {
+        "tsconfig": "tsconfig.test.json"
+      }
+    }
+  }
+}

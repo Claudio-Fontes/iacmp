@@ -1,0 +1,61 @@
+{
+  "name": "@iacmp/core",
+  "version": "2.4.0",
+  "description": "Constructs agnósticos de provider para o iacmp — a API que os stacks do usuário importam",
+  "keywords": [
+    "iacmp",
+    "iac",
+    "infrastructure",
+    "cdk",
+    "constructs"
+  ],
+  "license": "Apache-2.0",
+  "author": "Claudio Melo",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Claudio-Fontes/iacmp",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/Claudio-Fontes/iacmp#readme",
+  "bugs": {
+    "url": "https://github.com/Claudio-Fontes/iacmp/issues"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "test": "jest",
+    "prepack": "cp ../../LICENSE ./LICENSE && tsc"
+  },
+  "devDependencies": {
+    "@types/jest": "^29",
+    "jest": "^29",
+    "ts-jest": "^29",
+    "typescript": "^5.5.0"
+  },
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "node",
+    "testMatch": [
+      "**/test/**/*.test.ts"
+    ],
+    "globals": {
+      "ts-jest": {
+        "tsconfig": "tsconfig.test.json"
+      }
+    }
+  }
+}

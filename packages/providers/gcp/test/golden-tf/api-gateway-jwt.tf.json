@@ -1,0 +1,222 @@
+{
+  "terraform": {
+    "required_providers": {
+      "google": {
+        "source": "hashicorp/google",
+        "version": "~> 5.0"
+      },
+      "google-beta": {
+        "source": "hashicorp/google-beta",
+        "version": "~> 5.0"
+      }
+    }
+  },
+  "provider": {
+    "google": {
+      "project": "${var.project_id}",
+      "region": "${var.gcp_region}"
+    },
+    "google-beta": {
+      "project": "${var.project_id}",
+      "region": "${var.gcp_region}"
+    }
+  },
+  "variable": {
+    "project_id": {
+      "type": "string"
+    },
+    "gcp_region": {
+      "type": "string",
+      "default": "us-central1"
+    }
+  },
+  "resource": {
+    "google_cloudfunctions2_function": {
+      "jwtauthorizerfn": {
+        "name": "JwtAuthorizerFn",
+        "location": "${var.gcp_region}",
+        "build_config": [
+          {
+            "runtime": "nodejs20",
+            "entry_point": "handler",
+            "source": [
+              {
+                "storage_source": [
+                  {
+                    "bucket": "${var.project_id}-artifacts",
+                    "object": "jwtauthorizerfn.zip"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "service_config": [
+          {
+            "available_memory": "128Mi",
+            "timeout_seconds": 30,
+            "environment_variables": {
+              "IACMP_CLOUD": "gcp"
+            }
+          }
+        ]
+      },
+      "getprofilefn": {
+        "name": "GetProfileFn",
+        "location": "${var.gcp_region}",
+        "build_config": [
+          {
+            "runtime": "nodejs20",
+            "entry_point": "handler",
+            "source": [
+              {
+                "storage_source": [
+                  {
+                    "bucket": "${var.project_id}-artifacts",
+                    "object": "getprofilefn.zip"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "service_config": [
+          {
+            "available_memory": "128Mi",
+            "timeout_seconds": 30,
+            "environment_variables": {
+              "IACMP_CLOUD": "gcp"
+            }
+          }
+        ]
+      },
+      "publichealthfn": {
+        "name": "PublicHealthFn",
+        "location": "${var.gcp_region}",
+        "build_config": [
+          {
+            "runtime": "nodejs20",
+            "entry_point": "handler",
+            "source": [
+              {
+                "storage_source": [
+                  {
+                    "bucket": "${var.project_id}-artifacts",
+                    "object": "publichealthfn.zip"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "service_config": [
+          {
+            "available_memory": "128Mi",
+            "timeout_seconds": 30,
+            "environment_variables": {
+              "IACMP_CLOUD": "gcp"
+            }
+          }
+        ]
+      }
+    },
+    "google_cloud_run_v2_service_iam_member": {
+      "jwtauthorizerfn_public": {
+        "project": "${var.project_id}",
+        "location": "${var.gcp_region}",
+        "name": "${lower(google_cloudfunctions2_function.jwtauthorizerfn.name)}",
+        "role": "roles/run.invoker",
+        "member": "allUsers"
+      },
+      "getprofilefn_public": {
+        "project": "${var.project_id}",
+        "location": "${var.gcp_region}",
+        "name": "${lower(google_cloudfunctions2_function.getprofilefn.name)}",
+        "role": "roles/run.invoker",
+        "member": "allUsers"
+      },
+      "publichealthfn_public": {
+        "project": "${var.project_id}",
+        "location": "${var.gcp_region}",
+        "name": "${lower(google_cloudfunctions2_function.publichealthfn.name)}",
+        "role": "roles/run.invoker",
+        "member": "allUsers"
+      },
+      "profileapi_invoker_getprofilefn": {
+        "project": "${var.project_id}",
+        "location": "${var.gcp_region}",
+        "name": "${lower(google_cloudfunctions2_function.getprofilefn.name)}",
+        "role": "roles/run.invoker",
+        "member": "serviceAccount:${google_service_account.profileapi_gw_invoker.email}"
+      },
+      "profileapi_invoker_publichealthfn": {
+        "project": "${var.project_id}",
+        "location": "${var.gcp_region}",
+        "name": "${lower(google_cloudfunctions2_function.publichealthfn.name)}",
+        "role": "roles/run.invoker",
+        "member": "serviceAccount:${google_service_account.profileapi_gw_invoker.email}"
+      }
+    },
+    "google_api_gateway_api": {
+      "profileapi_api": {
+        "provider": "google-beta",
+        "api_id": "profile-api",
+        "display_name": "profile-api"
+      }
+    },
+    "google_service_account": {
+      "profileapi_gw_invoker": {
+        "account_id": "profileapi-gw-invoker",
+        "display_name": "API Gateway invoker for ProfileApi"
+      }
+    },
+    "google_api_gateway_api_config": {
+      "profileapi_config": {
+        "provider": "google-beta",
+        "api": "${google_api_gateway_api.profileapi_api.api_id}",
+        "display_name": "ProfileApi config",
+        "lifecycle": {
+          "create_before_destroy": true
+        },
+        "gateway_config": [
+          {
+            "backend_config": [
+              {
+                "google_service_account": "${google_service_account.profileapi_gw_invoker.email}"
+              }
+            ]
+          }
+        ],
+        "openapi_documents": [
+          {
+            "document": [
+              {
+                "path": "openapi.json",
+                "contents": "${base64encode(jsonencode({\"swagger\" = \"2.0\", \"info\" = {\"title\" = \"profile-api\", \"version\" = \"1.0\"}, \"securityDefinitions\" = {\"jwtauthorizerfn_auth\" = {\"authorizationUrl\" = \"\", \"flow\" = \"implicit\", \"type\" = \"oauth2\", \"x-google-issuer\" = \"https://ISSUER_PLACEHOLDER.example.com/\", \"x-google-jwks_uri\" = \"https://ISSUER_PLACEHOLDER.example.com/.well-known/jwks.json\", \"x-google-audiences\" = \"profile-api\", \"x-iacmp-authorizer-lambda-id\" = \"JwtAuthorizerFn\"}}, \"paths\" = {\"/profile\" = {\"get\" = {\"operationId\" = \"get_profile\", \"responses\" = {\"200\" = {\"description\" = \"OK\"}}, \"x-google-backend\" = {\"address\" = google_cloudfunctions2_function.getprofilefn.service_config[0].uri, \"path_translation\" = \"APPEND_PATH_TO_ADDRESS\"}, \"security\" = [{\"jwtauthorizerfn_auth\" = []}]}}, \"/profile/{id}\" = {\"get\" = {\"operationId\" = \"get_profile_id\", \"parameters\" = [{\"name\" = \"id\", \"in\" = \"path\", \"required\" = true, \"type\" = \"string\"}], \"responses\" = {\"200\" = {\"description\" = \"OK\"}}, \"x-google-backend\" = {\"address\" = google_cloudfunctions2_function.getprofilefn.service_config[0].uri, \"path_translation\" = \"APPEND_PATH_TO_ADDRESS\"}, \"security\" = [{\"jwtauthorizerfn_auth\" = []}]}, \"put\" = {\"operationId\" = \"put_profile_id\", \"parameters\" = [{\"name\" = \"id\", \"in\" = \"path\", \"required\" = true, \"type\" = \"string\"}], \"responses\" = {\"200\" = {\"description\" = \"OK\"}}, \"x-google-backend\" = {\"address\" = google_cloudfunctions2_function.getprofilefn.service_config[0].uri, \"path_translation\" = \"APPEND_PATH_TO_ADDRESS\"}, \"security\" = [{\"jwtauthorizerfn_auth\" = []}]}, \"delete\" = {\"operationId\" = \"delete_profile_id\", \"parameters\" = [{\"name\" = \"id\", \"in\" = \"path\", \"required\" = true, \"type\" = \"string\"}], \"responses\" = {\"200\" = {\"description\" = \"OK\"}}, \"x-google-backend\" = {\"address\" = google_cloudfunctions2_function.getprofilefn.service_config[0].uri, \"path_translation\" = \"APPEND_PATH_TO_ADDRESS\"}, \"security\" = [{\"jwtauthorizerfn_auth\" = []}]}}, \"/health\" = {\"get\" = {\"operationId\" = \"get_health\", \"responses\" = {\"200\" = {\"description\" = \"OK\"}}, \"x-google-backend\" = {\"address\" = google_cloudfunctions2_function.publichealthfn.service_config[0].uri, \"path_translation\" = \"APPEND_PATH_TO_ADDRESS\"}}}}}))}"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "google_api_gateway_gateway": {
+      "profileapi_gw": {
+        "provider": "google-beta",
+        "api_config": "${google_api_gateway_api_config.profileapi_config.id}",
+        "gateway_id": "profileapi-gateway",
+        "region": "${var.gcp_region}"
+      }
+    }
+  },
+  "output": {
+    "JwtAuthorizerFnFunctionUrl": {
+      "value": "${google_cloudfunctions2_function.jwtauthorizerfn.service_config[0].uri}"
+    },
+    "GetProfileFnFunctionUrl": {
+      "value": "${google_cloudfunctions2_function.getprofilefn.service_config[0].uri}"
+    },
+    "PublicHealthFnFunctionUrl": {
+      "value": "${google_cloudfunctions2_function.publichealthfn.service_config[0].uri}"
+    }
+  }
+}

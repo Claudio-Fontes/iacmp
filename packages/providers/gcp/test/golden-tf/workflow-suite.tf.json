@@ -1,0 +1,118 @@
+{
+  "terraform": {
+    "required_providers": {
+      "google": {
+        "source": "hashicorp/google",
+        "version": "~> 5.0"
+      }
+    }
+  },
+  "provider": {
+    "google": {
+      "project": "${var.project_id}",
+      "region": "${var.gcp_region}"
+    }
+  },
+  "variable": {
+    "project_id": {
+      "type": "string"
+    },
+    "gcp_region": {
+      "type": "string",
+      "default": "us-central1"
+    }
+  },
+  "resource": {
+    "google_cloudfunctions2_function": {
+      "notifyfn": {
+        "name": "NotifyFn",
+        "location": "${var.gcp_region}",
+        "build_config": [
+          {
+            "runtime": "nodejs20",
+            "entry_point": "handler",
+            "source": [
+              {
+                "storage_source": [
+                  {
+                    "bucket": "${var.project_id}-artifacts",
+                    "object": "notifyfn.zip"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "service_config": [
+          {
+            "available_memory": "128Mi",
+            "timeout_seconds": 30,
+            "environment_variables": {
+              "IACMP_CLOUD": "gcp"
+            }
+          }
+        ]
+      },
+      "actionfn": {
+        "name": "ActionFn",
+        "location": "${var.gcp_region}",
+        "build_config": [
+          {
+            "runtime": "nodejs20",
+            "entry_point": "handler",
+            "source": [
+              {
+                "storage_source": [
+                  {
+                    "bucket": "${var.project_id}-artifacts",
+                    "object": "actionfn.zip"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "service_config": [
+          {
+            "available_memory": "128Mi",
+            "timeout_seconds": 30,
+            "environment_variables": {
+              "IACMP_CLOUD": "gcp"
+            }
+          }
+        ]
+      }
+    },
+    "google_cloud_run_v2_service_iam_member": {
+      "notifyfn_public": {
+        "project": "${var.project_id}",
+        "location": "${var.gcp_region}",
+        "name": "${lower(google_cloudfunctions2_function.notifyfn.name)}",
+        "role": "roles/run.invoker",
+        "member": "allUsers"
+      },
+      "actionfn_public": {
+        "project": "${var.project_id}",
+        "location": "${var.gcp_region}",
+        "name": "${lower(google_cloudfunctions2_function.actionfn.name)}",
+        "role": "roles/run.invoker",
+        "member": "allUsers"
+      }
+    },
+    "google_workflows_workflow": {
+      "approvalflow": {
+        "name": "ApprovalFlow",
+        "region": "${var.gcp_region}",
+        "source_contents": "{\n  \"main\": {\n    \"steps\": [\n      {\n        \"RequestApproval\": {\n          \"call\": \"http.post\",\n          \"args\": {\n            \"url\": \"${google_cloudfunctions2_function.notifyfn.service_config[0].uri}\"\n          }\n        }\n      },\n      {\n        \"WaitForApproval\": {\n          \"call\": \"sys.sleep\",\n          \"args\": {\n            \"seconds\": 3600\n          }\n        }\n      },\n      {\n        \"ExecuteAction\": {\n          \"call\": \"http.post\",\n          \"args\": {\n            \"url\": \"${google_cloudfunctions2_function.actionfn.service_config[0].uri}\"\n          }\n        }\n      }\n    ]\n  }\n}"
+      }
+    }
+  },
+  "output": {
+    "NotifyFnFunctionUrl": {
+      "value": "${google_cloudfunctions2_function.notifyfn.service_config[0].uri}"
+    },
+    "ActionFnFunctionUrl": {
+      "value": "${google_cloudfunctions2_function.actionfn.service_config[0].uri}"
+    }
+  }
+}

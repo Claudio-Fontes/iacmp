@@ -1,0 +1,454 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Stack ecs-alb — gerada pelo iacmp",
+  "Resources": {
+    "AppVpc": {
+      "Type": "AWS::EC2::VPC",
+      "Properties": {
+        "CidrBlock": "10.0.0.0/16",
+        "EnableDnsHostnames": true,
+        "EnableDnsSupport": true,
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "AppVpc"
+          }
+        ]
+      }
+    },
+    "AppVpcIGW": {
+      "Type": "AWS::EC2::InternetGateway",
+      "Properties": {
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "AppVpcIGW"
+          }
+        ]
+      }
+    },
+    "AppVpcIGWAttachment": {
+      "Type": "AWS::EC2::VPCGatewayAttachment",
+      "Properties": {
+        "VpcId": {
+          "Ref": "AppVpc"
+        },
+        "InternetGatewayId": {
+          "Ref": "AppVpcIGW"
+        }
+      }
+    },
+    "AppVpcPublicRT": {
+      "Type": "AWS::EC2::RouteTable",
+      "Properties": {
+        "VpcId": {
+          "Ref": "AppVpc"
+        },
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "AppVpcPublicRT"
+          }
+        ]
+      }
+    },
+    "AppVpcPublicRTDefaultRoute": {
+      "Type": "AWS::EC2::Route",
+      "DependsOn": [
+        "AppVpcIGWAttachment"
+      ],
+      "Properties": {
+        "RouteTableId": {
+          "Ref": "AppVpcPublicRT"
+        },
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "GatewayId": {
+          "Ref": "AppVpcIGW"
+        }
+      }
+    },
+    "AppVpcPublicRTAssoc0": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": {
+          "Ref": "PublicSubnet1"
+        },
+        "RouteTableId": {
+          "Ref": "AppVpcPublicRT"
+        }
+      }
+    },
+    "AppVpcPublicRTAssoc1": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": {
+          "Ref": "PublicSubnet2"
+        },
+        "RouteTableId": {
+          "Ref": "AppVpcPublicRT"
+        }
+      }
+    },
+    "PublicSubnet1": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": {
+          "Ref": "AppVpc"
+        },
+        "CidrBlock": "10.0.1.0/24",
+        "AvailabilityZone": "us-east-1a",
+        "MapPublicIpOnLaunch": true,
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "PublicSubnet1"
+          },
+          {
+            "Key": "Type",
+            "Value": "public"
+          }
+        ]
+      }
+    },
+    "PublicSubnet2": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": {
+          "Ref": "AppVpc"
+        },
+        "CidrBlock": "10.0.2.0/24",
+        "AvailabilityZone": "us-east-1b",
+        "MapPublicIpOnLaunch": true,
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "PublicSubnet2"
+          },
+          {
+            "Key": "Type",
+            "Value": "public"
+          }
+        ]
+      }
+    },
+    "AlbSg": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "ALB security group",
+        "VpcId": {
+          "Ref": "AppVpc"
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 80,
+            "ToPort": 80,
+            "CidrIp": "0.0.0.0/0"
+          }
+        ],
+        "SecurityGroupEgress": [
+          {
+            "IpProtocol": "-1",
+            "CidrIp": "0.0.0.0/0",
+            "Description": "Allow all egress"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "AlbSg"
+          }
+        ]
+      }
+    },
+    "AppSg": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "App security group",
+        "VpcId": {
+          "Ref": "AppVpc"
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 8080,
+            "ToPort": 8080,
+            "SourceSecurityGroupId": {
+              "Fn::GetAtt": [
+                "AlbSg",
+                "GroupId"
+              ]
+            }
+          }
+        ],
+        "SecurityGroupEgress": [
+          {
+            "IpProtocol": "-1",
+            "CidrIp": "0.0.0.0/0",
+            "Description": "Allow all egress"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "AppSg"
+          }
+        ]
+      }
+    },
+    "Alb": {
+      "Type": "AWS::ElasticLoadBalancingV2::LoadBalancer",
+      "Properties": {
+        "Name": "Alb",
+        "Type": "application",
+        "Scheme": "internet-facing",
+        "Subnets": [
+          {
+            "Ref": "PublicSubnet1"
+          },
+          {
+            "Ref": "PublicSubnet2"
+          }
+        ],
+        "SecurityGroups": [
+          {
+            "Fn::GetAtt": [
+              "AlbSg",
+              "GroupId"
+            ]
+          }
+        ],
+        "LoadBalancerAttributes": [
+          {
+            "Key": "deletion_protection.enabled",
+            "Value": "false"
+          }
+        ]
+      }
+    },
+    "AlbTGapptg": {
+      "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+      "Properties": {
+        "Name": "app-tg",
+        "Port": 8080,
+        "Protocol": "HTTP",
+        "VpcId": {
+          "Ref": "AppVpc"
+        },
+        "HealthCheckPath": "/health",
+        "HealthCheckPort": "8080",
+        "TargetType": "ip"
+      }
+    },
+    "AlbListener1": {
+      "Type": "AWS::ElasticLoadBalancingV2::Listener",
+      "Properties": {
+        "LoadBalancerArn": {
+          "Ref": "Alb"
+        },
+        "Port": 80,
+        "Protocol": "HTTP",
+        "DefaultActions": [
+          {
+            "Type": "forward",
+            "TargetGroupArn": {
+              "Ref": "AlbTGapptg"
+            }
+          }
+        ]
+      }
+    },
+    "AppLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": "/ecs/App",
+        "RetentionInDays": 7
+      }
+    },
+    "AppCluster": {
+      "Type": "AWS::ECS::Cluster",
+      "Properties": {
+        "ClusterName": "App"
+      }
+    },
+    "AppExecutionRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ecs-tasks.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+        ]
+      }
+    },
+    "AppTaskDef": {
+      "Type": "AWS::ECS::TaskDefinition",
+      "Properties": {
+        "Family": "App",
+        "NetworkMode": "awsvpc",
+        "RequiresCompatibilities": [
+          "FARGATE"
+        ],
+        "Cpu": "256",
+        "Memory": "512",
+        "ExecutionRoleArn": {
+          "Fn::GetAtt": [
+            "AppExecutionRole",
+            "Arn"
+          ]
+        },
+        "ContainerDefinitions": [
+          {
+            "Name": "App",
+            "Image": "nginx:latest",
+            "PortMappings": [],
+            "Environment": [],
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": "/ecs/App",
+                "awslogs-region": {
+                  "Ref": "AWS::Region"
+                },
+                "awslogs-stream-prefix": "ecs"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "AppService": {
+      "Type": "AWS::ECS::Service",
+      "DependsOn": [
+        "AppLogGroup"
+      ],
+      "Properties": {
+        "ServiceName": "App",
+        "Cluster": {
+          "Ref": "AppCluster"
+        },
+        "TaskDefinition": {
+          "Ref": "AppTaskDef"
+        },
+        "DesiredCount": 1,
+        "LaunchType": "FARGATE",
+        "NetworkConfiguration": {
+          "AwsvpcConfiguration": {
+            "AssignPublicIp": "DISABLED",
+            "Subnets": [
+              {
+                "Ref": "PublicSubnet1"
+              },
+              {
+                "Ref": "PublicSubnet2"
+              }
+            ],
+            "SecurityGroups": [
+              {
+                "Fn::GetAtt": [
+                  "AppSg",
+                  "GroupId"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    "AppScalableTarget": {
+      "Type": "AWS::ApplicationAutoScaling::ScalableTarget",
+      "DependsOn": [
+        "AppService"
+      ],
+      "Properties": {
+        "MinCapacity": 1,
+        "MaxCapacity": 4,
+        "ResourceId": "service/App/App",
+        "ScalableDimension": "ecs:service:DesiredCount",
+        "ServiceNamespace": "ecs"
+      }
+    },
+    "AppScalingPolicy": {
+      "Type": "AWS::ApplicationAutoScaling::ScalingPolicy",
+      "Properties": {
+        "PolicyName": "App-cpu-scaling",
+        "PolicyType": "TargetTrackingScaling",
+        "ScalingTargetId": {
+          "Ref": "AppScalableTarget"
+        },
+        "TargetTrackingScalingPolicyConfiguration": {
+          "PredefinedMetricSpecification": {
+            "PredefinedMetricType": "ECSServiceAverageCPUUtilization"
+          },
+          "TargetValue": 50
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "AppVpcVpcId": {
+      "Value": {
+        "Ref": "AppVpc"
+      },
+      "Export": {
+        "Name": "ecs-alb-AppVpc-VpcId"
+      }
+    },
+    "PublicSubnet1SubnetId": {
+      "Value": {
+        "Ref": "PublicSubnet1"
+      },
+      "Export": {
+        "Name": "ecs-alb-PublicSubnet1-SubnetId"
+      }
+    },
+    "PublicSubnet2SubnetId": {
+      "Value": {
+        "Ref": "PublicSubnet2"
+      },
+      "Export": {
+        "Name": "ecs-alb-PublicSubnet2-SubnetId"
+      }
+    },
+    "AlbSgGroupId": {
+      "Value": {
+        "Fn::GetAtt": [
+          "AlbSg",
+          "GroupId"
+        ]
+      },
+      "Export": {
+        "Name": "ecs-alb-AlbSg-GroupId"
+      }
+    },
+    "AppSgGroupId": {
+      "Value": {
+        "Fn::GetAtt": [
+          "AppSg",
+          "GroupId"
+        ]
+      },
+      "Export": {
+        "Name": "ecs-alb-AppSg-GroupId"
+      }
+    },
+    "AlbTargetGroupArn": {
+      "Value": {
+        "Ref": "AlbTGapptg"
+      },
+      "Export": {
+        "Name": "ecs-alb-Alb-TargetGroupArn"
+      }
+    }
+  }
+}

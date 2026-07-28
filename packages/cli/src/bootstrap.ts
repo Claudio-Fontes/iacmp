@@ -1,0 +1,467 @@
+import * as fs from 'fs';
+import * as path from 'path';
+import { execSync } from 'child_process';
+
+/**
+ * Bootstrap automático de projeto para o fluxo `iacmp ai` numa pasta vazia.
+ *
+ * O usuário típico do `iacmp ai` não roda `iacmp init` antes — abre uma pasta
+ * limpa, põe um `.env` com a chave da IA e chama `iacmp ai`. Sem os arquivos de
+ * projeto (iacmp.json, tsconfig) e sem `@iacmp/core`/`ts-node` instalados, o
+ * loop de validação `iacmp synth` falha com "Projeto não inicializado" e a
+ * geração nunca fecha. Esta função cria o mínimo necessário, de forma idempotente
+ * e silenciosa, para que esse fluxo funcione de ponta a ponta.
+ */
+
+export interface BootstrapResult {
+  /** true se algo foi criado/instalado; false se o projeto já estava pronto. */
+  bootstrapped: boolean;
+  /** itens criados/instalados, para log opcional. */
+  created: string[];
+}
+
+export interface BootstrapOptions {
+  /** Provider gravado no iacmp.json (default: aws). */
+  provider?: string;
+  /** Instala @iacmp/core + ts-node via npm (default: true). Testes passam false. */
+  installDeps?: boolean;
+}
+
+export function ensureProjectInitialized(cwd: string, options: BootstrapOptions | string = {}): BootstrapResult {
+  // compat: aceita string (provider) ou objeto de opções
+  const opts: BootstrapOptions = typeof options === 'string' ? { provider: options } : options;
+  const provider = opts.provider ?? 'aws';
+  const installDeps = opts.installDeps ?? true;
+
+  const created: string[] = [];
+  const configPath = path.join(cwd, 'iacmp.json');
+
+  const hasConfig = fs.existsSync(configPath);
+  const hasCore = fs.existsSync(path.join(cwd, 'node_modules', '@iacmp', 'core'));
+
+  const projectName = sanitizeName(path.basename(cwd));
+
+  // CLAUDE.md na raiz — lido pelo Claude Code com prioridade alta (idempotente)
+  if (!fs.existsSync(path.join(cwd, 'CLAUDE.md'))) {
+    fs.writeFileSync(path.join(cwd, 'CLAUDE.md'), bootstrapClaudeMd(projectName));
+    created.push('CLAUDE.md');
+  }
+
+  // .claude/settings.local.json — permissões para Claude Code (idempotente)
+  const claudeDir = path.join(cwd, '.claude');
+  if (!fs.existsSync(path.join(claudeDir, 'settings.local.json'))) {
+    fs.mkdirSync(claudeDir, { recursive: true });
+    fs.writeFileSync(path.join(claudeDir, 'settings.local.json'), bootstrapClaudeSettings(cwd));
+    created.push('.claude/settings.local.json');
+  }
+
+  // Projeto já inicializado → no-op para o resto.
+  if (hasConfig && hasCore) {
+    return { bootstrapped: created.length > 0, created };
+  }
+
+  // 1. iacmp.json — accountTier free é o default seguro; o usuário muda para
+  //    standard editando o arquivo quando a conta suportar (RDS cripto/backup).
+  if (!hasConfig) {
+    const config: Record<string, unknown> = {
+      name: projectName,
+      provider,
+      region: 'us-east-1',
+      // DR opcional "comentado": JSON não tem comentário — chaves com _ são
+      // ignoradas pela ferramenta; renomear (tirar o _) ativa o recurso.
+      _drRegion: 'us-west-2 (DR na AWS — renomeie para drRegion para ativar)',
+      language: 'typescript',
+      accountTier: 'free',
+    };
+    if (provider === 'azure') {
+      config['resourceGroup'] = `${projectName}-rg`;
+      config['azureRegion'] = 'eastus2';
+      config['_azureDrRegion'] = 'centralus (DR na Azure — renomeie para azureDrRegion; RA-GRS usa o par fixo da região)';
+    }
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');
+    created.push('iacmp.json');
+  }
+
+  // 2. tsconfig.json — só src/ (handlers de Lambda) compila para dist/; stacks/
+  //    é carregada via ts-node por synth/deploy, não por tsc.
+  const tsconfigPath = path.join(cwd, 'tsconfig.json');
+  if (!fs.existsSync(tsconfigPath)) {
+    fs.writeFileSync(tsconfigPath, tsconfigContent());
+    created.push('tsconfig.json');
+  }
+
+  // 3. package.json — npm install já cria um se ausente, mas garantimos um
+  //    coerente (nome do projeto, scripts úteis) antes de instalar deps.
+  const pkgPath = path.join(cwd, 'package.json');
+  if (!fs.existsSync(pkgPath)) {
+    fs.writeFileSync(pkgPath, packageJsonContent(projectName));
+    created.push('package.json');
+  }
+
+  // 4. .gitignore — evita commitar node_modules/.env/dist por acidente.
+  const gitignorePath = path.join(cwd, '.gitignore');
+  if (!fs.existsSync(gitignorePath)) {
+    fs.writeFileSync(gitignorePath, gitignoreContent());
+    created.push('.gitignore');
+  }
+
+  // 5. deps necessárias para o synth carregar as stacks (.ts via ts-node) e
+  //    compilar os handlers. Instala só se @iacmp/core ainda não está presente.
+  if (!hasCore && installDeps) {
+    // Usa o MESMO @iacmp/core que este CLI resolve. Em um checkout de dev do
+    // monorepo, isso é o core local (mais novo que o publicado), evitando que o
+    // projeto baixe uma versão defasada do npm e o synth rejeite engines/recursos
+    // que o CLI atual já suporta. Em produção (npm -g), resolve o core publicado.
+    const coreSpec = resolveCoreInstallSpec();
+    // tsx como runtime de TypeScript (suporta TS5–7+, sem registrar ts-node).
+    // typescript sem pin — o tsconfig gerado usa moduleResolution:bundler que é
+    // válido para qualquer versão suportada. @types/node necessário com bundler.
+    execSync(`npm install ${coreSpec} tsx typescript @types/node`, {
+      cwd,
+      stdio: 'pipe',
+    });
+    created.push(`deps: @iacmp/core${coreSpec.startsWith('@') ? '' : ' (local)'}, tsx, typescript, @types/node`);
+  }
+
+  return { bootstrapped: true, created };
+}
+
+function bootstrapClaudeMd(projectName: string): string {
+  return `# iacmp — ${projectName}
+
+> **REGRA ABSOLUTA:** Este projeto usa **exclusivamente o iacmp CLI** com constructs TypeScript do \`@iacmp/core\`.
+> NUNCA pergunte "qual formato de IaC?", "Terraform ou CloudFormation?", "qual framework?".
+> A resposta é sempre: **iacmp + TypeScript**. Vá direto à geração.
+>
+> **REGRA ABSOLUTA — Fn.Lambda:** \`code\` SEMPRE aponta para \`dist/handlers/<nome>\` (nunca \`src/\`).
+> O Lambda executa JS compilado. \`src/\` tem TypeScript — não funciona na AWS nem na Azure.
+
+## O que é iacmp
+
+O iacmp CLI gera CloudFormation, Bicep ou Terraform a partir de stacks TypeScript usando \`@iacmp/core\`.
+O único trabalho aqui é escrever arquivos \`stacks/**/*.ts\` e validar com \`iacmp synth\`.
+
+## Fluxo de trabalho (OBRIGATÓRIO)
+
+### Com ferramentas MCP do servidor \`iacmp\` disponíveis (modo preferido)
+
+1. \`search_examples <palavras-chave>\` — busca exemplos validados
+2. \`write_stack\` — escreve cada arquivo de stack no projeto
+3. \`synth_project\` — valida; **nunca entregue sem synth verde**
+4. Se falhar: corrija com \`write_stack\` e repita o synth até passar
+5. Só depois mostre o resultado ao usuário
+
+### Sem ferramentas MCP (fallback)
+
+1. Escreva os arquivos diretamente com o tool \`Write\` em \`stacks/**/*.ts\`
+2. Execute: \`iacmp synth\` via Bash para validar
+3. Se falhar: leia o erro, corrija os arquivos e repita o synth
+4. Só depois mostre o resultado ao usuário
+
+O synth não é opcional em nenhum dos dois caminhos.
+
+## Organização de stacks (OBRIGATÓRIO)
+
+Cada camada em sua própria subpasta dentro de \`stacks/\`:
+
+| Pasta | Constructs |
+|---|---|
+| \`stacks/compute/\` | \`Compute.*\`, \`Fn.Lambda\` |
+| \`stacks/database/\` | \`Database.*\`, \`Cache.*\` |
+| \`stacks/storage/\` | \`Storage.*\` |
+| \`stacks/network/\` | \`Network.*\`, \`Fn.ApiGateway\` |
+| \`stacks/messaging/\` | \`Messaging.*\`, \`Events.*\` |
+| \`stacks/policy/\` | \`Policy.IAM\` |
+| \`stacks/security/\` | \`Secret.*\`, \`Certificate.*\` |
+| \`stacks/monitoring/\` | \`Monitoring.*\`, \`Logging.*\` |
+| \`stacks/workflow/\` | \`Workflow.*\` |
+
+## Regras de código
+
+- Import único: \`import { Stack, ... } from '@iacmp/core';\`
+- Inclua \`ref\` se usar \`ref()\`: \`import { Stack, Fn, ref } from '@iacmp/core';\`
+- Sempre exporte a stack como default: \`export default stack;\`
+- Nomes derivados do domínio do usuário — nunca copie nomes de exemplo
+- Não invente propriedades que não existem no catálogo do @iacmp/core
+- \`Database.DynamoDB\`: \`partitionKey\` e \`sortKey\` são **strings** (nome do atributo), nunca objetos
+  - CORRETO: \`partitionKey: 'id'\`
+  - ERRADO: \`partitionKey: { name: 'id', type: 'S' }\`  ← não existe essa forma
+
+## Fn.ApiGateway — rotas (OBRIGATÓRIO)
+
+Rotas **sempre** usam \`lambdaId\` (string com o id do construct) — **NUNCA** \`function: referência\`:
+
+\`\`\`typescript
+// CORRETO
+new Fn.ApiGateway(stack, 'ProdutosApi', {
+  name: 'produtos-api',
+  type: 'HTTP',
+  routes: [
+    { method: 'POST',   path: '/produtos',     lambdaId: 'ProdutosFn' },
+    { method: 'GET',    path: '/produtos',     lambdaId: 'ProdutosFn' },
+    { method: 'GET',    path: '/produtos/{id}',lambdaId: 'ProdutosFn' },
+    { method: 'PUT',    path: '/produtos/{id}',lambdaId: 'ProdutosFn' },
+    { method: 'DELETE', path: '/produtos/{id}',lambdaId: 'ProdutosFn' },
+  ],
+});
+
+// ERRADO — "function" não existe na interface
+routes: [{ method: 'GET', path: '/x', function: minhaFn }]  // ← NUNCA faça isso
+\`\`\`
+
+## Referências cross-stack
+
+**Padrão preferido — export tipado:**
+\`\`\`typescript
+// stacks/database/usuarios-table-stack.ts
+export const table = new Database.DynamoDB(stack, 'UsuariosTable', { ... });
+
+// stacks/compute/usuarios-lambda-stack.ts
+import { table } from '../database/usuarios-table-stack';
+environment: { TABLE_NAME: table.name }
+resources: [table.arn]
+\`\`\`
+
+**Alternativa com ref() — quando não há import entre stacks:**
+\`\`\`typescript
+environment: { TABLE_NAME: ref('UsuariosTable', 'Name') }
+resources:   [ref('UsuariosTable', 'Arn')]
+\`\`\`
+
+- \`ref()\` é um objeto interno — NUNCA chame \`.toString()\` nele
+- \`environment\` com recurso: SEMPRE \`ref()\` ou \`table.name\` — nunca string literal
+
+## Handlers Lambda (OBRIGATÓRIO quando houver Fn.Lambda)
+
+Toda stack com \`Fn.Lambda\` exige:
+1. Handler em \`src/handlers/<nome>/index.ts\` — código completo, nunca TODOs
+2. Propriedade \`code: 'dist/handlers/<nome>'\` na stack (aponta para o compilado, não para src/)
+
+**Estrutura obrigatória:**
+\`\`\`
+src/handlers/<nome-da-lambda>/index.ts   ← escreva aqui
+dist/handlers/<nome-da-lambda>/index.js  ← gerado por npm run build (não edite)
+\`\`\`
+
+**Na stack TypeScript:**
+\`\`\`typescript
+new Fn.Lambda(stack, 'MinhaFn', {
+  runtime: 'nodejs20',
+  handler: 'index.handler',
+  code: 'dist/handlers/minha-fn',   // ← SEMPRE dist/, nunca src/
+  ...
+});
+\`\`\`
+
+**Para CRUD com DynamoDB** — gere sempre as 5 operações no mesmo arquivo:
+\`\`\`typescript
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand, DeleteCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
+
+const client = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+const TABLE = process.env.TABLE_NAME!;
+
+export async function handler(event: any) {
+  // HTTP API v2 usa requestContext.http.method; REST API v1 usa httpMethod
+  const httpMethod = event.httpMethod ?? event.requestContext?.http?.method;
+  const id = event.pathParameters?.id;
+  const body = event.body ? JSON.parse(event.body) : {};
+
+  switch (httpMethod) {
+    case 'GET':    /* GetItem se id, Scan se não */ break;
+    case 'POST':   /* PutItem com crypto.randomUUID() */ break;
+    case 'PUT':    /* UpdateItem */ break;
+    case 'DELETE': /* DeleteItem */ break;
+    default: return { statusCode: 405, body: JSON.stringify({ error: 'Method Not Allowed' }) };
+  }
+}
+\`\`\`
+
+- ID gerado pelo backend: \`crypto.randomUUID()\` — nunca leia \`body.id\`
+- Sempre use \`DynamoDBDocumentClient\` de \`@aws-sdk/lib-dynamodb\`
+- Retorne sempre \`{ statusCode, body: JSON.stringify(...) }\`
+
+## Build antes do deploy (OBRIGATÓRIO quando houver Fn.Lambda)
+
+O deploy empacota o código compilado de \`dist/\` — sem build a Lambda sobe vazia ou falha.
+
+\`\`\`bash
+npm install @aws-sdk/client-dynamodb @aws-sdk/lib-dynamodb  # se usar DynamoDB
+npm run build          # compila src/ → dist/
+iacmp deploy --provider aws
+iacmp deploy --provider azure
+\`\`\`
+
+**Sempre rode \`npm run build\` antes de qualquer deploy** (AWS ou Azure).
+
+## Policy stack (OBRIGATÓRIO em todo projeto com Fn.Lambda)
+
+Todo projeto com \`Fn.Lambda\` **deve** ter \`stacks/policy/<nome>-policy-stack.ts\` com \`Policy.IAM\`:
+
+\`\`\`typescript
+import { Stack, Policy } from '@iacmp/core';
+import { produtosTable } from '../database/produtos-table-stack';
+
+const stack = new Stack('ProdutosPolicyStack');
+
+new Policy.IAM(stack, 'ProdutosPolicy', {
+  attachTo: 'ProdutosFn',       // ← id do construct da Lambda (string)
+  attachType: 'lambda',          // ← sempre 'lambda' para Fn.Lambda
+  statements: [
+    {
+      effect: 'Allow',
+      actions: [
+        'dynamodb:GetItem', 'dynamodb:PutItem',
+        'dynamodb:UpdateItem', 'dynamodb:DeleteItem', 'dynamodb:Scan',
+      ],
+      resources: [produtosTable.arn],
+    },
+  ],
+});
+
+export default stack;
+\`\`\`
+
+- **NUNCA** use \`principal\` — não existe na interface. Use \`attachTo\` + \`attachType\`
+- Para sub-resources (ex: objetos dentro de S3): use **string com o id do construct** — NUNCA concatene ref
+  - CORRETO: \`resources: ['MeuBucket/*']\` — o synth resolve para \`<arn>/*\`
+  - ERRADO: \`resources: [\\\`\${bucket.arn}/*\\\`]\` — concatenação de ref quebra no synth
+
+Sem policy stack a Lambda não tem permissão para acessar outros serviços — **sempre crie**.
+
+## Messaging.Queue — props corretas
+
+\`\`\`typescript
+import { Stack, Messaging } from '@iacmp/core';
+
+const stack = new Stack('FilaStack');
+
+const dlq = new Messaging.Queue(stack, 'MinhaDLQ', {
+  messageRetentionSeconds: 345600,  // ← não é retentionPeriod
+});
+
+const queue = new Messaging.Queue(stack, 'MinhaFila', {
+  visibilityTimeoutSeconds: 120,    // ← não é visibilityTimeout; deve ser >= timeout da Lambda
+  messageRetentionSeconds: 345600,
+  dlqArn: dlq.arn,                  // ← não é deadLetterQueue.queueId
+  maxReceiveCount: 3,
+});
+\`\`\`
+
+- URL da fila: \`queue.queueUrl\` (não \`queue.url\`)
+- SQS/fila é **dual-cloud**: não há shim automático, mas é permitido — o handler ramifica por \`isAzure\` (\`@aws-sdk/client-sqs\` no path AWS, \`@azure/service-bus\` no Azure)
+
+## Restrições
+
+- NUNCA pergunte sobre formato de IaC, framework ou ferramenta — é sempre iacmp
+- NUNCA use \`code: 'src/...\` em Fn.Lambda — **sempre** \`code: 'dist/handlers/<nome>'\`
+- NUNCA use \`function: referência\` em rotas — **sempre** \`lambdaId: 'ConstructId'\`
+- NUNCA use \`principal\` em Policy.IAM — **sempre** \`attachTo\` + \`attachType\`
+- NUNCA concatene ref com string em \`resources\` — use string com id do construct (ex: \`'MeuBucket/*'\`)
+- NUNCA modifique \`package.json\`, \`tsconfig.json\`, \`.env\` ou \`iacmp.json\`
+- NUNCA use aws-cdk-lib, constructs ou qualquer pacote fora do @iacmp/core
+- NUNCA deixe código incompleto (sem \`// TODO\` ou placeholders)
+- Deploy e destroy: só quando o usuário pedir explicitamente
+`;
+}
+
+function bootstrapClaudeSettings(cwd: string): string {
+  const coreDir = (() => {
+    try {
+      const corePkgJson = require.resolve('@iacmp/core/package.json');
+      return path.dirname(corePkgJson);
+    } catch {
+      return path.join(cwd, 'node_modules', '@iacmp', 'core');
+    }
+  })();
+  return JSON.stringify({
+    permissions: {
+      allow: [
+        `Read(${coreDir}/src/**)`,
+        `Read(${coreDir}/dist/**)`,
+        'Bash(npm run *)',
+        'Bash(iacmp *)',
+        'Bash(npx iacmp *)',
+      ],
+    },
+  }, null, 2) + '\n';
+}
+
+/**
+ * Decide o que passar para `npm install` no lugar de `@iacmp/core`:
+ * - checkout de dev do monorepo → o caminho do core local (instala como file:),
+ *   garantindo que o projeto use a MESMA versão que o CLI atual;
+ * - instalação normal (npm) → o nome do pacote, resolvido do registry.
+ *
+ * A heurística de "dev" é a presença de `src/` ao lado do package.json do core
+ * que este CLI resolve — pacotes publicados só trazem `dist/`.
+ */
+export function resolveCoreInstallSpec(): string {
+  try {
+    const corePkgJson = require.resolve('@iacmp/core/package.json');
+    const coreDir = path.dirname(corePkgJson);
+    if (fs.existsSync(path.join(coreDir, 'src'))) {
+      return coreDir; // npm install <path> → "@iacmp/core": "file:<path>"
+    }
+  } catch {
+    // @iacmp/core não resolível a partir do CLI — cai no registry.
+  }
+  return '@iacmp/core';
+}
+
+function sanitizeName(raw: string): string {
+  const cleaned = raw.toLowerCase().replace(/[^a-z0-9-_]/g, '-').replace(/^-+|-+$/g, '');
+  return cleaned || 'iacmp-project';
+}
+
+function tsconfigContent(): string {
+  return JSON.stringify(
+    {
+      compilerOptions: {
+        target: 'ES2022',
+        module: 'CommonJS',
+        moduleResolution: 'node',
+        lib: ['es2022'],
+        types: ['node'],
+        // Leniente de propósito: os handlers em src/ são gerados pela IA e
+        // importam libs (pg, ioredis, aws-sdk...) que nem sempre têm @types
+        // instalados. Strict aqui bloquearia o build por "implicit any" mesmo
+        // com o JS de saída perfeitamente válido para o Lambda. O que importa é
+        // emitir dist/*.js correto, não type-check rigoroso de código gerado.
+        strict: false,
+        noImplicitAny: false,
+        esModuleInterop: true,
+        skipLibCheck: true,
+        strictPropertyInitialization: false,
+        experimentalDecorators: true,
+        outDir: 'dist',
+        rootDir: 'src',
+      },
+      include: ['src/**/*'],
+      exclude: ['node_modules', 'dist'],
+    },
+    null,
+    2,
+  ) + '\n';
+}
+
+function packageJsonContent(projectName: string): string {
+  return JSON.stringify(
+    {
+      name: projectName,
+      version: '0.1.0',
+      private: true,
+      scripts: {
+        build: 'tsc',
+        synth: 'iacmp synth',
+        deploy: 'iacmp deploy',
+      },
+    },
+    null,
+    2,
+  ) + '\n';
+}
+
+function gitignoreContent(): string {
+  return ['node_modules/', 'dist/', 'synth-out/', 'audit/', '.env', '.iacmp/', '.iacmp-validate-*/', '.DS_Store'].join('\n') + '\n';
+}
