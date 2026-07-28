@@ -19,6 +19,20 @@
 <text x="52" y="64" class="mono" font-size="13" letter-spacing="3" font-weight="600" fill="#1E6E7E">IACMP · INFRAESTRUTURA COMO CÓDIGO</text>
 <text x="50" y="118" font-size="44" font-weight="700">Um código. <tspan fill="#1E6E7E">Três</tspan> <tspan fill="#D97E00">nuvens.</tspan></text>
 
+<!-- entradas: quem escreve os constructs -->
+<g font-size="12.5" font-weight="600">
+  <rect x="52" y="146" width="128" height="36" rx="9" fill="#fff" stroke="#B8C2BF" stroke-width="1.4" stroke-dasharray="5 4"/>
+  <text x="116" y="169" text-anchor="middle" fill="#44555C">você · à mão</text>
+  <rect x="196" y="146" width="150" height="36" rx="9" fill="#fff" stroke="#B8C2BF" stroke-width="1.4" stroke-dasharray="5 4"/>
+  <text x="271" y="169" text-anchor="middle" fill="#44555C">Claude Code · MCP</text>
+  <rect x="362" y="146" width="120" height="36" rx="9" fill="#fff" stroke="#D97E00" stroke-width="1.4" stroke-dasharray="5 4"/>
+  <text x="422" y="169" text-anchor="middle" fill="#44555C">iacmp ai · Pro</text>
+</g>
+<g stroke="#B8C2BF" stroke-width="1.6" fill="none">
+  <path d="M116 182 v 14 M116 196 l -5 -7 M116 196 l 5 -7"/>
+  <path d="M271 182 v 14 M271 196 l -5 -7 M271 196 l 5 -7"/>
+  <path d="M422 182 v 14 M422 196 l -5 -7 M422 196 l 5 -7"/>
+</g>
 <!-- código -->
 <rect x="52" y="200" width="430" height="212" rx="14" fill="#10202B"/>
 <text x="84" y="255" class="mono code" font-size="19"><tspan fill="#FFB454">new</tspan> Database.<tspan fill="#6FD0E0">SQL</tspan>(stack, <tspan fill="#7FD08F">'AppDB'</tspan>, {</text>
@@ -48,6 +62,7 @@
   <text x="932" y="237" class="mono" font-size="13" fill="#1E6E7E" text-anchor="middle">CloudFormation</text>
   <text x="1128" y="226" font-size="14" fill="#44555C" text-anchor="end">Amazon RDS</text>
   <text x="1128" y="248" font-size="14" fill="#44555C" text-anchor="end">subnet group · SG · SSL</text>
+  <text x="866" y="264" class="mono" font-size="11.5" fill="#6E7F7B">nativo · ou --format tf → Terraform</text>
 </g>
 <g>
   <rect class="card c2" x="760" y="286" width="390" height="86" rx="12" fill="#fff" stroke-width="1.8"/>
@@ -56,6 +71,7 @@
   <text x="897" y="335" class="mono" font-size="13" fill="#1E6E7E" text-anchor="middle">Bicep</text>
   <text x="1128" y="324" font-size="14" fill="#44555C" text-anchor="end">PostgreSQL Flexible Server</text>
   <text x="1128" y="346" font-size="14" fill="#44555C" text-anchor="end">VNet delegada · senha do run</text>
+  <text x="866" y="362" class="mono" font-size="11.5" fill="#6E7F7B">nativo · ou --format tf → Terraform</text>
 </g>
 <g>
   <rect class="card c3" x="760" y="384" width="390" height="86" rx="12" fill="#fff" stroke-width="1.8"/>
@@ -64,6 +80,7 @@
   <text x="917" y="433" class="mono" font-size="13" fill="#1E6E7E" text-anchor="middle">Terraform</text>
   <text x="1128" y="422" font-size="14" fill="#44555C" text-anchor="end">Cloud SQL · IP privado</text>
   <text x="1128" y="444" font-size="14" fill="#44555C" text-anchor="end">service networking · peering</text>
+  <text x="866" y="460" class="mono" font-size="11.5" fill="#6E7F7B">Terraform é o formato nativo</text>
 </g>
 
 <text x="52" y="600" class="mono" font-size="16" font-weight="600">$ npm i -g <tspan fill="#D97E00" font-weight="700">iacmp</tspan></text>
