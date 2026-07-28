@@ -1,4 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 620" font-family="'Avenir Next','Segoe UI',system-ui,sans-serif">
+<defs><linearGradient id="lgBack" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#55DBF5"/><stop offset="1" stop-color="#3FA9F5"/></linearGradient>
+<linearGradient id="lgFront" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3B57E8"/><stop offset="1" stop-color="#7A3FE4"/></linearGradient></defs>
 <style>
   text { fill: #16262E; }
   .mono { font-family: ui-monospace,'SF Mono',Menlo,Consolas,monospace; }
@@ -16,7 +18,15 @@
   @keyframes tr { from { offset-distance: 0%; opacity: 0; } 10% { opacity: 1; } 90% { opacity: 1; } to { offset-distance: 100%; opacity: 0; } }
 </style>
 <rect width="1200" height="620" fill="#FBFBFA"/>
-<text x="52" y="60" class="mono" font-size="13" letter-spacing="3" font-weight="600" fill="#1E6E7E">IACMP · COMO CADA NUVEM FOI VALIDADA</text>
+<g transform="translate(50,28) scale(0.38)">
+  <g transform="translate(-5,-4)" fill="url(#lgBack)">
+    <path d="M16,23 L88,50 L76,54 L26,34 L26,41 L16,37 Z"/><path d="M16,77 L88,50 L76,46 L26,66 L26,59 L16,63 Z"/><path d="M34,39 L62,50 L34,61 L34,54 L48,50 L34,46 Z"/>
+  </g>
+  <g fill="url(#lgFront)">
+    <path d="M16,23 L88,50 L76,54 L26,34 L26,41 L16,37 Z"/><path d="M16,77 L88,50 L76,46 L26,66 L26,59 L16,63 Z"/><path d="M34,39 L62,50 L34,61 L34,54 L48,50 L34,46 Z"/>
+  </g>
+</g>
+<text x="96" y="60" class="mono" font-size="13" letter-spacing="3" font-weight="600" fill="#1E6E7E">IACMP · COMO CADA NUVEM FOI VALIDADA</text>
 <text x="50" y="112" font-size="42" font-weight="700">Validado em <tspan fill="#1E6E7E">deploy</tspan> <tspan fill="#D97E00">real</tspan>. Não em demo.</text>
 
 <!-- nós do ciclo -->

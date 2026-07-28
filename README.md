@@ -1,3 +1,5 @@
+<p align="center"><img src="https://raw.githubusercontent.com/Claudio-Fontes/iacmp/main/docs/assets/logo.svg" width="110" alt="iacmp"></p>
+
 # iacmp — IaC Multi Plataforma
 
 > 🇺🇸 [English version](README.en.md)
