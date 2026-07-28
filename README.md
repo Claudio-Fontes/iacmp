@@ -1,5 +1,7 @@
 # iacmp — IaC Multi Plataforma
 
+> 🇺🇸 [English version](README.en.md)
+
 CLI de infraestrutura como código que gera **CloudFormation (AWS), Bicep (Azure) e Terraform (GCP)** a partir dos mesmos constructs TypeScript — com deploy, destroy, diff, auditoria e diagramas no mesmo fluxo.
 
 ![Um código, três nuvens](docs/assets/hero-flow.svg)
