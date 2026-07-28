@@ -2,6 +2,38 @@
 
 ---
 
+## [2.5.0] — 2026-07-28
+
+Virada **open core**: o CLI é aberto (Apache-2.0) e a geração via IA com corpus
+validado vira o **iacmp Pro**.
+
+- **Licença Apache-2.0** — todos os pacotes publicados (antes MIT).
+- **GCP suportado** — synth Terraform (tf.json) com 20/20 cenários da bateria
+  e2e validados em deploy real (paridade com AWS e Azure). Deploy com
+  pré-flight de APIs/roles, build+upload de handlers versionados por hash e
+  import automático do Firestore `(default)`.
+- **`--format tf`** — AWS e Azure ganham Terraform como formato alternativo de
+  synth/deploy/destroy (`synth-out/aws-tf/`, `synth-out/azure-tf/`), validado
+  em deploy real. `--provider terraform` standalone foi descontinuado.
+- **iacmp Pro** — `iacmp ai`, `from-diagram` e a busca de exemplos
+  (`search_examples`/`list_examples` no MCP) passam a exigir os módulos Pro
+  (`@iacmp/ai` + `@iacmp/knowledge`, fora deste repo). Sem eles o CLI degrada
+  com mensagem clara; todo o resto funciona integralmente.
+- **MCP embutido aberto** — `iacmp setup` registra o servidor MCP no Claude
+  Code/Desktop com as ferramentas mecânicas (`write_stack`, `synth_project`,
+  `deploy_project`, `destroy_project`, `validate_stack`, `read_synth_output`,
+  `from_diagram`) — sem dependência do Pro.
+- **Runtime 0.4.0** — facade com `table()`, `blob()`, `queue()`, `cache()`,
+  `sql()`, `secret()` nas três nuvens.
+- **Refactors estruturais** — comandos synth/deploy/destroy viraram
+  orquestradores finos com módulos por provider/fluxo; executors Azure/GCP
+  divididos por responsabilidade; synth azure-tf no padrão constructs/ por
+  domínio.
+
+Pacotes: `@iacmp/core` 2.4.0 · `@iacmp/runtime` 0.4.0 · `iacmp` 2.5.0.
+
+---
+
 ## [2.3.0] — 2026-07-23
 
 Release consolidando distribuição, aprendizado e robustez.

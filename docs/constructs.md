@@ -2,7 +2,7 @@
 
 Constructs são os blocos de construção do iacmp. Cada construct representa um
 recurso de infraestrutura de forma agnóstica ao provider — o mesmo código
-funciona em AWS, Azure, GCP e Terraform.
+funciona em AWS, Azure e GCP (e no formato Terraform via `--format tf`).
 
 A API completa é exportada por `@iacmp/core` em 13 namespaces. Cada namespace
 agrupa subtipos relacionados (`Compute.Instance`, `Compute.AutoScaling`, etc.).

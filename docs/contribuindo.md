@@ -35,8 +35,15 @@ iacmp/
 ├── packages/
 │   ├── cli/           # CLI (oclif) — comandos que o usuário executa
 │   ├── core/          # Constructs abstratos e classe Stack
+│   ├── runtime/       # Facade agnóstica p/ handlers (table, blob, queue…)
+│   ├── plugin-sdk/    # SDK de providers customizados
+│   ├── dashboard/     # UI de visualização de stacks
+│   ├── registry/      # Catálogo de constructs/exemplos
 │   └── providers/
-│       └── aws/       # Síntese para CloudFormation
+│       ├── aws/       # Síntese CloudFormation
+│       ├── azure/     # Síntese Bicep (+ Terraform azurerm p/ --format tf)
+│       ├── gcp/       # Síntese Terraform (tf.json)
+│       └── terraform/ # Pipeline CFN→tf.json (aws --format tf)
 ├── docs/              # Documentação
 └── examples/          # Projetos de exemplo
 ```

@@ -1,6 +1,15 @@
 # Providers
 
-O iacmp suporta múltiplos providers de cloud. O provider define como os constructs abstratos são sintetizados para o formato nativo de cada plataforma.
+O iacmp suporta três nuvens. O provider define para qual formato nativo os
+constructs são sintetizados — e como o `iacmp deploy` os aplica de verdade.
+
+| Provider | Formato de synth | Deploy via | Cobertura e2e |
+|---|---|---|---|
+| `aws` | CloudFormation JSON | `aws cloudformation package` + `deploy` | 20/20 cenários |
+| `azure` | Bicep (Deployment Stacks) | `az stack group create` | 20/20 cenários |
+| `gcp` | Terraform (tf.json) | `terraform apply` | 20/20 cenários |
+| `aws --format tf` | Terraform (tf.json) | `terraform apply` | deploy real validado |
+| `azure --format tf` | Terraform (azurerm) | `terraform apply` | deploy real validado |
 
 ---
 
@@ -22,150 +31,104 @@ iacmp synth --provider aws
 iacmp deploy --provider azure
 ```
 
+Campos específicos por nuvem no `iacmp.json`: `resourceGroup` e `azureRegion`
+(Azure), `projectId` e `gcpRegion` (GCP), `drRegion` (AWS, stacks de DR),
+`accountTier` (`free`/`standard` — ajusta SKUs e emite avisos de tier).
+
 ## Onde ficam os artefatos sintetizados
 
-`iacmp synth` escreve em `synth-out/<provider>/<stack>.<ext>`. Cada provider tem
-sua subpasta, então sintetizar a mesma stack para múltiplos providers nunca
-sobrescreve resultados. Os consumidores (`deploy`, `destroy`, `diff`,
-`dashboard`) leem dessa mesma subpasta.
+`iacmp synth` escreve em `synth-out/<provider>/`. Cada provider tem sua
+subpasta — sintetizar a mesma stack para múltiplos providers nunca sobrescreve
+resultados. Os consumidores (`deploy`, `destroy`, `diff`, `dashboard`) leem da
+mesma subpasta.
 
-| Provider | Path | Extensão |
+| Provider | Path | Conteúdo |
 |---|---|---|
-| AWS | `synth-out/aws/<stack>.json` | CloudFormation JSON |
-| Azure | `synth-out/azure/<stack>.json` | ARM Template JSON |
-| GCP | `synth-out/gcp/<stack>.json` | Deployment Manager JSON |
-| Terraform | `synth-out/terraform/<stack>.tf` | HCL |
+| AWS | `synth-out/aws/<stack>.json` | CloudFormation por stack |
+| Azure | `synth-out/azure/<stack>.bicep` + `_main.bicep` | módulos Bicep + deployment único |
+| GCP | `synth-out/gcp/<stack>.tf.json` + `_providers.tf.json` | root module Terraform único |
+| AWS via Terraform | `synth-out/aws-tf/` | tf.json + `_providers.tf.json` |
+| Azure via Terraform | `synth-out/azure-tf/` | tf.json (azurerm) + `_providers.tf.json` |
 
 ---
 
 ## AWS
 
-**Status:** Disponível (Fase 1)
-
-Sintetiza stacks para **CloudFormation JSON**.
-
-### Pré-requisitos
+Sintetiza **CloudFormation JSON**, uma stack por arquivo, com Export/ImportValue
+para referências cross-stack. O deploy ordena as stacks por dependência,
+empacota handlers (`aws cloudformation package`) e protege contra recursos
+órfãos com `DeletionPolicy: Retain` (detecção pré-deploy com confirmação).
 
 ```bash
-# Instalar AWS CLI
-brew install awscli        # macOS
-winget install Amazon.AWSCLI  # Windows
-
-# Configurar credenciais
+brew install awscli   # ou winget install Amazon.AWSCLI
 aws configure
 ```
 
-### Regiões suportadas
-
-Qualquer região AWS válida. Exemplos: `us-east-1`, `us-west-2`, `sa-east-1` (São Paulo), `eu-west-1`.
-
-### Mapeamento de constructs
-
-| Construct | Recurso CloudFormation |
-|---|---|
-| `Compute.Instance` | `AWS::EC2::Instance` |
-| `Storage.Bucket` | `AWS::S3::Bucket` |
-| `Network.VPC` | `AWS::EC2::VPC` |
-| `Database.SQL` | `AWS::RDS::DBInstance` |
-| `Fn.Lambda` | `AWS::Lambda::Function` |
-
-### Mapeamento de instanceType
-
-| Valor | Instância AWS |
-|---|---|
-| `small` | t3.small |
-| `medium` | t3.medium |
-| `large` | t3.large |
-
-### Exemplo de output (CloudFormation)
-
-```json
-{
-  "AWSTemplateFormatVersion": "2010-09-09",
-  "Description": "Stack: minha-stack",
-  "Resources": {
-    "Servidor": {
-      "Type": "AWS::EC2::Instance",
-      "Properties": {
-        "InstanceType": "t3.small",
-        "ImageId": "ubuntu-22.04",
-        "AvailabilityZone": "us-east-1a"
-      }
-    }
-  }
-}
-```
-
----
+Qualquer região AWS válida (`us-east-1`, `sa-east-1`, …). Stacks marcadas para
+DR deployam na `drRegion` do `iacmp.json`.
 
 ## Azure
 
-**Status:** Disponível (Fase 2)
-
-Sintetiza stacks para **ARM Template JSON**.
-
-### Pré-requisitos
+Sintetiza **Bicep** — uma stack por módulo, amarradas por um `_main.bicep` de
+deployment único: o ARM resolve ordem e referências simbolicamente, e o destroy
+remove a deployment stack inteira (`az stack group`). O deploy também builda os
+handlers (esbuild), publica via `config-zip` nas Function Apps e ativa static
+websites (data-plane) quando o synth os declara.
 
 ```bash
 brew install azure-cli
 az login
 ```
 
-### Mapeamento de constructs
-
-| Construct | Recurso Azure |
-|---|---|
-| `Compute.Instance` | `Microsoft.Compute/virtualMachines` |
-| `Storage.Bucket` | `Microsoft.Storage/storageAccounts` |
-| `Network.VPC` | `Microsoft.Network/virtualNetworks` |
-| `Database.SQL` | `Microsoft.Sql/servers` |
-| `Fn.Lambda` | `Microsoft.Web/sites` (Functions) |
-
----
+Particularidades cobertas pelo synth/deploy: plano Consumption compartilhado
+para Functions, APIM (inclusive compartilhado entre projetos via
+`azure.sharedApim`), Container Apps com build de imagem (Docker local ou ACR
+Tasks), Cosmos DB serverless, Key Vault, Event Grid com 2º passo automático
+para ciclos de referência.
 
 ## GCP
 
-**Status:** Disponível (Fase 2)
-
-Sintetiza stacks para **Deployment Manager JSON**.
-
-### Pré-requisitos
+Sintetiza **Terraform (tf.json)** — o formato nativo do provider GCP. Todos os
+`<stack>.tf.json` do projeto formam UM root module (state único); os blocos
+`terraform`/`provider`/`variable` ficam em `_providers.tf.json`, uma vez por
+diretório. O deploy faz pré-flight (habilita APIs necessárias e concede roles à
+default compute service account), builda e sobe os handlers para o bucket de
+artefatos (objetos versionados por hash de conteúdo) e roda `terraform apply`.
 
 ```bash
-brew install google-cloud-sdk
-gcloud auth login
+brew install google-cloud-sdk terraform
+gcloud auth login && gcloud auth application-default login
 ```
 
-### Mapeamento de constructs
+Particularidades cobertas: Cloud Functions gen2 com adapter HTTP/CloudEvent,
+API Gateway com OpenAPI + SA invoker, Cloud SQL privado (private service
+access), Memorystore com TLS/auth, Cloud Armor, serverless NEG atrás de LB
+global, Firestore `(default)` importado automaticamente quando já existe.
 
-| Construct | Recurso GCP |
-|---|---|
-| `Compute.Instance` | `compute.v1.instance` |
-| `Storage.Bucket` | `storage.v1.bucket` |
-| `Network.VPC` | `compute.v1.network` |
-| `Database.SQL` | `sqladmin.v1beta4.instance` |
-| `Fn.Lambda` | `cloudfunctions.v2.function` |
+## Terraform (`--format tf`)
+
+Terraform não é um provider isolado — é um **formato alternativo de saída** para
+AWS e Azure:
+
+```bash
+iacmp synth  --provider aws   --format tf   # → synth-out/aws-tf/
+iacmp deploy --provider aws   --format tf   # terraform init/apply
+iacmp synth  --provider azure --format tf   # → synth-out/azure-tf/ (azurerm)
+iacmp deploy --provider azure --format tf
+```
+
+O diretório inteiro é um state único (sem `--stack` no deploy/destroy);
+referências cross-stack viram referências diretas de recurso. Requer o binário
+`terraform` no PATH (`iacmp doctor` confere).
 
 ---
 
-## Terraform
+## Mapeamento de constructs
 
-**Status:** Disponível (Fase 2)
+A tabela completa AWS ↔ Azure ↔ GCP, construct por construct, está em
+[constructs.md](constructs.md).
 
-Sintetiza stacks para **arquivos HCL (`.tf`)**.
+## Providers customizados
 
-### Pré-requisitos
-
-```bash
-brew install terraform
-```
-
-### Mapeamento de constructs
-
-| Construct | Recurso Terraform |
-|---|---|
-| `Compute.Instance` | `aws_instance` / `azurerm_linux_virtual_machine` |
-| `Storage.Bucket` | `aws_s3_bucket` / `azurerm_storage_account` |
-| `Network.VPC` | `aws_vpc` / `azurerm_virtual_network` |
-| `Database.SQL` | `aws_db_instance` / `azurerm_sql_server` |
-| `Fn.Lambda` | `aws_lambda_function` / `azurerm_linux_function_app` |
+Providers fora dos nativos entram via `@iacmp/plugin-sdk` — veja
+[arquitetura.md](arquitetura.md#como-o-plugin-system-funciona).

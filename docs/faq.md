@@ -4,18 +4,99 @@
 
 **Preciso compilar o TypeScript antes de rodar `iacmp synth`?**
 
-Não, desde que `ts-node` esteja disponível no projeto. O `iacmp init` adiciona
-`ts-node` como devDependency e o `iacmp synth` o registra automaticamente para
-executar `.ts` direto (procurando inclusive em diretórios pai, útil em monorepos
-e nos `examples/`). Se nenhum `ts-node` for encontrado, o synth emite um aviso e
-ignora as stacks `.ts`; nesse caso compile com `tsc` ou rode `npm i -D ts-node`
-no projeto. As stacks `.js` (já compiladas) são sempre suportadas, sem ts-node.
+Não, desde que `tsx` esteja disponível no projeto. O `iacmp init` o adiciona
+como devDependency e o `iacmp synth` o registra automaticamente para executar
+`.ts` direto (procurando inclusive em diretórios pai, útil em monorepos). Se
+nenhum `tsx` for encontrado, o synth avisa e ignora as stacks `.ts`; nesse caso
+rode `npm i -D tsx` no projeto. Stacks `.js` (já compiladas) são sempre
+suportadas.
 
 ---
 
-**Posso usar o iacmp sem `ANTHROPIC_API_KEY`?**
+**Posso usar o iacmp sem API key de IA?**
 
-Sim. A variável `ANTHROPIC_API_KEY` só é necessária para o comando `iacmp ai`. Todos os outros comandos (`synth`, `init`, `deploy`, `ls`, `doctor`, `watch`, `dashboard`, `registry`) funcionam normalmente sem ela. Alternativamente, você pode usar `GITHUB_TOKEN` com acesso ao GitHub Copilot.
+Sim — o CLI inteiro (`init`, `synth`, `deploy`, `destroy`, `diff`, `diagram`,
+`audit-all`, `doctor`, `dashboard`, `registry`, `watch`) funciona sem nenhuma
+chave. API keys (`ANTHROPIC_API_KEY`/`OPENAI_API_KEY`) só entram na geração via
+IA (`iacmp ai`, `from-diagram`), que faz parte do **iacmp Pro**.
+
+---
+
+**O que é o iacmp Pro?**
+
+A geração via IA com um corpus de exemplos em que cada padrão foi validado em
+deploy real nas três nuvens. O CLI aberto funciona 100% sem ele — os comandos
+Pro (`iacmp ai`, `from-diagram` e a busca de exemplos no MCP) apenas indicam a
+ausência com uma mensagem clara.
+
+---
+
+**O iacmp funciona com o Claude Code?**
+
+Sim, de fábrica. `iacmp setup` registra o servidor MCP embutido no Claude Code
+e no Claude Desktop — o agente ganha as ferramentas `write_stack`,
+`synth_project`, `deploy_project`, `destroy_project`, `validate_stack` e
+`read_synth_output` (todas locais, sem IA). Com o iacmp Pro, o MCP soma
+`search_examples`/`list_examples` (busca no corpus validado). Sem MCP, o
+CLAUDE.md gerado pelo `iacmp init` orienta o agente a usar o CLI direto.
+
+---
+
+**O iacmp faz deploy real?**
+
+Sim. O `iacmp deploy` chama a ferramenta nativa do provider por trás —
+`aws cloudformation package`+`deploy` (AWS), `az stack group create` (Azure),
+`terraform apply` (GCP e `--format tf`). O empacotamento do código das funções
+(`Fn.Lambda`) é feito no deploy para as três nuvens: esbuild do handler com a
+facade `@iacmp/runtime` resolvida para o adaptador da cloud alvo. Pré-requisito:
+a CLI nativa instalada e autenticada (`iacmp doctor` checa; `--fix` instala) e
+synth feito antes. Use `--dry-run` para ver os comandos exatos sem executar.
+
+---
+
+**Onde ficam os templates gerados?**
+
+Em `synth-out/<provider>/` na raiz do projeto:
+- AWS: `synth-out/aws/<stack>.json` (CloudFormation)
+- Azure: `synth-out/azure/<stack>.bicep` + `_main.bicep` (deployment único)
+- GCP: `synth-out/gcp/<stack>.tf.json` + `_providers.tf.json` (Terraform)
+- `--format tf`: `synth-out/aws-tf/` e `synth-out/azure-tf/`
+
+A subpasta por provider evita que um output sobrescreva o outro.
+
+---
+
+**Como faço para mudar o provider de um projeto?**
+
+Edite o campo `provider` no `iacmp.json`:
+```json
+{ "provider": "azure" }
+```
+
+Ou use a flag `--provider` por comando:
+```bash
+iacmp synth --provider gcp
+iacmp deploy --provider azure
+```
+
+A flag sobrescreve o valor do `iacmp.json` para aquela execução. Para gerar
+Terraform de AWS/Azure, use `--format tf` (Terraform é um formato de saída, não
+um provider isolado).
+
+---
+
+**Posso ter múltiplas stacks no mesmo projeto?**
+
+Sim — e é a convenção: uma stack por domínio (rede, dados, compute…), ligadas
+por `ref()` cross-stack. O `iacmp synth` processa todas e resolve as
+referências; o `deploy` ordena por dependência.
+
+```
+stacks/
+├── network/api-stack.ts
+├── compute/fn-stack.ts
+└── database/db-stack.ts
+```
 
 ---
 
@@ -41,83 +122,6 @@ Publique no npm e adicione ao `iacmp.json`:
 { "plugins": ["meu-pacote-plugin"] }
 ```
 
-Veja o exemplo completo em `examples/plugin-exemplo/`.
-
----
-
-**O iacmp faz deploy real?**
-
-Sim. O `iacmp deploy` chama a CLI nativa do provider configurado por trás —
-`aws cloudformation package`+`deploy` (AWS), `az stack group create` (Azure),
-`gcloud deployment-manager deployments create/update` (GCP) ou
-`terraform apply` (Terraform). Você não precisa saber qual ferramenta é usada;
-o comando é sempre `iacmp deploy`. Pré-requisito: a CLI nativa do provider
-escolhido precisa estar instalada e autenticada (`iacmp doctor` checa e
-`iacmp doctor --fix` instala o que faltar) — e a stack precisa ter sido
-sintetizada antes (`iacmp synth --provider <provider>`). Use `--dry-run` para
-ver os comandos exatos sem executar nada.
-
-Limitação atual: só o provider AWS tem o empacotamento de código de função
-(`Function.Lambda`) corrigido — em Azure, GCP e Terraform o recurso de
-infraestrutura é criado, mas sem código de função anexado ainda. Veja a
-seção `iacmp deploy` no manual de uso para detalhes por provider.
-
----
-
-**Onde ficam os templates gerados?**
-
-Em `synth-out/<provider>/` na raiz do projeto. Cada stack gera um arquivo com o
-nome da stack e a extensão correspondente ao provider:
-- AWS: `synth-out/aws/minha-stack.json` (CloudFormation)
-- Azure: `synth-out/azure/minha-stack.json` (ARM Template)
-- GCP: `synth-out/gcp/minha-stack.json` (Deployment Manager)
-- Terraform: `synth-out/terraform/minha-stack.tf` (HCL)
-
-A subpasta por provider evita que o output de um provider sobrescreva o de
-outro quando você sintetiza a mesma stack para múltiplos providers.
-
----
-
-**Como faço para mudar o provider de um projeto?**
-
-Edite o campo `provider` no `iacmp.json`:
-```json
-{ "provider": "azure" }
-```
-
-Ou use a flag `--provider` por comando:
-```bash
-iacmp synth --provider terraform
-iacmp deploy --provider gcp
-```
-
-A flag sobrescreve o valor do `iacmp.json` para aquela execução.
-
----
-
-**Posso ter múltiplas stacks no mesmo projeto?**
-
-Sim. Crie um arquivo `.ts` por stack dentro de `stacks/`. O `iacmp synth` processa todos automaticamente e gera um template por stack em `synth-out/`. O `iacmp ls` lista todas as stacks do projeto.
-
-```
-stacks/
-├── api-stack.ts
-├── database-stack.ts
-└── network-stack.ts
-```
-
----
-
-**A IA pode gerar stacks para qualquer provider?**
-
-Sim. Passe a flag `--provider` para o comando `iacmp ai`:
-```bash
-iacmp ai "cria uma VPC com subnets" --provider terraform
-iacmp ai "cria um banco postgres" --provider azure
-```
-
-Sem a flag, o provider é lido do `iacmp.json`.
-
 ---
 
 **Como atualizo o iacmp?**
@@ -131,7 +135,8 @@ iacmp --version
 
 **O `iacmp watch` funciona com qualquer provider?**
 
-Sim. Ao detectar mudanças em `stacks/`, o watch roda `iacmp synth` com o provider configurado no `iacmp.json`. Use `--provider` para sobrescrever:
+Sim. Ao detectar mudanças em `stacks/`, o watch roda `iacmp synth` com o
+provider do `iacmp.json`. Use `--provider` para sobrescrever:
 ```bash
 iacmp watch --provider azure
 ```

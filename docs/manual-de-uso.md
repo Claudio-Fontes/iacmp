@@ -1,6 +1,6 @@
 # iacmp — Manual de Uso
 
-CLI unificado para provisionamento de infraestrutura em AWS, Azure, GCP e Terraform.
+CLI unificado para provisionamento de infraestrutura em AWS, Azure e GCP — com Terraform como formato alternativo de saída (`--format tf`).
 
 ---
 
@@ -8,22 +8,8 @@ CLI unificado para provisionamento de infraestrutura em AWS, Azure, GCP e Terraf
 
 **Requisitos:** Node.js 20+, npm 10+
 
-### Via npm (quando publicado)
-
 ```bash
 npm install -g iacmp
-```
-
-### Local (desenvolvimento / pré-publicação)
-
-```bash
-npm install -g /caminho/para/iacmp/packages/cli
-```
-
-Exemplo:
-
-```bash
-npm install -g /Users/cmelo/Projetos/iacmp/packages/cli
 ```
 
 Verificar se está funcionando:
@@ -93,19 +79,22 @@ iacmp synth
 iacmp synth --provider aws
 ```
 
-Lê as stacks em `stacks/` (`.ts` direto via ts-node ou `.js` compiladas) e gera
-os templates em `synth-out/<provider>/<stack>.<ext>`. Exemplos:
-`synth-out/aws/minha-stack.json`, `synth-out/terraform/minha-stack.tf`.
+Lê as stacks em `stacks/` (`.ts` direto via tsx ou `.js` compiladas) e gera os
+templates em `synth-out/<provider>/`. Exemplos: `synth-out/aws/minha-stack.json`
+(CloudFormation), `synth-out/azure/minha-stack.bicep` + `_main.bicep` (Bicep,
+deployment único), `synth-out/gcp/minha-stack.tf.json` + `_providers.tf.json`
+(Terraform). Com `--format tf`, AWS e Azure saem como Terraform em
+`synth-out/aws-tf/` e `synth-out/azure-tf/`.
 
-> `ts-node` é instalado como devDependency pelo `iacmp init`. Se você criou o
-> projeto manualmente, rode `npm i -D ts-node` antes do primeiro synth.
+> `tsx` é instalado como devDependency pelo `iacmp init`. Se você criou o
+> projeto manualmente, rode `npm i -D tsx` antes do primeiro synth.
 
 ---
 
 ### `iacmp deploy [--provider aws] [--stack nome] [--dry-run]`
 
 Faz deploy real da infraestrutura — chama a CLI nativa de cada nuvem por
-trás (`aws`, `az`, `gcloud` ou `terraform`, conforme o provider configurado).
+trás (`aws`, `az` ou `terraform`, conforme o provider e o formato configurados).
 Você não precisa saber qual ferramenta é usada por baixo: o comando é sempre
 `iacmp deploy`.
 
@@ -126,8 +115,8 @@ O que cada provider faz de fato:
 |---|---|---|
 | `aws` | `aws cloudformation package` + `aws cloudformation deploy` | O `package` zipa e sobe o código de Lambdas automaticamente. O iacmp cria (uma vez) e usa um bucket S3 próprio, `iacmp-deploy-artifacts-<conta>-<região>` — sem precisar configurar nada manualmente. |
 | `azure` | `az stack group create` (Deployment Stacks) | Exige `resourceGroup` no `iacmp.json`. Se o resource group não existir, o comando pergunta antes de criar. |
-| `gcp` | `gcloud deployment-manager deployments create` ou `update` | Decide automaticamente entre criar ou atualizar (Deployment Manager não atualiza por cima de um deployment existente). Usa `projectId` do `iacmp.json`, ou o projeto default do `gcloud` se omitido. |
-| `terraform` | `terraform init` + `terraform apply -auto-approve` | Opera no diretório `synth-out/terraform/` inteiro (todas as stacks compartilham um único state) — `--stack` não é aplicável aqui. O provider AWS é gerado automaticamente em `_provider.tf`. |
+| `gcp` | pré-flight (APIs + roles) + build/upload dos handlers + `terraform init` + `apply` | Todas as stacks do projeto formam um único root module Terraform (state compartilhado). Usa `projectId` do `iacmp.json`, ou o projeto default do `gcloud` se omitido. |
+| `--format tf` (aws/azure) | `terraform init` + `terraform apply -auto-approve` | Opera no diretório `synth-out/aws-tf/` ou `synth-out/azure-tf/` inteiro (state único) — `--stack` não é aplicável. Requer `iacmp synth --format tf` antes. |
 
 Com `--dry-run`, nenhum comando é de fato executado — o iacmp ainda faz as
 verificações de leitura necessárias (ex: se o deployment já existe no GCP)
@@ -141,15 +130,10 @@ ARN e o API Gateway importa via `Fn::ImportValue`, e o `deploy` sempre sobe a
 stack da Lambda antes da do API Gateway (o `destroy` derruba na ordem
 inversa). Você não precisa fazer nada manual pra isso funcionar.
 
-> **Limitação conhecida:** apenas o provider **AWS** tem o empacotamento de
-> código de função (`Function.Lambda`) corrigido nesta versão — o `package`
-> zipa e sobe o conteúdo de `code` automaticamente. Em **Azure** (Function
-> App) e **GCP** (Cloud Functions) o recurso de infraestrutura é criado, mas
-> sem código funcional anexado; no **Terraform**, o recurso espera um arquivo
-> `function.zip` que ainda não é gerado automaticamente. Os demais recursos
-> (VPC, S3, RDS, DynamoDB, IAM etc.) fazem deploy real e completo nos 4
-> providers. Corrigir esse gap para Azure/GCP/Terraform é a próxima etapa
-> planejada, a ser feita depois da validação manual desta entrega.
+> O empacotamento do código das funções (`Fn.Lambda`) acontece no deploy nas
+> **três** nuvens: o handler é bundlado (esbuild) com a facade
+> `@iacmp/runtime` resolvida para o adaptador da cloud alvo — zip + upload
+> automáticos (S3/`config-zip`/bucket de artefatos GCP). Nenhum passo manual.
 
 ---
 
@@ -168,9 +152,11 @@ iacmp destroy --dry-run                   # mostra os comandos sem executar nada
 ```
 
 Mesma lógica de comandos nativos do `iacmp deploy` (CloudFormation
-delete-stack, Azure Deployment Stacks delete, Deployment Manager delete,
-`terraform destroy`). Para terraform, `--stack` não é suportado pelo mesmo
-motivo do deploy (state compartilhado).
+delete-stack, Azure Deployment Stacks delete, `terraform destroy` no GCP e nos
+caminhos `--format tf`). Onde o state é compartilhado (GCP e `--format tf`),
+`--stack` não é suportado — o destroy opera no diretório inteiro. Pós-destroy,
+o iacmp oferece limpar sobras com confirmação: resource group vazio (Azure),
+buckets com `DeletionPolicy: Retain` (AWS) e purga de APIM soft-deleted.
 
 ---
 
@@ -184,11 +170,16 @@ iacmp ls
 
 ---
 
-### `iacmp ai [prompt]`
+### `iacmp ai [prompt]` — iacmp Pro
 
-Gera stacks de infraestrutura em TypeScript via IA (Claude ou GitHub Copilot).
+Gera stacks de infraestrutura em TypeScript via IA (Claude, OpenAI ou GitHub
+Copilot), com RAG sobre um corpus de exemplos validados em deploy real.
 
-**Pré-requisito:** defina uma das variáveis de ambiente:
+> **iacmp Pro.** Este comando (e o `from-diagram`) faz parte do iacmp Pro. Na
+> instalação aberta ele exibe uma mensagem indicando a ausência do módulo — o
+> restante do CLI funciona normalmente sem ele.
+
+**Pré-requisito (além do Pro):** defina uma das variáveis de ambiente:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...   # Anthropic Claude (prioridade)
@@ -278,6 +269,30 @@ Exibe os arquivos que seriam gerados sem salvar nada em disco. Útil para prévi
 | `--chat` | Modo chat interativo | `false` |
 | `--dry-run` | Exibe sem salvar | `false` |
 | `--provider` | Provider alvo | Lido do `iacmp.json` |
+
+---
+
+### `iacmp setup` — integração com o Claude (MCP)
+
+Registra o servidor MCP embutido do iacmp no **Claude Code** (`~/.claude.json`)
+e no **Claude Desktop** (arquivo de configuração por SO). Idempotente — rodar de
+novo atualiza sem duplicar. `--dry-run` mostra o que seria escrito.
+
+```bash
+iacmp setup
+iacmp setup --dry-run
+```
+
+Depois de reiniciar o Claude, o agente ganha as ferramentas do iacmp:
+
+- **Sempre disponíveis:** `write_stack`, `synth_project`, `deploy_project`,
+  `destroy_project`, `validate_stack`, `read_synth_output`, `from_diagram` —
+  todas mecânicas (escrevem arquivos e chamam o CLI local), sem IA embutida.
+- **Com o iacmp Pro:** `search_examples` e `list_examples` (busca no corpus de
+  exemplos validados em deploy real).
+
+Você não precisa rodar o servidor à mão — o Claude o executa sozinho. Para
+depurar: `iacmp mcp serve` roda o servidor no terminal.
 
 ---
 
@@ -474,7 +489,7 @@ O `iacmp.json` na raiz do projeto controla o comportamento padrão:
 
 | Campo | Valores aceitos | Padrão |
 |---|---|---|
-| `provider` | `aws`, `azure`, `gcp`, `terraform` | `aws` |
+| `provider` | `aws`, `azure`, `gcp` | `aws` |
 | `region` | qualquer região válida do provider | `us-east-1` |
 | `language` | `typescript`, `python` | `typescript` |
 | `resourceGroup` | nome de um resource group Azure | — (obrigatório para `iacmp deploy`/`destroy --provider azure`) |
