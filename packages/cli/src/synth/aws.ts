@@ -15,6 +15,7 @@ export function synthAws(o: {
   profile: EnvironmentProfile;
   projectName?: string;
   stackFlag?: string;
+  region?: string;
   ui: SynthUI;
 }): void {
   const provOutDir = providerOutDir(o.cwd, 'aws');
@@ -43,7 +44,7 @@ export function synthAws(o: {
     o.ui.error((err as Error).message);
   }
 
-  validateAwsTemplates(o.cwd, o.ui, o.stackFlag);
+  validateAwsTemplates(o.cwd, o.ui, o.stackFlag, o.region);
 }
 
 /**
@@ -51,7 +52,7 @@ export function synthAws(o: {
  * Requer aws CLI configurado e credenciais ativas. Skipa silenciosamente se
  * a ferramenta não estiver disponível.
  */
-function validateAwsTemplates(cwd: string, ui: SynthUI, stack?: string): void {
+function validateAwsTemplates(cwd: string, ui: SynthUI, stack?: string, region?: string): void {
   const awsCheck = spawnSync('aws', ['--version'], { encoding: 'utf-8' });
   if (awsCheck.error) {
     ui.log(t('  aws CLI não encontrado — aws cloudformation validate-template skipped.', '  aws CLI not found — aws cloudformation validate-template skipped.'));
@@ -76,13 +77,16 @@ function validateAwsTemplates(cwd: string, ui: SynthUI, stack?: string): void {
     const stackName = file.replace('.json', '');
     const result = spawnSync(
       'aws',
-      ['cloudformation', 'validate-template', '--template-body', `file://${filePath}`],
+      ['cloudformation', 'validate-template', '--template-body', `file://${filePath}`, ...(region ? ['--region', region] : [])],
       { encoding: 'utf-8' },
     );
     if (result.status !== 0) {
       const out = result.stderr || result.stdout || '';
       if (isAwsEnvError(out)) {
-        ui.log(t('  aws sem credenciais/região — validate-template skipped (synth é offline; validado no deploy).', '  aws has no credentials/region — validate-template skipped (synth is offline; validated on deploy).'));
+        ui.log(t(
+          '  aws sem credenciais válidas — validate-template pulado (synth é offline; validado no deploy). Configure com: aws configure',
+          '  aws has no valid credentials — validate-template skipped (synth is offline; validated on deploy). Configure with: aws configure',
+        ));
         return;
       }
       ui.warn(t(`aws cloudformation validate-template falhou para '${stackName}':\n${out}`, `aws cloudformation validate-template failed for '${stackName}':\n${out}`));

@@ -104,7 +104,7 @@ export default class Synth extends Command {
 
     switch (provider) {
       case 'aws':
-        synthAws({ cwd, targetStacks, allStacks, profile, projectName: config.name || undefined, stackFlag: flags.stack, ui });
+        synthAws({ cwd, targetStacks, allStacks, profile, projectName: config.name || undefined, stackFlag: flags.stack, region: config.region ?? 'us-east-1', ui });
         break;
 
       case 'azure':
