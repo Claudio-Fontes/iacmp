@@ -178,8 +178,21 @@ export default class Init extends Command {
       fs.writeFileSync(path.join(stacksDir, 'exemplo_stack.py'), PYTHON_PLACEHOLDER);
     }
 
-    // CLAUDE.md na raiz — lido pelo Claude Code com prioridade alta
-    fs.writeFileSync(path.join(projectDir, 'CLAUDE.md'), claudeMd(projectName));
+    // CLAUDE.md na raiz — lido pelo Claude Code com prioridade alta.
+    // Se o diretório já tem um CLAUDE.md (init em projeto existente), o arquivo
+    // é do usuário — nunca sobrescrever: gravamos como CLAUDE.iacmp.md e avisamos.
+    const claudeMdPath = path.join(projectDir, 'CLAUDE.md');
+    let claudeMdFile = 'CLAUDE.md';
+    if (fs.existsSync(claudeMdPath)) {
+      claudeMdFile = 'CLAUDE.iacmp.md';
+      fs.writeFileSync(path.join(projectDir, claudeMdFile), claudeMd(projectName));
+      this.log(t(
+        '  CLAUDE.md já existia — as instruções do iacmp foram gravadas em CLAUDE.iacmp.md (importe com @CLAUDE.iacmp.md no seu CLAUDE.md)',
+        '  CLAUDE.md already existed — iacmp instructions were written to CLAUDE.iacmp.md (import it with @CLAUDE.iacmp.md from your CLAUDE.md)',
+      ));
+    } else {
+      fs.writeFileSync(claudeMdPath, claudeMd(projectName));
+    }
 
     // .claude/ — settings.local.json com permissões
     const claudeDir = path.join(projectDir, '.claude');
@@ -211,7 +224,7 @@ export default class Init extends Command {
     this.log(t(`\nProjeto '${projectName}' inicializado${templateLabel}.\n`, `\nProject '${projectName}' initialized${templateLabel}.\n`));
     this.log(`  ${rel}/iacmp.json`);
     this.log(`  ${rel}/.env`);
-    this.log(`  ${rel}/CLAUDE.md`);
+    this.log(`  ${rel}/${claudeMdFile}`);
     if (flags.language === 'typescript') {
       this.log(`  ${rel}/package.json`);
       this.log(`  ${rel}/tsconfig.json`);
