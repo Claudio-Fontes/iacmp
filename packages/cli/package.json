@@ -1,7 +1,7 @@
 {
   "name": "iacmp",
-  "version": "2.5.4",
-  "description": "IaC Multi Plataforma — CLI inteligente para AWS, Azure, GCP e Terraform com geração de stacks via IA",
+  "version": "2.5.5",
+  "description": "Multi-cloud IaC — one TypeScript codebase, CloudFormation (AWS), Bicep (Azure) and Terraform (GCP) out. Synth, deploy, diff, audits and diagrams in a single CLI.",
   "keywords": [
     "iac",
     "cli",
@@ -20,7 +20,7 @@
     "type": "git",
     "url": "https://github.com/Claudio-Fontes/iacmp"
   },
-  "homepage": "https://github.com/Claudio-Fontes/iacmp#readme",
+  "homepage": "https://claudio-fontes.github.io/iacmp",
   "bugs": {
     "url": "https://github.com/Claudio-Fontes/iacmp/issues"
   },

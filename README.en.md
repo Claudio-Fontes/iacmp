@@ -2,7 +2,7 @@
 
 # iacmp — Multi-Platform IaC
 
-> 🇧🇷 [Versão em português](README.md)
+> 🇧🇷 [Versão em português](README.md) · 📖 **[Step-by-step guide](https://claudio-fontes.github.io/iacmp)**
 
 An infrastructure-as-code CLI that generates **CloudFormation (AWS), Bicep (Azure) and Terraform (GCP)** from the same TypeScript constructs — with deploy, destroy, diff, audits and diagrams in a single flow.
 
@@ -120,7 +120,7 @@ AI generation (`iacmp ai`, `from-diagram`) and corpus search over MCP (`search_e
 
 ## Documentation
 
-Docs are currently in Portuguese: [User manual](docs/manual-de-uso.md) · [Constructs (AWS ↔ Azure ↔ GCP table)](docs/constructs.md) · [Providers](docs/providers.md) · [Internal architecture](docs/arquitetura.md) · [FAQ](docs/faq.md) · [Changelog](docs/changelog.md)
+**[Site with step-by-step guide (English)](https://claudio-fontes.github.io/iacmp)** · Repository docs are currently in Portuguese: [User manual](docs/manual-de-uso.md) · [Constructs (AWS ↔ Azure ↔ GCP table)](docs/constructs.md) · [Providers](docs/providers.md) · [Internal architecture](docs/arquitetura.md) · [FAQ](docs/faq.md) · [Changelog](docs/changelog.md)
 
 ## Contributing
 

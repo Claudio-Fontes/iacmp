@@ -6,7 +6,7 @@
 Synth, deploy, destroy, diff, audits and C4 diagrams in a single CLI — every provider
 validated by a battery of 20 end-to-end scenarios with real deploys.
 
-> 🇧🇷 Ferramenta com documentação completa em português — veja o repositório.
+> 📖 **[Step-by-step guide](https://claudio-fontes.github.io/iacmp)** · 🇧🇷 [Guia em português](https://claudio-fontes.github.io/iacmp/pt/)
 
 ```bash
 npm install -g iacmp

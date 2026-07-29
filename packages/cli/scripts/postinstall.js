@@ -18,7 +18,7 @@ ${C}${B}[iacmp] Instalado! Comece agora:${R}
 
   ${Y}${B}⚡ Claude Code: rode \`iacmp setup\` para o agente gerar e operar sua infra${R}
 
-  Docs: https://github.com/Claudio-Fontes/iacmp
+  Docs: https://claudio-fontes.github.io/iacmp/pt/
 ` : `
 ${C}${B}[iacmp] Installed! Get started:${R}
 
@@ -27,7 +27,7 @@ ${C}${B}[iacmp] Installed! Get started:${R}
 
   ${Y}${B}⚡ Claude Code: run \`iacmp setup\` so the agent can generate and operate your infra${R}
 
-  Docs: https://github.com/Claudio-Fontes/iacmp
+  Docs: https://claudio-fontes.github.io/iacmp
 `;
 // Windows gerencia PATH via instalador — não mexer
 if (platform() === 'win32') { console.log(WELCOME); process.exit(0); }

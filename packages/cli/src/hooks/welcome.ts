@@ -33,7 +33,7 @@ const hook: Hook<'init'> = async function (opts) {
     console.log('');
     console.log('  ' + chalk.green(t('iacmp init meu-projeto', 'iacmp init my-project')) + chalk.dim(t('   # projeto de exemplo pronto para deploy', '   # example project ready to deploy')));
     console.log('  ' + chalk.yellow.bold(t('⚡ Claude Code: rode `iacmp setup` para o agente gerar e operar sua infra', '⚡ Claude Code: run `iacmp setup` so the agent can generate and operate your infra')));
-    console.log('  ' + chalk.dim(t('Idioma: export IACMP_LANG=pt · Docs: https://github.com/Claudio-Fontes/iacmp', 'Language: export IACMP_LANG=pt · Docs: https://github.com/Claudio-Fontes/iacmp')));
+    console.log('  ' + chalk.dim(t('Idioma: export IACMP_LANG=pt · Docs: https://claudio-fontes.github.io/iacmp/pt/', 'Language: export IACMP_LANG=pt · Docs: https://claudio-fontes.github.io/iacmp')));
     console.log(line);
     console.log('');
   } catch { /* onboarding nunca pode quebrar um comando */ }

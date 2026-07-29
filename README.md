@@ -2,7 +2,7 @@
 
 # iacmp — IaC Multi Plataforma
 
-> 🇺🇸 [English version](README.en.md)
+> 🇺🇸 [English version](README.en.md) · 📖 **[Guia passo a passo](https://claudio-fontes.github.io/iacmp/pt/)**
 
 CLI de infraestrutura como código que gera **CloudFormation (AWS), Bicep (Azure) e Terraform (GCP)** a partir dos mesmos constructs TypeScript — com deploy, destroy, diff, auditoria e diagramas no mesmo fluxo.
 
@@ -130,7 +130,7 @@ comandos Pro apenas indicam a ausência.
 
 ## Documentação
 
-[Manual de uso](docs/manual-de-uso.md) · [Constructs (tabela AWS ↔ Azure ↔ GCP)](docs/constructs.md) · [Providers](docs/providers.md) · [Arquitetura interna](docs/arquitetura.md) · [FAQ](docs/faq.md) · [Changelog](docs/changelog.md)
+**[Site com guia passo a passo](https://claudio-fontes.github.io/iacmp/pt/)** · [Manual de uso](docs/manual-de-uso.md) · [Constructs (tabela AWS ↔ Azure ↔ GCP)](docs/constructs.md) · [Providers](docs/providers.md) · [Arquitetura interna](docs/arquitetura.md) · [FAQ](docs/faq.md) · [Changelog](docs/changelog.md)
 
 ## Contribuindo
 

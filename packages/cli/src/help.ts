@@ -30,12 +30,16 @@ export default class IacmpHelp extends Help {
       console.log('  iacmp synth                 ' + chalk.dim(t('# CloudFormation, Bicep ou Terraform + validações', '# CloudFormation, Bicep or Terraform + validations')));
       console.log('  iacmp deploy --dry-run      ' + chalk.dim(t('# o plano, sem executar nada', '# the plan, without executing anything')));
       console.log('');
-      console.log('  ' + chalk.dim('Claude Code: iacmp setup · Docs: https://github.com/Claudio-Fontes/iacmp'));
+      console.log('  ' + chalk.dim(t('Claude Code: iacmp setup', 'Claude Code: iacmp setup')));
       console.log('  ' + chalk.dim(t(
         'Idioma: IACMP_LANG=pt iacmp <comando> · ou defina de vez: export IACMP_LANG=pt (padrão: en)',
         'Language: IACMP_LANG=pt iacmp <command> · or set it once: export IACMP_LANG=pt (default: en)',
       )));
     }
+    // O link das docs aparece SEMPRE — dentro ou fora de projeto, o help é o
+    // lugar onde todo mundo procura "onde leio mais".
+    console.log('');
+    console.log('  ' + chalk.bold(t('📖 Guia passo a passo: https://claudio-fontes.github.io/iacmp/pt/', '📖 Step-by-step guide: https://claudio-fontes.github.io/iacmp')));
     await super.showRootHelp();
   }
 
