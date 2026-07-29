@@ -57,9 +57,19 @@ describe('init <nome> — caso feliz (template default)', () => {
     expect(exists(cwd, 'meu-proj/.gitlab-ci.yml')).toBe(true);
   });
 
-  test('blank (sem --template) NÃO cria scaffold de stack nem test/', () => {
+  test('default (sem --template) é o hello — projeto que já sintetiza', () => {
+    // Era blank, mas blank + iacmp ai atrás do Pro deixava o novato numa pasta
+    // vazia sem caminho. O default agora entrega Lambda + API Gateway prontos.
     cwd = makeEmptyDir();
     runCli(['init', 'meu-proj'], { cwd });
+
+    expect(exists(cwd, 'meu-proj/src/index.ts')).toBe(true);
+    expect(exists(cwd, 'meu-proj/stacks/network/api-gateway-stack.ts')).toBe(true);
+  });
+
+  test('--template blank NÃO cria scaffold de stack nem test/', () => {
+    cwd = makeEmptyDir();
+    runCli(['init', 'meu-proj', '--template', 'blank'], { cwd });
 
     // projeto vazio: stacks/ não existe (ou está sem .ts) e não há test/
     expect(exists(cwd, 'meu-proj/test')).toBe(false);

@@ -28,7 +28,7 @@ export default class Init extends Command {
     template: Flags.string({
       char: 't',
       description: `Template de stack a usar (blank, hello, rds, webapp, network, serverless, fullstack)`,
-      default: 'blank',
+      default: 'hello',
     }),
     list: Flags.boolean({ description: 'Lista os templates disponíveis', default: false }),
     diagram: Flags.string({
@@ -286,8 +286,17 @@ export default class Init extends Command {
 
     this.log('\nPróximos passos:');
     if (args.name) this.log(`  cd ${args.name}`);
-    if (flags.diagram) this.log('  iacmp synth');
-    else if (isBlank) this.log('  iacmp ai "descreva a infraestrutura que você quer"');
-    else this.log('  iacmp synth');
+    if (isBlank && !flags.diagram) {
+      this.log('  # projeto vazio — escreva sua primeira stack em stacks/ (exemplos: iacmp registry list)');
+      this.log('  # ou gere com o Claude Code: iacmp setup && abra o Claude no projeto');
+    }
+    this.log('  iacmp synth                # gera os templates + validações');
+    this.log('  iacmp deploy --dry-run     # mostra o plano sem executar nada');
+    this.log('  iacmp deploy               # deploy real (CLI da nuvem: iacmp doctor)');
+    this.log('');
+    this.log('Gerar stacks com o Claude Code (incluso):');
+    this.log('  iacmp setup                # registra as ferramentas MCP; depois abra o Claude Code aqui');
+    this.log('');
+    this.log('Docs: https://github.com/Claudio-Fontes/iacmp');
   }
 }

@@ -5,8 +5,20 @@ const { homedir, platform } = require('os');
 const { existsSync, readFileSync, appendFileSync, writeFileSync } = require('fs');
 const path = require('path');
 
+
+const WELCOME = `
+[iacmp] Instalado! Comece agora:
+
+  iacmp init meu-projeto      # cria um projeto de exemplo pronto para deploy
+  cd meu-projeto
+  iacmp synth                 # gera CloudFormation/Bicep/Terraform + validações
+  iacmp deploy --dry-run      # mostra o plano sem executar nada
+
+  Claude Code: iacmp setup    # registra as ferramentas MCP do iacmp
+  Docs: https://github.com/Claudio-Fontes/iacmp
+`;
 // Windows gerencia PATH via instalador — não mexer
-if (platform() === 'win32') process.exit(0);
+if (platform() === 'win32') { console.log(WELCOME); process.exit(0); }
 
 // Descobrir onde o npm instalou os binários globais
 let binDir;
@@ -17,6 +29,7 @@ try {
   }).trim();
   binDir = path.join(prefix, 'bin');
 } catch {
+  console.log(WELCOME);
   process.exit(0);
 }
 
@@ -36,7 +49,7 @@ const alreadyConfigured = candidates.some(cfg => {
   catch { return false; }
 });
 
-if (alreadyConfigured) process.exit(0);
+if (alreadyConfigured) { console.log(WELCOME); process.exit(0); }
 
 // Adicionar ao primeiro arquivo que existir; se nenhum existir, criar .zprofile
 const target = candidates.find(f => existsSync(f)) || path.join(home, '.zprofile');
@@ -48,7 +61,9 @@ try {
     appendFileSync(target, `\n${exportLine}\n`);
   }
   console.log(`\n[iacmp] Adicionado ${binDir} ao PATH em: ${target}`);
-  console.log(`[iacmp] Abra um novo terminal ou rode: source ${target}\n`);
+  console.log(`[iacmp] Abra um novo terminal ou rode: source ${target}`);
+  console.log(WELCOME);
 } catch {
-  console.log(`\n[iacmp] Adicione ao seu shell config:\n  ${exportLine}\n`);
+  console.log(`\n[iacmp] Adicione ao seu shell config:\n  ${exportLine}`);
+  console.log(WELCOME);
 }
