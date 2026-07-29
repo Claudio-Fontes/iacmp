@@ -2,6 +2,7 @@ import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { t } from '../../i18n';
 import { DeployContext, DeployExecutor, DestroyContext, NativeCommand, StackStatus } from '../types';
 import {
   getAzureStackOutputs,
@@ -52,10 +53,16 @@ export const azureExecutor: DeployExecutor = {
       }
 
       for (const fn of functions) {
-        process.stdout.write(`[iacmp] Empacotando ${fn.constructId} para Azure Functions...\n`);
+        process.stdout.write(t(
+          `[iacmp] Empacotando ${fn.constructId} para Azure Functions...\n`,
+          `[iacmp] Packaging ${fn.constructId} for Azure Functions...\n`,
+        ));
         const zipPath = buildFunctionBundle(ctx.cwd, fn, ctx.templatePath);
         if (!zipPath) {
-          process.stdout.write(`[iacmp] Handler não encontrado para ${fn.constructId} — zip ignorado.\n`);
+          process.stdout.write(t(
+            `[iacmp] Handler não encontrado para ${fn.constructId} — zip ignorado.\n`,
+            `[iacmp] Handler not found for ${fn.constructId} — zip skipped.\n`,
+          ));
           continue;
         }
         const outputKey = fn.constructId.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() + 'functionappname';
@@ -63,8 +70,14 @@ export const azureExecutor: DeployExecutor = {
         lazyCmd.preRun = () => {
           const outputs = getAzureStackOutputs(ctx.stackName, resourceGroup);
           const appName = outputs[outputKey] ?? outputs[Object.keys(outputs).find(k => k.toLowerCase() === outputKey) ?? ''];
-          if (!appName) throw new Error(`Nome da Function App "${fn.constructId}" não encontrado nos outputs da stack "${ctx.stackName}".`);
-          process.stdout.write(`[iacmp] Publicando zip na Function App ${appName}...\n`);
+          if (!appName) throw new Error(t(
+            `Nome da Function App "${fn.constructId}" não encontrado nos outputs da stack "${ctx.stackName}".`,
+            `Function App name for "${fn.constructId}" not found in the outputs of stack "${ctx.stackName}".`,
+          ));
+          process.stdout.write(t(
+            `[iacmp] Publicando zip na Function App ${appName}...\n`,
+            `[iacmp] Publishing zip to Function App ${appName}...\n`,
+          ));
           lazyCmd.args = [
             'functionapp', 'deployment', 'source', 'config-zip',
             '--name', appName,
@@ -128,11 +141,14 @@ export const azureExecutor: DeployExecutor = {
       // deploy em vez de falhar. Param cross-stack sem output correspondente
       // significa que a stack exportadora não foi deployada (ou falhou) antes.
       if (missing.length > 0) {
-        throw new Error(
+        throw new Error(t(
           `Stack "${ctx.stackName}" precisa de parâmetro(s) cross-stack sem valor: ${missing.join(', ')}. ` +
           `A stack que exporta esse(s) output(s) precisa ser deployada antes e com sucesso. ` +
           `Rode "iacmp deploy --provider azure" sem --stack para a ordem automática, ou verifique se a stack exportadora falhou.`,
-        );
+          `Stack "${ctx.stackName}" needs cross-stack parameter(s) without a value: ${missing.join(', ')}. ` +
+          `The stack exporting those output(s) must be deployed first and successfully. ` +
+          `Run "iacmp deploy --provider azure" without --stack for automatic ordering, or check whether the exporting stack failed.`,
+        ));
       }
       // Soft params (default ''): injetados quando disponíveis, sem erro se ausentes.
       // Usados pelo mecanismo de 2º passo para Event Grid subscriptions cross-stack —
@@ -241,12 +257,18 @@ export const azureExecutor: DeployExecutor = {
           const byLow = new Map(Object.entries(outputs).map(([k, v]) => [k.toLowerCase(), v]));
           const accountName = byLow.get(accKey.toLowerCase());
           if (!accountName) {
-            process.stdout.write(`[iacmp] Output "${accKey}" não encontrado — static website não ativado.\n`);
+            process.stdout.write(t(
+              `[iacmp] Output "${accKey}" não encontrado — static website não ativado.\n`,
+              `[iacmp] Output "${accKey}" not found — static website not enabled.\n`,
+            ));
             return;
           }
           const indexDoc = byLow.get(idxKey.toLowerCase()) ?? 'index.html';
           const errorDoc = byLow.get(errKey.toLowerCase()) ?? '404.html';
-          process.stdout.write(`[iacmp] Ativando static website em "${accountName}" (index: ${indexDoc}, 404: ${errorDoc})...\n`);
+          process.stdout.write(t(
+            `[iacmp] Ativando static website em "${accountName}" (index: ${indexDoc}, 404: ${errorDoc})...\n`,
+            `[iacmp] Enabling static website on "${accountName}" (index: ${indexDoc}, 404: ${errorDoc})...\n`,
+          ));
           // eslint-disable-next-line @typescript-eslint/no-var-requires
           const { execFileSync } = require('child_process') as typeof import('child_process');
           execFileSync('az', [
@@ -257,7 +279,10 @@ export const azureExecutor: DeployExecutor = {
             '--404-document', errorDoc,
             '--auth-mode', 'login',
           ], { stdio: 'inherit' });
-          process.stdout.write(`[iacmp] Static website ativado em "${accountName}".\n`);
+          process.stdout.write(t(
+            `[iacmp] Static website ativado em "${accountName}".\n`,
+            `[iacmp] Static website enabled on "${accountName}".\n`,
+          ));
           // O comando principal (az version) passa a ser no-op — todo o trabalho
           // foi feito no preRun via execFileSync.
         };
@@ -297,7 +322,10 @@ export const azureExecutor: DeployExecutor = {
           // O nome real do ACR pode ter sido um fallback persistido (ver ensureBootstrapAcr) —
           // nunca assume o determinístico sem checar o estado primeiro.
           const acrName = readBootstrapState().acrName ?? acrBootstrapName(getSubscriptionId());
-          process.stdout.write(`[iacmp] Removendo repositório ACR "${build.repository}" (imagem de "${build.constructId}")...\n`);
+          process.stdout.write(t(
+            `[iacmp] Removendo repositório ACR "${build.repository}" (imagem de "${build.constructId}")...\n`,
+            `[iacmp] Removing ACR repository "${build.repository}" (image of "${build.constructId}")...\n`,
+          ));
           try {
             execFileSync('az', [
               'acr', 'repository', 'delete',
@@ -305,9 +333,15 @@ export const azureExecutor: DeployExecutor = {
               '--repository', build.repository,
               '--yes',
             ], { stdio: 'pipe' });
-            process.stdout.write(`[iacmp] Repositório "${build.repository}" removido.\n`);
+            process.stdout.write(t(
+              `[iacmp] Repositório "${build.repository}" removido.\n`,
+              `[iacmp] Repository "${build.repository}" removed.\n`,
+            ));
           } catch {
-            process.stdout.write(`[iacmp] Repositório "${build.repository}" não encontrado no ACR (ok, nada a limpar).\n`);
+            process.stdout.write(t(
+              `[iacmp] Repositório "${build.repository}" não encontrado no ACR (ok, nada a limpar).\n`,
+              `[iacmp] Repository "${build.repository}" not found in ACR (ok, nothing to clean).\n`,
+            ));
           }
         };
         commands.push(lazyCmd);

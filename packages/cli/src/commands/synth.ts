@@ -1,6 +1,7 @@
 import { Command, Flags } from '@oclif/core';
 import * as fs from 'fs';
 import * as path from 'path';
+import { t } from '../i18n';
 import { loadIacmpConfig, resolveProvider, profileFromConfig } from '../utils';
 import { loadPlugins } from '@iacmp/plugin-sdk';
 import { synthRoot, providerOutDir, templateExt } from '../synth-out';
@@ -15,12 +16,12 @@ import { synthAwsTf } from '../synth/aws-tf';
 import { synthAzureTf } from '../synth/azure-tf';
 
 export default class Synth extends Command {
-  static description = 'Sintetiza as stacks para o formato nativo do provider';
+  static description = t('Sintetiza as stacks para o formato nativo do provider', 'Synthesizes the stacks into the provider\'s native format');
 
   static flags = {
-    provider: Flags.string({ char: 'p', description: 'Provider alvo (aws, azure, gcp) — default: o provider do iacmp.json' }),
-    stack: Flags.string({ char: 's', description: 'Nome da stack específica' }),
-    format: Flags.string({ options: ['tf'], description: 'Formato de saída alternativo: tf = Terraform (tf.json). Para AWS redireciona para o pipeline terraform existente; para Azure gera provider azurerm; para GCP é noop (já é tf.json nativamente).' }),
+    provider: Flags.string({ char: 'p', description: t('Provider alvo (aws, azure, gcp) — default: o provider do iacmp.json', 'Target provider (aws, azure, gcp) — default: the provider from iacmp.json') }),
+    stack: Flags.string({ char: 's', description: t('Nome da stack específica', 'Name of a specific stack') }),
+    format: Flags.string({ options: ['tf'], description: t('Formato de saída alternativo: tf = Terraform (tf.json). Para AWS redireciona para o pipeline terraform existente; para Azure gera provider azurerm; para GCP é noop (já é tf.json nativamente).', 'Alternative output format: tf = Terraform (tf.json). For AWS, redirects to the existing terraform pipeline; for Azure, generates the azurerm provider; for GCP it is a noop (already tf.json natively).') }),
   };
 
   static examples = [
@@ -38,7 +39,7 @@ export default class Synth extends Command {
     const config = loadIacmpConfig(cwd);
 
     if (!config) {
-      this.error('Projeto não inicializado. Rode: iacmp init');
+      this.error(t('Projeto não inicializado. Rode: iacmp init', 'Project not initialized. Run: iacmp init'));
     }
 
     const provider = resolveProvider(config, flags.provider);
@@ -46,7 +47,7 @@ export default class Synth extends Command {
     const stacksDir = path.join(cwd, 'stacks');
 
     if (!fs.existsSync(stacksDir)) {
-      this.error('Diretório stacks/ não encontrado.');
+      this.error(t('Diretório stacks/ não encontrado.', 'stacks/ directory not found.'));
     }
 
     const nativeProviders = ['aws', 'azure', 'gcp']; // 'terraform' desabilitado — use --provider aws --format tf
@@ -54,7 +55,7 @@ export default class Synth extends Command {
     const pluginProvider = pluginProviders.find(p => p.name === provider);
 
     if (!nativeProviders.includes(provider) && !pluginProvider) {
-      this.error(`Provider '${provider}' não encontrado. Providers disponíveis: ${nativeProviders.join(', ')}`);
+      this.error(t(`Provider '${provider}' não encontrado. Providers disponíveis: ${nativeProviders.join(', ')}`, `Provider '${provider}' not found. Available providers: ${nativeProviders.join(', ')}`));
     }
 
     const ui: SynthUI = {
@@ -68,7 +69,7 @@ export default class Synth extends Command {
 
     const targetStacks = loadedStacks.filter(s => !flags.stack || s.stackName === flags.stack);
     if (targetStacks.length === 0) {
-      this.error('Nenhuma stack encontrada em stacks/');
+      this.error(t('Nenhuma stack encontrada em stacks/', 'No stack found in stacks/'));
     }
 
     const outDir = synthRoot(cwd);
@@ -84,7 +85,7 @@ export default class Synth extends Command {
     // GCP → noop (já é tf.json nativamente)
     if (flags.format === 'tf') {
       if (provider === 'gcp') {
-        this.warn('--format tf ignorado: GCP já usa Terraform nativamente.');
+        this.warn(t('--format tf ignorado: GCP já usa Terraform nativamente.', '--format tf ignored: GCP already uses Terraform natively.'));
       } else if (provider === 'aws') {
         synthAwsTf({ cwd, targetStacks, allStacks, profile, ui });
         return;
@@ -123,9 +124,9 @@ export default class Synth extends Command {
               const output = pluginProvider.synthesize(stack);
               const outPath = path.join(provOutDir, `${stackName}.json`);
               fs.writeFileSync(outPath, JSON.stringify(output, null, 2) + '\n');
-              this.log(`Sintetizado via plugin '${provider}': ${outPath}`);
+              this.log(t(`Sintetizado via plugin '${provider}': ${outPath}`, `Synthesized via plugin '${provider}': ${outPath}`));
             } catch (err) {
-              this.error(`Falha ao sintetizar '${stackName}': ${(err as Error).message}`);
+              this.error(t(`Falha ao sintetizar '${stackName}': ${(err as Error).message}`, `Failed to synthesize '${stackName}': ${(err as Error).message}`));
             }
           }
         }

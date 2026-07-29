@@ -1,4 +1,5 @@
 import { execFileSync } from 'child_process';
+import { t } from '../../i18n';
 
 /**
  * Pré-flight do deploy GCP: projeto resolvido, APIs habilitadas e roles da
@@ -14,9 +15,10 @@ export function resolveProjectId(configuredProjectId?: string): string {
   } catch {
     /* cai no erro abaixo */
   }
-  throw new Error(
-    'Nenhum projectId configurado. Defina "projectId" no iacmp.json ou rode: gcloud config set project <id>'
-  );
+  throw new Error(t(
+    'Nenhum projectId configurado. Defina "projectId" no iacmp.json ou rode: gcloud config set project <id>',
+    'No projectId configured. Set "projectId" in iacmp.json or run: gcloud config set project <id>',
+  ));
 }
 
 /**
@@ -95,14 +97,16 @@ export function ensureRequiredApis(projectId: string): void {
   const missing = REQUIRED_GCP_APIS.filter((a) => !enabled.has(a));
   if (missing.length === 0) return;
 
-  process.stdout.write(`[iacmp] Habilitando ${missing.length} API(s) GCP necessária(s): ${missing.join(', ')}\n`);
+  process.stdout.write(t(`[iacmp] Habilitando ${missing.length} API(s) GCP necessária(s): ${missing.join(', ')}\n`, `[iacmp] Enabling ${missing.length} required GCP API(s): ${missing.join(', ')}\n`));
   try {
     execFileSync('gcloud', ['services', 'enable', ...missing, `--project=${projectId}`], { stdio: 'pipe' });
   } catch {
-    process.stdout.write(
+    process.stdout.write(t(
       `[iacmp] Falha ao habilitar algumas APIs (permissão?). Rode manualmente:\n` +
         `        gcloud services enable ${missing.join(' ')} --project=${projectId}\n`,
-    );
+      `[iacmp] Failed to enable some APIs (permissions?). Run manually:\n` +
+        `        gcloud services enable ${missing.join(' ')} --project=${projectId}\n`,
+    ));
   }
 }
 
@@ -133,7 +137,7 @@ function resolveProjectNumber(projectId: string): string | null {
 export function ensureComputeServiceAccountRoles(projectId: string): void {
   const projectNumber = resolveProjectNumber(projectId);
   if (!projectNumber) {
-    process.stdout.write('[iacmp] Não consegui resolver o número do projeto GCP — pulei a checagem de roles da compute SA.\n');
+    process.stdout.write(t('[iacmp] Não consegui resolver o número do projeto GCP — pulei a checagem de roles da compute SA.\n', '[iacmp] Could not resolve the GCP project number — skipped the compute SA role check.\n'));
     return;
   }
   const member = `serviceAccount:${computeServiceAccount(projectNumber)}`;
@@ -158,7 +162,7 @@ export function ensureComputeServiceAccountRoles(projectId: string): void {
   const missing = REQUIRED_COMPUTE_SA_ROLES.filter((r) => !current.has(r));
   if (missing.length === 0) return;
 
-  process.stdout.write(`[iacmp] Compute SA sem ${missing.length} role(s) necessária(s) — concedendo: ${missing.join(', ')}\n`);
+  process.stdout.write(t(`[iacmp] Compute SA sem ${missing.length} role(s) necessária(s) — concedendo: ${missing.join(', ')}\n`, `[iacmp] Compute SA missing ${missing.length} required role(s) — granting: ${missing.join(', ')}\n`));
   for (const role of missing) {
     try {
       execFileSync(
@@ -167,10 +171,12 @@ export function ensureComputeServiceAccountRoles(projectId: string): void {
         { stdio: 'pipe' },
       );
     } catch {
-      process.stdout.write(
+      process.stdout.write(t(
         `[iacmp] Falha ao conceder ${role} (permissão de IAM insuficiente?). Rode manualmente:\n` +
           `        gcloud projects add-iam-policy-binding ${projectId} --member=${member} --role=${role} --condition=None\n`,
-      );
+        `[iacmp] Failed to grant ${role} (insufficient IAM permission?). Run manually:\n` +
+          `        gcloud projects add-iam-policy-binding ${projectId} --member=${member} --role=${role} --condition=None\n`,
+      ));
     }
   }
 }

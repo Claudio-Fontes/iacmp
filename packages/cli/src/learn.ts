@@ -16,6 +16,7 @@ import * as path from 'path';
 import chalk from 'chalk';
 import { loadKnowledge, type Provenance } from './pro';
 import { IacmpConfig } from './utils';
+import { t } from './i18n';
 
 const CANDIDATE_SCHEMA_VERSION = 1;
 
@@ -79,7 +80,7 @@ export function buildCandidate(cwd: string, provider: string): Candidate | null 
 // handlers) antes de enviar à central.
 export function generalize(c: Candidate, level: 'none' | 'share'): Candidate {
   if (level === 'none') return c;
-  throw new Error('generalização para compartilhamento (Modo 2) ainda não implementada');
+  throw new Error(t('generalização para compartilhamento (Modo 2) ainda não implementada', 'generalization for sharing (Mode 2) not implemented yet'));
 }
 
 export interface LearnDeps {
@@ -104,7 +105,7 @@ export async function maybeLearn(
   // pode quebrar por causa disso.
   const kb = loadKnowledge();
   if (!kb) {
-    deps.log(chalk.dim('  autolearn ativado no iacmp.json, mas o módulo Pro (@iacmp/knowledge) não está instalado — pulando.'));
+    deps.log(chalk.dim(t('  autolearn ativado no iacmp.json, mas o módulo Pro (@iacmp/knowledge) não está instalado — pulando.', '  autolearn enabled in iacmp.json, but the Pro module (@iacmp/knowledge) is not installed — skipping.')));
     return;
   }
 
@@ -122,18 +123,21 @@ export async function maybeLearn(
 
   // Preview: o cliente vê EXATAMENTE o que entraria na base dele.
   deps.log('');
-  deps.log(chalk.bold('Aprendizado local — padrão inédito neste deploy:'));
-  deps.log(`  título:     ${c.title}`);
+  deps.log(chalk.bold(t('Aprendizado local — padrão inédito neste deploy:', 'Local learning — pattern never seen before in this deploy:')));
+  deps.log(t(`  título:     ${c.title}`, `  title:      ${c.title}`));
   deps.log(`  constructs: ${c.constructs.join(', ')}`);
-  deps.log(`  arquivos:   ${Object.keys(c.stacks).length} stack(s), ${Object.keys(c.handlers).length} handler(s)`);
-  deps.log(chalk.dim('  (fica só na SUA base local — nada é enviado)'));
+  deps.log(t(
+    `  arquivos:   ${Object.keys(c.stacks).length} stack(s), ${Object.keys(c.handlers).length} handler(s)`,
+    `  files:      ${Object.keys(c.stacks).length} stack(s), ${Object.keys(c.handlers).length} handler(s)`,
+  ));
+  deps.log(chalk.dim(t('  (fica só na SUA base local — nada é enviado)', '  (stays only in YOUR local knowledge base — nothing is sent)')));
 
   if (!deps.isTTY) {
-    deps.log(chalk.dim('  stdin não interativo — pulei; rode num terminal para confirmar.'));
+    deps.log(chalk.dim(t('  stdin não interativo — pulei; rode num terminal para confirmar.', '  non-interactive stdin — skipped; run in a terminal to confirm.')));
     return;
   }
-  const ok = await deps.confirm('Adicionar este padrão à sua base LOCAL de conhecimento?');
-  if (!ok) { deps.log(chalk.dim('  ok, não adicionado.')); return; }
+  const ok = await deps.confirm(t('Adicionar este padrão à sua base LOCAL de conhecimento?', 'Add this pattern to your LOCAL knowledge base?'));
+  if (!ok) { deps.log(chalk.dim(t('  ok, não adicionado.', '  ok, not added.'))); return; }
 
   const fp = kb.fingerprintOf(provider, c.constructs);
   const provenance: Provenance = {
@@ -154,8 +158,8 @@ export async function maybeLearn(
       notes: [],
       validated: true,
     }, provenance);
-    deps.log(chalk.green('  ✓ aprendido — sua base local reforça esse padrão nas próximas gerações.'));
+    deps.log(chalk.green(t('  ✓ aprendido — sua base local reforça esse padrão nas próximas gerações.', '  ✓ learned — your local knowledge base reinforces this pattern in future generations.')));
   } catch (err) {
-    deps.log(chalk.dim(`  não consegui gravar (${(err as Error).message}) — seguindo.`));
+    deps.log(chalk.dim(t(`  não consegui gravar (${(err as Error).message}) — seguindo.`, `  could not save (${(err as Error).message}) — moving on.`)));
   }
 }

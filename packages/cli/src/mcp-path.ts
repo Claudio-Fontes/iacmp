@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import path from 'path';
+import { t } from './i18n';
 
 export function resolveMcpServer(): string {
   // O servidor MCP é bundlado em dist/mcp-server.js junto com a CLI — mas SÓ
@@ -17,8 +18,10 @@ export function resolveMcpServer(): string {
   }
   // Fallback para execução fora do bundle (dev local com ts-node)
   try { return require.resolve('@iacmp/mcp/dist/server.js'); } catch { /* ausente */ }
-  throw new Error(
+  throw new Error(t(
     'O servidor MCP (busca de exemplos validados) faz parte do iacmp Pro — este build não o inclui.\n' +
     'O restante do CLI (init/synth/deploy/destroy/diff/diagram) funciona normalmente sem ele.',
-  );
+    'The MCP server (validated-example search) is part of iacmp Pro — this build does not include it.\n' +
+    'The rest of the CLI (init/synth/deploy/destroy/diff/diagram) works fully without it.',
+  ));
 }

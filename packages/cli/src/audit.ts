@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { Stack, tsCompilerOptions } from '@iacmp/core';
 import { errMessage, loadIacmpConfig, resolveProvider } from './utils';
+import { t } from './i18n';
 
 export interface AuditConfig {
   name: string;
@@ -10,7 +11,7 @@ export interface AuditConfig {
 
 export function readConfig(cwd: string): AuditConfig {
   const config = loadIacmpConfig(cwd);
-  if (!config) throw new Error('iacmp.json não encontrado. Rode: iacmp init');
+  if (!config) throw new Error(t('iacmp.json não encontrado. Rode: iacmp init', 'iacmp.json not found. Run: iacmp init'));
   return {
     name: config.name ?? path.basename(cwd),
     provider: resolveProvider(config),
@@ -45,10 +46,10 @@ function findStackFiles(dir: string): string[] {
 
 export function loadStacks(cwd: string): Array<{ name: string; stack: Stack }> {
   const stacksDir = path.join(cwd, 'stacks');
-  if (!fs.existsSync(stacksDir)) throw new Error('Diretório stacks/ não encontrado.');
+  if (!fs.existsSync(stacksDir)) throw new Error(t('Diretório stacks/ não encontrado.', 'stacks/ directory not found.'));
 
   const stackFiles = findStackFiles(stacksDir);
-  if (stackFiles.length === 0) throw new Error('Nenhuma stack encontrada em stacks/');
+  if (stackFiles.length === 0) throw new Error(t('Nenhuma stack encontrada em stacks/', 'No stacks found in stacks/'));
 
   const tsxPath = resolveTsx(cwd);
   if (tsxPath) {
@@ -64,12 +65,12 @@ export function loadStacks(cwd: string): Array<{ name: string; stack: Stack }> {
       const mod = require(stackPath) as Record<string, unknown>;
       const raw = mod.default ?? mod.stack ?? mod;
       if (!raw || typeof raw !== 'object' || !('constructs' in raw)) {
-        console.warn(`[audit] ${path.basename(stackPath)} não exporta uma Stack válida — ignorado.`);
+        console.warn(t(`[audit] ${path.basename(stackPath)} não exporta uma Stack válida — ignorado.`, `[audit] ${path.basename(stackPath)} does not export a valid Stack — skipped.`));
         continue;
       }
       result.push({ name: stackName, stack: raw as Stack });
     } catch (err) {
-      console.warn(`[audit] falha ao carregar ${path.basename(stackPath)}: ${errMessage(err)}`);
+      console.warn(t(`[audit] falha ao carregar ${path.basename(stackPath)}: ${errMessage(err)}`, `[audit] failed to load ${path.basename(stackPath)}: ${errMessage(err)}`));
     }
   }
   return result;

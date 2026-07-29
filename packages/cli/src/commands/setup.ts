@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { homedir, platform } from 'os';
 import chalk from 'chalk';
+import { t } from '../i18n';
 import { resolveMcpServer } from '../mcp-path';
 
 interface Target {
@@ -34,14 +35,16 @@ function claudeTargets(): Target[] {
 }
 
 export default class Setup extends Command {
-  static description =
+  static description = t(
     'Integra o iacmp com o Claude: registra o servidor MCP (write_stack, synth_project, ' +
-    'deploy_project…) no Claude Code e no Claude Desktop. Idempotente.';
+    'deploy_project…) no Claude Code e no Claude Desktop. Idempotente.',
+    'Integrates iacmp with Claude: registers the MCP server (write_stack, synth_project, ' +
+    'deploy_project…) in Claude Code and Claude Desktop. Idempotent.');
 
   static examples = ['$ iacmp setup', '$ iacmp setup --dry-run'];
 
   static flags = {
-    'dry-run': Flags.boolean({ description: 'Mostra o que seria escrito, sem alterar nada', default: false }),
+    'dry-run': Flags.boolean({ description: t('Mostra o que seria escrito, sem alterar nada', 'Shows what would be written, without changing anything'), default: false }),
   };
 
   async run(): Promise<void> {
@@ -58,19 +61,19 @@ export default class Setup extends Command {
     // PATH do shell, então depender de um binário no PATH seria frágil.
     const entry = { command: process.execPath, args: [serverPath, 'stdio'] };
 
-    this.log(chalk.bold('iacmp setup — integração com o Claude'));
-    this.log(chalk.dim(`servidor MCP: ${serverPath}`));
+    this.log(chalk.bold(t('iacmp setup — integração com o Claude', 'iacmp setup — Claude integration')));
+    this.log(chalk.dim(t(`servidor MCP: ${serverPath}`, `MCP server: ${serverPath}`)));
     this.log('');
 
     let touched = false;
-    for (const t of claudeTargets()) {
-      const exists = fs.existsSync(t.file);
-      if (!exists && !t.createIfMissing) {
-        this.log(`${chalk.yellow('•')} ${t.label}: não encontrado — pulado`);
+    for (const target of claudeTargets()) {
+      const exists = fs.existsSync(target.file);
+      if (!exists && !target.createIfMissing) {
+        this.log(t(`${chalk.yellow('•')} ${target.label}: não encontrado — pulado`, `${chalk.yellow('•')} ${target.label}: not found — skipped`));
         continue;
       }
       if (flags['dry-run']) {
-        this.log(`${chalk.cyan('•')} ${t.label}: registraria mcpServers.iacmp em ${t.file}`);
+        this.log(t(`${chalk.cyan('•')} ${target.label}: registraria mcpServers.iacmp em ${target.file}`, `${chalk.cyan('•')} ${target.label}: would register mcpServers.iacmp in ${target.file}`));
         touched = true;
         continue;
       }
@@ -78,28 +81,28 @@ export default class Setup extends Command {
       let config: Record<string, unknown> = {};
       if (exists) {
         try {
-          config = JSON.parse(fs.readFileSync(t.file, 'utf8')) as Record<string, unknown>;
+          config = JSON.parse(fs.readFileSync(target.file, 'utf8')) as Record<string, unknown>;
         } catch {
-          this.log(`${chalk.red('•')} ${t.label}: ${t.file} não é JSON válido — pulado (ajuste manual)`);
+          this.log(t(`${chalk.red('•')} ${target.label}: ${target.file} não é JSON válido — pulado (ajuste manual)`, `${chalk.red('•')} ${target.label}: ${target.file} is not valid JSON — skipped (fix manually)`));
           continue;
         }
       } else {
-        fs.mkdirSync(path.dirname(t.file), { recursive: true });
+        fs.mkdirSync(path.dirname(target.file), { recursive: true });
       }
 
       const servers = (config.mcpServers ?? (config.mcpServers = {})) as Record<string, unknown>;
       const had = servers.iacmp !== undefined;
       servers.iacmp = entry;
-      fs.writeFileSync(t.file, JSON.stringify(config, null, 2) + '\n');
-      this.log(`${chalk.green('✓')} ${t.label}: ${had ? 'atualizado' : 'registrado'} (${t.file})`);
+      fs.writeFileSync(target.file, JSON.stringify(config, null, 2) + '\n');
+      this.log(t(`${chalk.green('✓')} ${target.label}: ${had ? 'atualizado' : 'registrado'} (${target.file})`, `${chalk.green('✓')} ${target.label}: ${had ? 'updated' : 'registered'} (${target.file})`));
       touched = true;
     }
 
     this.log('');
     if (!touched) {
-      this.log(chalk.yellow('Nenhum config do Claude encontrado. Instale o Claude Code ou o Claude Desktop e rode `iacmp setup` de novo.'));
+      this.log(chalk.yellow(t('Nenhum config do Claude encontrado. Instale o Claude Code ou o Claude Desktop e rode `iacmp setup` de novo.', 'No Claude config found. Install Claude Code or Claude Desktop and run `iacmp setup` again.')));
     } else if (!flags['dry-run']) {
-      this.log(chalk.bold('Pronto.') + ' Reinicie o Claude para carregar os tools do iacmp.');
+      this.log(chalk.bold(t('Pronto.', 'Done.')) + t(' Reinicie o Claude para carregar os tools do iacmp.', ' Restart Claude to load the iacmp tools.'));
     }
   }
 }

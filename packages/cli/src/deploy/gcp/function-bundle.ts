@@ -5,6 +5,7 @@ import * as path from 'path';
 import { DeployContext, NativeCommand } from '../types';
 import { toTfId } from '@iacmp/provider-gcp';
 import type { GCPFunctionMeta } from '@iacmp/provider-gcp';
+import { t } from '../../i18n';
 import { renderGcpFunctionWrapper, renderGcpEventWrapper } from './wrappers';
 
 /** Bucket de artefatos onde o Terraform (build_config.source.storage_source) espera achar o zip de cada Fn.Lambda. */
@@ -85,7 +86,7 @@ function buildFunctionBundle(cwd: string, fn: GCPFunctionMeta, outDir: string): 
   try {
     esbuild = require('esbuild') as typeof esbuild;
   } catch {
-    throw new Error('esbuild não encontrado. Rode `npm install` no iacmp.');
+    throw new Error(t('esbuild não encontrado. Rode `npm install` no iacmp.', 'esbuild not found. Run `npm install` in iacmp.'));
   }
 
   // @iacmp/runtime é dependência real do cli (ver package.json), então
@@ -232,10 +233,10 @@ export function buildAndUploadFunctions(ctx: DeployContext, projectId: string, r
   const cmds: NativeCommand[] = [];
   const built: GCPFunctionMeta[] = [];
   for (const fn of functions) {
-    process.stdout.write(`[iacmp] Empacotando ${fn.constructId} para Cloud Functions...\n`);
+    process.stdout.write(t(`[iacmp] Empacotando ${fn.constructId} para Cloud Functions...\n`, `[iacmp] Packaging ${fn.constructId} for Cloud Functions...\n`));
     const zipPath = buildFunctionBundle(ctx.cwd, fn, dir);
     if (!zipPath) {
-      process.stdout.write(`[iacmp] Handler não encontrado para ${fn.constructId} — zip ignorado (a Cloud Function falhará no apply sem o storage_source).\n`);
+      process.stdout.write(t(`[iacmp] Handler não encontrado para ${fn.constructId} — zip ignorado (a Cloud Function falhará no apply sem o storage_source).\n`, `[iacmp] Handler not found for ${fn.constructId} — zip skipped (the Cloud Function will fail on apply without the storage_source).\n`));
       continue;
     }
     built.push(fn); // fn.zipObject já foi versionado por hash dentro de buildFunctionBundle

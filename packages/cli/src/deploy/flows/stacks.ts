@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import chalk from 'chalk';
+import { t } from '../../i18n';
 import { errMessage } from '../../utils';
 import { countResources, awsTemplateRegionMarker } from '../../synth-out';
 import { getAzureStackOutputs } from '../azure';
@@ -24,27 +25,36 @@ export async function deployStackLoop(o: DeployFlowOptions): Promise<void> {
   // template (if empty(sharedCaeId)) e causaria DeploymentStackDeleteResourcesFailed.
   const azureOutputAccumulator: Record<string, string> = {};
   if (o.provider === 'azure' && o.config.resourceGroup && !o.dryRun) {
-    for (const t of o.allTemplates) {
-      if (o.stackFlag && t.stackName === o.stackFlag) continue;
-      const existing = getAzureStackOutputs(o.physicalStackName(t.stackName), o.config.resourceGroup);
+    for (const tpl of o.allTemplates) {
+      if (o.stackFlag && tpl.stackName === o.stackFlag) continue;
+      const existing = getAzureStackOutputs(o.physicalStackName(tpl.stackName), o.config.resourceGroup);
       Object.assign(azureOutputAccumulator, existing);
     }
   }
 
-  for (const t of o.templates) {
-    const resourceCount = countResources(t.filePath, o.provider);
+  for (const tpl of o.templates) {
+    const resourceCount = countResources(tpl.filePath, o.provider);
 
     // Stack AWS marcada com region: 'dr' deploya na drRegion do iacmp.json
     // (ex: bucket de DR do CloudFront Origin Group em outra região).
     let stackRegion = o.region;
-    if (o.provider === 'aws' && awsTemplateRegionMarker(t.filePath) === 'dr') {
+    if (o.provider === 'aws' && awsTemplateRegionMarker(tpl.filePath) === 'dr') {
       if (!o.config.drRegion) {
-        o.ui.error(`Stack "${t.stackName}" está marcada para a região de DR, mas o iacmp.json não tem "drRegion". Configure (ex: "drRegion": "us-west-2").`);
+        o.ui.error(t(
+          `Stack "${tpl.stackName}" está marcada para a região de DR, mas o iacmp.json não tem "drRegion". Configure (ex: "drRegion": "us-west-2").`,
+          `Stack "${tpl.stackName}" is marked for the DR region, but iacmp.json has no "drRegion". Set it (e.g. "drRegion": "us-west-2").`,
+        ));
       }
       stackRegion = o.config.drRegion;
-      o.ui.log(`Stack: ${t.stackName} — ${resourceCount} recurso(s) [DR: ${stackRegion}]`);
+      o.ui.log(t(
+        `Stack: ${tpl.stackName} — ${resourceCount} recurso(s) [DR: ${stackRegion}]`,
+        `Stack: ${tpl.stackName} — ${resourceCount} resource(s) [DR: ${stackRegion}]`,
+      ));
     } else {
-      o.ui.log(`Stack: ${t.stackName} — ${resourceCount} recurso(s)`);
+      o.ui.log(t(
+        `Stack: ${tpl.stackName} — ${resourceCount} recurso(s)`,
+        `Stack: ${tpl.stackName} — ${resourceCount} resource(s)`,
+      ));
     }
 
     // Recursos com DeletionPolicy Retain/Snapshot (bancos de dados, etc.)
@@ -55,31 +65,41 @@ export async function deployStackLoop(o: DeployFlowOptions): Promise<void> {
     // conflito depois de tentar criar o changeset, com um erro confuso
     // (ResourceExistenceCheck).
     if (o.provider === 'aws' && !o.dryRun) {
-      const conflicts = findExistingRetainedResources(t.filePath, stackRegion, o.physicalStackName(t.stackName));
+      const conflicts = findExistingRetainedResources(tpl.filePath, stackRegion, o.physicalStackName(tpl.stackName));
       if (conflicts.length > 0) {
         const list = conflicts.map((c) => `${c.typeName} "${c.identifier}"`).join(', ');
-        o.ui.log(chalk.red(
-          `\n⚠ ATENÇÃO: a stack "${t.stackName}" criaria recurso(s) que JÁ EXISTEM na conta AWS: ${list} — provavelmente retidos de uma stack anterior destruída.`
-        ));
+        o.ui.log(chalk.red(t(
+          `\n⚠ ATENÇÃO: a stack "${tpl.stackName}" criaria recurso(s) que JÁ EXISTEM na conta AWS: ${list} — provavelmente retidos de uma stack anterior destruída.`,
+          `\n⚠ WARNING: stack "${tpl.stackName}" would create resource(s) that ALREADY EXIST in the AWS account: ${list} — likely retained from a previously destroyed stack.`,
+        )));
         // Sob stdin não-interativo o readline nunca resolve — o processo saía
         // com exit 0 SEM deployar nada, parecendo sucesso (abort silencioso que
         // mordeu a bateria 3×). Não-TTY: exige --yes explícito ou falha ALTO.
         let proceed: boolean;
         if (o.yes) {
-          o.ui.log(chalk.yellow('--yes: apagando recurso(s) órfão(s) e continuando.'));
+          o.ui.log(chalk.yellow(t(
+            '--yes: apagando recurso(s) órfão(s) e continuando.',
+            '--yes: deleting orphaned resource(s) and continuing.',
+          )));
           proceed = true;
         } else if (!process.stdin.isTTY) {
-          o.ui.error(
+          o.ui.error(t(
             `Recurso(s) órfão(s) detectado(s) e stdin não é interativo — não há como confirmar. ` +
             `Rode com --yes para apagar e continuar, ou apague/importe manualmente: ${list}`,
-          );
+            `Orphaned resource(s) detected and stdin is not interactive — there is no way to confirm. ` +
+            `Run with --yes to delete and continue, or delete/import manually: ${list}`,
+          ));
         } else {
-          proceed = await confirm(
-            `Apagar o(s) recurso(s) existente(s) e continuar o deploy de "${t.stackName}"? Isso é IRREVERSÍVEL e PERDE os dados atuais`
-          );
+          proceed = await confirm(t(
+            `Apagar o(s) recurso(s) existente(s) e continuar o deploy de "${tpl.stackName}"? Isso é IRREVERSÍVEL e PERDE os dados atuais`,
+            `Delete the existing resource(s) and continue the deploy of "${tpl.stackName}"? This is IRREVERSIBLE and LOSES the current data`,
+          ));
         }
         if (!proceed) {
-          o.ui.log(chalk.yellow(`Pulando "${t.stackName}" — apague ou importe o(s) recurso(s) manualmente e rode o deploy de novo.\n`));
+          o.ui.log(chalk.yellow(t(
+            `Pulando "${tpl.stackName}" — apague ou importe o(s) recurso(s) manualmente e rode o deploy de novo.\n`,
+            `Skipping "${tpl.stackName}" — delete or import the resource(s) manually and run the deploy again.\n`,
+          )));
           continue;
         }
         for (const c of conflicts) {
@@ -91,8 +111,8 @@ export async function deployStackLoop(o: DeployFlowOptions): Promise<void> {
     const ctx: DeployContext = {
       ...o.baseCtx,
       region: stackRegion,
-      stackName: o.physicalStackName(t.stackName),
-      templatePath: t.filePath,
+      stackName: o.physicalStackName(tpl.stackName),
+      templatePath: tpl.filePath,
       ...(o.provider === 'azure' && Object.keys(azureOutputAccumulator).length > 0
         ? { outputParams: { ...azureOutputAccumulator } }
         : {}),
@@ -115,7 +135,7 @@ export async function deployStackLoop(o: DeployFlowOptions): Promise<void> {
       }
       // Azure: coleta outputs desta stack para injetar como params na próxima
       if (o.provider === 'azure' && o.config.resourceGroup) {
-        const stackOutputs = getAzureStackOutputs(o.physicalStackName(t.stackName), o.config.resourceGroup);
+        const stackOutputs = getAzureStackOutputs(o.physicalStackName(tpl.stackName), o.config.resourceGroup);
         Object.assign(azureOutputAccumulator, stackOutputs);
       }
     }
@@ -136,9 +156,9 @@ async function azureSecondPass(o: DeployFlowOptions, azureOutputAccumulator: Rec
   const outputsByLower = new Map(
     Object.entries(azureOutputAccumulator).map(([k, v]) => [k.toLowerCase(), v]),
   );
-  for (const t of o.templates) {
+  for (const tpl of o.templates) {
     let content: string;
-    try { content = fs.readFileSync(t.filePath, 'utf-8'); } catch { continue; }
+    try { content = fs.readFileSync(tpl.filePath, 'utf-8'); } catch { continue; }
     // Encontra params com default '' que agora têm valor nos outputs acumulados.
     // sharedCaeId é excluído: resolvido pela ordem do 1º passo (não pelo 2º).
     // Reinjetar sharedCaeId na stack que criou o CAE causaria deleção do recurso.
@@ -153,11 +173,14 @@ async function azureSecondPass(o: DeployFlowOptions, azureOutputAccumulator: Rec
       if (value) satisfiedOptionals.push(paramName);
     }
     if (satisfiedOptionals.length === 0) continue;
-    o.ui.log(`Stack: ${t.stackName} — 2º passo (params agora disponíveis: ${satisfiedOptionals.join(', ')})`);
+    o.ui.log(t(
+      `Stack: ${tpl.stackName} — 2º passo (params agora disponíveis: ${satisfiedOptionals.join(', ')})`,
+      `Stack: ${tpl.stackName} — 2nd pass (params now available: ${satisfiedOptionals.join(', ')})`,
+    ));
     const ctx2: DeployContext = {
       ...o.baseCtx,
-      stackName: o.physicalStackName(t.stackName),
-      templatePath: t.filePath,
+      stackName: o.physicalStackName(tpl.stackName),
+      templatePath: tpl.filePath,
       outputParams: { ...azureOutputAccumulator },
     };
     let commands2;
@@ -172,7 +195,7 @@ async function azureSecondPass(o: DeployFlowOptions, azureOutputAccumulator: Rec
       o.ui.error(errMessage(err));
     }
     if (o.config.resourceGroup) {
-      const stackOutputs = getAzureStackOutputs(o.physicalStackName(t.stackName), o.config.resourceGroup);
+      const stackOutputs = getAzureStackOutputs(o.physicalStackName(tpl.stackName), o.config.resourceGroup);
       Object.assign(azureOutputAccumulator, stackOutputs);
     }
     o.ui.log('');

@@ -1,6 +1,7 @@
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import { t } from '../../i18n';
 import { DeployContext } from '../types';
 import type { GCPContainerMeta } from '@iacmp/provider-gcp';
 
@@ -35,7 +36,7 @@ export function buildAndPushContainers(ctx: DeployContext, projectId: string, di
       args.push('--config', path.resolve(context, c.dockerfile));
     }
     args.push(context);
-    process.stdout.write(`[iacmp] Buildando imagem ${tag}...\n`);
+    process.stdout.write(t(`[iacmp] Buildando imagem ${tag}...\n`, `[iacmp] Building image ${tag}...\n`));
     execFileSync('gcloud', args, { stdio: 'inherit', cwd: ctx.cwd });
     imageByName.set(c.imageName, tag);
   }

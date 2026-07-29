@@ -5,6 +5,7 @@ import { Stack } from '@iacmp/core';
 import { LoadedStack } from '../validators';
 import { providerOutDir } from '../synth-out';
 import { SynthUI } from './types';
+import { t } from '../i18n';
 
 export function synthGcp(o: {
   cwd: string;
@@ -42,9 +43,9 @@ export function synthGcp(o: {
           JSON.stringify(metaContent, null, 2),
         );
       }
-      o.ui.log(`Sintetizado: ${outPath}`);
+      o.ui.log(t(`Sintetizado: ${outPath}`, `Synthesized: ${outPath}`));
     } catch (err) {
-      o.ui.error(`Falha ao sintetizar '${stackName}': ${(err as Error).message}`);
+      o.ui.error(t(`Falha ao sintetizar '${stackName}': ${(err as Error).message}`, `Failed to synthesize '${stackName}': ${(err as Error).message}`));
     }
   }
 
@@ -60,8 +61,8 @@ export function synthGcp(o: {
     const providersJson = p.synthesizeProviders(o.allStacks);
     const providersPath = path.join(provOutDir, '_providers.tf.json');
     fs.writeFileSync(providersPath, providersJson);
-    o.ui.log(`Sintetizado: ${providersPath}`);
+    o.ui.log(t(`Sintetizado: ${providersPath}`, `Synthesized: ${providersPath}`));
   } catch (err) {
-    o.ui.error(`Falha ao sintetizar blocos compartilhados do GCP (_providers.tf.json): ${(err as Error).message}`);
+    o.ui.error(t(`Falha ao sintetizar blocos compartilhados do GCP (_providers.tf.json): ${(err as Error).message}`, `Failed to synthesize GCP shared blocks (_providers.tf.json): ${(err as Error).message}`));
   }
 }

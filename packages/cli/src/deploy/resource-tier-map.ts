@@ -6,6 +6,8 @@
  * de chamar az CLI. Atualizar quando novos bloqueios forem descobertos.
  */
 
+import { t } from '../i18n';
+
 export type AccountTier = 'free' | 'standard';
 export type Provider = 'aws' | 'azure';
 export type Availability = 'available' | 'restricted' | 'unavailable';
@@ -307,11 +309,14 @@ export function tierWarnings(constructs: string[], provider: Provider, tier: Acc
     if (!entry || entry.availability === 'available') continue;
     const info = RESOURCE_TIER_MAP.find(r => r.construct === c);
     const label = info?.name ?? c;
-    const sev = entry.availability === 'unavailable' ? 'INDISPONÍVEL' : 'restrito';
+    const sev = entry.availability === 'unavailable' ? t('INDISPONÍVEL', 'UNAVAILABLE') : t('restrito', 'restricted');
     warnings.push(
-      `${label} (${c}) — ${sev} no tier '${tier}' do ${provider.toUpperCase()}` +
+      t(
+        `${label} (${c}) — ${sev} no tier '${tier}' do ${provider.toUpperCase()}`,
+        `${label} (${c}) — ${sev} in ${provider.toUpperCase()} tier '${tier}'`,
+      ) +
       (entry.reason ? `: ${entry.reason}` : '') +
-      (entry.alternative ? ` — alternativa: ${entry.alternative}` : ''),
+      (entry.alternative ? t(` — alternativa: ${entry.alternative}`, ` — alternative: ${entry.alternative}`) : ''),
     );
   }
   return warnings;

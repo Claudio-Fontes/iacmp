@@ -8,6 +8,7 @@ import { AzureProvider } from '@iacmp/provider-azure';
 import { GCPProvider } from '@iacmp/provider-gcp';
 import { TerraformProvider } from '@iacmp/provider-terraform';
 import { Stack } from '@iacmp/core';
+import { t } from '../i18n';
 import { resolveTemplateDir, templateExt } from '../synth-out';
 import { findStackFiles } from '../load-stacks';
 import { errMessage, loadIacmpConfig, resolveProvider, IacmpConfig } from '../utils';
@@ -92,16 +93,16 @@ function synthStack(stack: Stack, provider: string, allStacks: Stack[], projectN
       return p.synthesize(stack);
     }
     default:
-      throw new Error(`Provider '${provider}' não suportado.`);
+      throw new Error(t(`Provider '${provider}' não suportado.`, `Provider '${provider}' not supported.`));
   }
 }
 
 export default class Diff extends Command {
-  static description = 'Compara o último synth salvo com o synth atual';
+  static description = t('Compara o último synth salvo com o synth atual', 'Compares the last saved synth with the current synth');
 
   static flags = {
-    provider: Flags.string({ char: 'p', description: 'Provider alvo (aws, azure, gcp, terraform)' }),
-    stack: Flags.string({ char: 's', description: 'Stack específica' }),
+    provider: Flags.string({ char: 'p', description: t('Provider alvo (aws, azure, gcp, terraform)', 'Target provider (aws, azure, gcp, terraform)') }),
+    stack: Flags.string({ char: 's', description: t('Stack específica', 'Specific stack') }),
   };
 
   static examples = [
@@ -121,13 +122,13 @@ export default class Diff extends Command {
       this.error(errMessage(err));
     }
     if (!config) {
-      this.error('Projeto não inicializado. Rode: iacmp init');
+      this.error(t('Projeto não inicializado. Rode: iacmp init', 'Project not initialized. Run: iacmp init'));
     }
     const provider = resolveProvider(config, flags.provider);
     const outDir = resolveTemplateDir(cwd, provider);
 
     if (!outDir) {
-      this.log('Nenhum synth anterior encontrado. Rode: iacmp synth');
+      this.log(t('Nenhum synth anterior encontrado. Rode: iacmp synth', 'No previous synth found. Run: iacmp synth'));
       return;
     }
 
@@ -135,20 +136,20 @@ export default class Diff extends Command {
     const existingFiles = fs.readdirSync(outDir).filter(f => f.endsWith(ext));
 
     if (existingFiles.length === 0) {
-      this.log('Nenhum synth anterior encontrado. Rode: iacmp synth');
+      this.log(t('Nenhum synth anterior encontrado. Rode: iacmp synth', 'No previous synth found. Run: iacmp synth'));
       return;
     }
 
     const stacksDir = path.join(cwd, 'stacks');
     if (!fs.existsSync(stacksDir)) {
-      this.error('Diretório stacks/ não encontrado.');
+      this.error(t('Diretório stacks/ não encontrado.', 'stacks/ directory not found.'));
     }
 
     const stackFiles = findStackFiles(stacksDir)
       .filter(f => !flags.stack || path.basename(f).replace(/\.(ts|js)$/, '') === flags.stack);
 
     if (stackFiles.length === 0) {
-      this.error('Nenhuma stack encontrada em stacks/');
+      this.error(t('Nenhuma stack encontrada em stacks/', 'No stack found in stacks/'));
     }
 
     // Carrega todos os stacks antes de sintetizar para que cross-stack refs resolvam
@@ -159,12 +160,12 @@ export default class Diff extends Command {
       try {
         stackModule = require(stackPath) as Record<string, unknown>;
       } catch (err) {
-        this.warn(`Não foi possível carregar ${file}: ${errMessage(err)}`);
+        this.warn(t(`Não foi possível carregar ${file}: ${errMessage(err)}`, `Could not load ${file}: ${errMessage(err)}`));
         continue;
       }
       const stack = stackModule.default ?? stackModule.stack ?? stackModule;
       if (!stack || typeof stack !== 'object' || !('constructs' in stack)) {
-        this.warn(`${file} não exporta uma Stack válida.`);
+        this.warn(t(`${file} não exporta uma Stack válida.`, `${file} does not export a valid Stack.`));
         continue;
       }
       loadedStacks.push({ stackPath, stack: stack as Stack });
@@ -179,7 +180,7 @@ export default class Diff extends Command {
       const savedPath = path.join(outDir, `${stackName}${ext}`);
 
       if (!fs.existsSync(savedPath)) {
-        this.log(`Stack nova (sem synth anterior): ${stackName}`);
+        this.log(t(`Stack nova (sem synth anterior): ${stackName}`, `New stack (no previous synth): ${stackName}`));
         anyDiff = true;
         continue;
       }
@@ -189,7 +190,7 @@ export default class Diff extends Command {
       try {
         newText = synthStack(stack, provider, allStacks, config.name);
       } catch (err) {
-        this.warn(`Erro ao sintetizar ${stackName}: ${errMessage(err)}`);
+        this.warn(t(`Erro ao sintetizar ${stackName}: ${errMessage(err)}`, `Error synthesizing ${stackName}: ${errMessage(err)}`));
         continue;
       }
 
@@ -200,7 +201,7 @@ export default class Diff extends Command {
       if (hasDiff) {
         anyDiff = true;
       } else {
-        this.log(chalk.dim('  (sem alterações)'));
+        this.log(chalk.dim(t('  (sem alterações)', '  (no changes)')));
       }
     }
 
@@ -218,16 +219,16 @@ export default class Diff extends Command {
         if (hasDiff) {
           anyDiff = true;
         } else {
-          this.log(chalk.dim('  (sem alterações)'));
+          this.log(chalk.dim(t('  (sem alterações)', '  (no changes)')));
         }
       } else {
-        this.log('_providers.tf.json novo (sem synth anterior)');
+        this.log(t('_providers.tf.json novo (sem synth anterior)', '_providers.tf.json is new (no previous synth)'));
         anyDiff = true;
       }
     }
 
     if (!anyDiff) {
-      this.log('\nNenhuma alteração detectada.');
+      this.log(t('\nNenhuma alteração detectada.', '\nNo changes detected.'));
     }
   }
 }

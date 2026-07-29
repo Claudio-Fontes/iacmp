@@ -1,6 +1,7 @@
 import { execFileSync, spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import { t } from '../../i18n';
 import { BootstrapAcr } from './bootstrap-acr';
 
 export interface AzureContainerBuildMeta {
@@ -40,16 +41,18 @@ function checkDockerAvailability(): 'available' | 'daemon-down' | 'not-installed
 export function buildAndPushContainerImage(build: AzureContainerBuildMeta, cwd: string, acr: BootstrapAcr): string {
   const contextPath = path.resolve(cwd, build.context);
   if (!fs.existsSync(contextPath)) {
-    throw new Error(
+    throw new Error(t(
       `Compute.Container "${build.constructId}": contexto de build "${build.context}" não encontrado ` +
       `(resolvido para "${contextPath}").`,
-    );
+      `Compute.Container "${build.constructId}": build context "${build.context}" not found ` +
+      `(resolved to "${contextPath}").`,
+    ));
   }
   const fullImage = `${acr.loginServer}/${build.repository}:${build.tag}`;
   const dockerState = checkDockerAvailability();
 
   if (dockerState === 'available') {
-    process.stdout.write(`[iacmp] Compute.Container "${build.constructId}": build via Docker local -> ${fullImage}\n`);
+    process.stdout.write(t(`[iacmp] Compute.Container "${build.constructId}": build via Docker local -> ${fullImage}\n`, `[iacmp] Compute.Container "${build.constructId}": building via local Docker -> ${fullImage}\n`));
     const buildArgs = ['build', '--platform', 'linux/amd64', '-t', fullImage];
     if (build.dockerfile) buildArgs.push('-f', path.resolve(cwd, build.dockerfile));
     buildArgs.push(contextPath);
@@ -60,15 +63,19 @@ export function buildAndPushContainerImage(build: AzureContainerBuildMeta, cwd: 
   }
 
   if (dockerState === 'daemon-down') {
-    throw new Error(
+    throw new Error(t(
       `Compute.Container "${build.constructId}": Docker está instalado mas o daemon não está rodando.\n` +
       `Inicie o Docker Desktop e tente novamente.\n` +
       `(Alternativa best-effort: ACR Tasks — mas é conhecida por falhar com "TasksOperationsNotAllowed" ` +
       `em subscriptions free-trial; Docker local é a rota suportada.)`,
-    );
+      `Compute.Container "${build.constructId}": Docker is installed but the daemon is not running.\n` +
+      `Start Docker Desktop and try again.\n` +
+      `(Best-effort alternative: ACR Tasks — but it is known to fail with "TasksOperationsNotAllowed" ` +
+      `on free-trial subscriptions; local Docker is the supported path.)`,
+    ));
   }
 
-  process.stdout.write(`[iacmp] Compute.Container "${build.constructId}": Docker não encontrado — tentando ACR Tasks (best-effort) -> ${fullImage}\n`);
+  process.stdout.write(t(`[iacmp] Compute.Container "${build.constructId}": Docker não encontrado — tentando ACR Tasks (best-effort) -> ${fullImage}\n`, `[iacmp] Compute.Container "${build.constructId}": Docker not found — trying ACR Tasks (best-effort) -> ${fullImage}\n`));
   const acrBuildArgs = ['acr', 'build', '--registry', acr.name, '--image', `${build.repository}:${build.tag}`, '--platform', 'linux/amd64'];
   if (build.dockerfile) acrBuildArgs.push('--file', build.dockerfile);
   acrBuildArgs.push(contextPath);
@@ -78,13 +85,16 @@ export function buildAndPushContainerImage(build: AzureContainerBuildMeta, cwd: 
     const stderr = (err as { stderr?: Buffer }).stderr?.toString() ?? '';
     if (stderr) process.stderr.write(stderr);
     if (/TasksOperationsNotAllowed/i.test(stderr)) {
-      throw new Error(
+      throw new Error(t(
         `Compute.Container "${build.constructId}": ACR Tasks ("az acr build") não está disponível nesta ` +
         `subscription (bloqueio conhecido em contas free-trial: TasksOperationsNotAllowed). Instale e inicie ` +
         `o Docker Desktop e rode o deploy novamente — é a rota de build suportada nesta subscription.`,
-      );
+        `Compute.Container "${build.constructId}": ACR Tasks ("az acr build") is not available on this ` +
+        `subscription (known block on free-trial accounts: TasksOperationsNotAllowed). Install and start ` +
+        `Docker Desktop and run the deploy again — it is the supported build path on this subscription.`,
+      ));
     }
-    throw new Error(`Compute.Container "${build.constructId}": az acr build falhou. ${stderr || (err as Error).message}`);
+    throw new Error(t(`Compute.Container "${build.constructId}": az acr build falhou. ${stderr || (err as Error).message}`, `Compute.Container "${build.constructId}": az acr build failed. ${stderr || (err as Error).message}`));
   }
   return fullImage;
 }

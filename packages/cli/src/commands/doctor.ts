@@ -3,6 +3,7 @@ import { execFileSync, execSync } from 'child_process';
 import * as readline from 'readline';
 import * as path from 'path';
 import * as fs from 'fs';
+import { t } from '../i18n';
 import { readJsonFile } from '../utils';
 import { downloadDefaultWhisperModel } from '../utils/whisper-setup';
 
@@ -42,7 +43,7 @@ export function commandExists(bin: string): string | null {
 
 function checkNode(): Check {
   const out = tryExec('node --version');
-  if (!out) return { label: 'Node.js', ok: false, required: true, hint: 'Instale em: https://nodejs.org' };
+  if (!out) return { label: 'Node.js', ok: false, required: true, hint: t('Instale em: https://nodejs.org', 'Install at: https://nodejs.org') };
   const version = out.replace('v', '');
   const major = parseInt(version.split('.')[0], 10);
   return {
@@ -50,13 +51,13 @@ function checkNode(): Check {
     ok: major >= 20,
     required: true,
     value: out,
-    hint: major < 20 ? 'Node.js 20+ é necessário.' : undefined,
+    hint: major < 20 ? t('Node.js 20+ é necessário.', 'Node.js 20+ is required.') : undefined,
   };
 }
 
 function checkNpm(): Check {
   const out = tryExec('npm --version');
-  if (!out) return { label: 'npm', ok: false, required: true, hint: 'Instale Node.js (npm vem junto).' };
+  if (!out) return { label: 'npm', ok: false, required: true, hint: t('Instale Node.js (npm vem junto).', 'Install Node.js (npm comes with it).') };
   return { label: 'npm', ok: true, required: true, value: `v${out}` };
 }
 
@@ -66,20 +67,20 @@ function checkIacmp(): Check {
     const pkg = readJsonFile<{ version: string }>(pkgPath);
     return { label: 'iacmp', ok: true, required: false, value: `v${pkg.version}` };
   } catch {
-    return { label: 'iacmp', ok: false, required: false, hint: 'package.json não encontrado' };
+    return { label: 'iacmp', ok: false, required: false, hint: t('package.json não encontrado', 'package.json not found') };
   }
 }
 
 function awsCliHint(): string {
   switch (process.platform) {
     case 'darwin':
-      return 'Instale com: brew install awscli (ou rode: iacmp doctor --fix)';
+      return t('Instale com: brew install awscli (ou rode: iacmp doctor --fix)', 'Install with: brew install awscli (or run: iacmp doctor --fix)');
     case 'linux':
-      return 'Instale com: sudo apt-get install awscli — ou baixe em https://aws.amazon.com/cli/';
+      return t('Instale com: sudo apt-get install awscli — ou baixe em https://aws.amazon.com/cli/', 'Install with: sudo apt-get install awscli — or download at https://aws.amazon.com/cli/');
     case 'win32':
-      return 'Instale com: winget install -e --id Amazon.AWSCLI (ou choco install awscli) — ou baixe em https://aws.amazon.com/cli/';
+      return t('Instale com: winget install -e --id Amazon.AWSCLI (ou choco install awscli) — ou baixe em https://aws.amazon.com/cli/', 'Install with: winget install -e --id Amazon.AWSCLI (or choco install awscli) — or download at https://aws.amazon.com/cli/');
     default:
-      return 'Instale o AWS CLI: https://aws.amazon.com/cli/';
+      return t('Instale o AWS CLI: https://aws.amazon.com/cli/', 'Install the AWS CLI: https://aws.amazon.com/cli/');
   }
 }
 
@@ -146,13 +147,13 @@ function fixViaPackageManager(opts: {
 function azureCliHint(): string {
   switch (process.platform) {
     case 'darwin':
-      return 'Necessário para --provider azure — instale com: brew install azure-cli (ou rode: iacmp doctor --fix)';
+      return t('Necessário para --provider azure — instale com: brew install azure-cli (ou rode: iacmp doctor --fix)', 'Required for --provider azure — install with: brew install azure-cli (or run: iacmp doctor --fix)');
     case 'linux':
-      return 'Necessário para --provider azure — instale com: sudo apt-get install azure-cli (ou rode: iacmp doctor --fix)';
+      return t('Necessário para --provider azure — instale com: sudo apt-get install azure-cli (ou rode: iacmp doctor --fix)', 'Required for --provider azure — install with: sudo apt-get install azure-cli (or run: iacmp doctor --fix)');
     case 'win32':
-      return 'Necessário para --provider azure — instale com: winget install -e --id Microsoft.AzureCLI (ou rode: iacmp doctor --fix)';
+      return t('Necessário para --provider azure — instale com: winget install -e --id Microsoft.AzureCLI (ou rode: iacmp doctor --fix)', 'Required for --provider azure — install with: winget install -e --id Microsoft.AzureCLI (or run: iacmp doctor --fix)');
     default:
-      return 'Necessário para --provider azure — instale em: https://learn.microsoft.com/cli/azure/install-azure-cli';
+      return t('Necessário para --provider azure — instale em: https://learn.microsoft.com/cli/azure/install-azure-cli', 'Required for --provider azure — install at: https://learn.microsoft.com/cli/azure/install-azure-cli');
   }
 }
 
@@ -174,13 +175,13 @@ function checkAzureCli(): Check {
 function gcloudHint(): string {
   switch (process.platform) {
     case 'darwin':
-      return 'Necessário para --provider gcp — instale com: brew install --cask google-cloud-sdk (ou rode: iacmp doctor --fix)';
+      return t('Necessário para --provider gcp — instale com: brew install --cask google-cloud-sdk (ou rode: iacmp doctor --fix)', 'Required for --provider gcp — install with: brew install --cask google-cloud-sdk (or run: iacmp doctor --fix)');
     case 'linux':
-      return 'Necessário para --provider gcp — instale seguindo: https://cloud.google.com/sdk/docs/install';
+      return t('Necessário para --provider gcp — instale seguindo: https://cloud.google.com/sdk/docs/install', 'Required for --provider gcp — install following: https://cloud.google.com/sdk/docs/install');
     case 'win32':
-      return 'Necessário para --provider gcp — instale com: winget install -e --id Google.CloudSDK (ou rode: iacmp doctor --fix)';
+      return t('Necessário para --provider gcp — instale com: winget install -e --id Google.CloudSDK (ou rode: iacmp doctor --fix)', 'Required for --provider gcp — install with: winget install -e --id Google.CloudSDK (or run: iacmp doctor --fix)');
     default:
-      return 'Necessário para --provider gcp — instale em: https://cloud.google.com/sdk/docs/install';
+      return t('Necessário para --provider gcp — instale em: https://cloud.google.com/sdk/docs/install', 'Required for --provider gcp — install at: https://cloud.google.com/sdk/docs/install');
   }
 }
 
@@ -202,13 +203,13 @@ function checkGcloudCli(): Check {
 function terraformHint(): string {
   switch (process.platform) {
     case 'darwin':
-      return 'Necessário para --provider terraform — instale com: brew install terraform (ou rode: iacmp doctor --fix)';
+      return t('Necessário para --provider terraform — instale com: brew install terraform (ou rode: iacmp doctor --fix)', 'Required for --provider terraform — install with: brew install terraform (or run: iacmp doctor --fix)');
     case 'linux':
-      return 'Necessário para --provider terraform — instale com: sudo apt-get install terraform (ou rode: iacmp doctor --fix)';
+      return t('Necessário para --provider terraform — instale com: sudo apt-get install terraform (ou rode: iacmp doctor --fix)', 'Required for --provider terraform — install with: sudo apt-get install terraform (or run: iacmp doctor --fix)');
     case 'win32':
-      return 'Necessário para --provider terraform — instale com: winget install -e --id Hashicorp.Terraform (ou choco install terraform) — ou rode: iacmp doctor --fix';
+      return t('Necessário para --provider terraform — instale com: winget install -e --id Hashicorp.Terraform (ou choco install terraform) — ou rode: iacmp doctor --fix', 'Required for --provider terraform — install with: winget install -e --id Hashicorp.Terraform (or choco install terraform) — or run: iacmp doctor --fix');
     default:
-      return 'Necessário para --provider terraform — instale em: https://developer.hashicorp.com/terraform/install';
+      return t('Necessário para --provider terraform — instale em: https://developer.hashicorp.com/terraform/install', 'Required for --provider terraform — install at: https://developer.hashicorp.com/terraform/install');
   }
 }
 
@@ -233,7 +234,7 @@ function checkAnthropicKey(): Check {
     label: 'ANTHROPIC_API_KEY',
     ok: true,
     required: false,
-    value: key ? 'configurado' : 'não configurado (necessário para iacmp ai)',
+    value: key ? t('configurado', 'configured') : t('não configurado (necessário para iacmp ai)', 'not configured (required for iacmp ai)'),
   };
 }
 
@@ -241,7 +242,7 @@ function checkAwsIamPermissions(): Check {
   const label = 'AWS IAM permissions (lambda, apigateway)';
   const identity = tryExec('aws sts get-caller-identity');
   if (!identity) {
-    return { label, ok: false, required: false, hint: 'Credenciais AWS não encontradas. Configure com: aws configure' };
+    return { label, ok: false, required: false, hint: t('Credenciais AWS não encontradas. Configure com: aws configure', 'AWS credentials not found. Configure with: aws configure') };
   }
   const lambdaOk = tryExec('aws lambda list-functions --max-items 1') !== null;
   const apigwOk = tryExec('aws apigateway get-rest-apis --limit 1') !== null;
@@ -255,7 +256,7 @@ function checkAwsIamPermissions(): Check {
     label,
     ok: false,
     required: false,
-    hint: `Permissões faltando: ${missing.join(', ')}. Adicione à policy IAM do usuário — veja docs/iam-policy.json`,
+    hint: t(`Permissões faltando: ${missing.join(', ')}. Adicione à policy IAM do usuário — veja docs/iam-policy.json`, `Missing permissions: ${missing.join(', ')}. Add them to the user's IAM policy — see docs/iam-policy.json`),
   };
 }
 
@@ -293,20 +294,20 @@ function fixSox(): Fix | undefined {
 function soxHint(): string {
   switch (process.platform) {
     case 'darwin':
-      return 'Instale com: brew install sox (ou rode: iacmp doctor --fix)';
+      return t('Instale com: brew install sox (ou rode: iacmp doctor --fix)', 'Install with: brew install sox (or run: iacmp doctor --fix)');
     case 'linux':
-      return 'Instale com: sudo apt-get install -y sox (ou equivalente da sua distro) — ou rode: iacmp doctor --fix';
+      return t('Instale com: sudo apt-get install -y sox (ou equivalente da sua distro) — ou rode: iacmp doctor --fix', 'Install with: sudo apt-get install -y sox (or your distro\'s equivalent) — or run: iacmp doctor --fix');
     case 'win32':
-      return 'Instale com: winget install -e --id ChrisBagwell.SoX (ou choco install sox) — ou rode: iacmp doctor --fix';
+      return t('Instale com: winget install -e --id ChrisBagwell.SoX (ou choco install sox) — ou rode: iacmp doctor --fix', 'Install with: winget install -e --id ChrisBagwell.SoX (or choco install sox) — or run: iacmp doctor --fix');
     default:
-      return 'Instale o sox manualmente — necessário para o comando /voz do chat.';
+      return t('Instale o sox manualmente — necessário para o comando /voz do chat.', 'Install sox manually — required for the chat /voz command.');
   }
 }
 
 function checkSox(): Check {
   if (commandExists('sox')) {
     const out = tryExec('sox --version');
-    return { label: 'sox', ok: true, required: false, value: out ?? 'instalado' };
+    return { label: 'sox', ok: true, required: false, value: out ?? t('instalado', 'installed') };
   }
   return { label: 'sox', ok: false, required: false, hint: soxHint(), fix: fixSox() };
 }
@@ -323,9 +324,9 @@ function fixWhisperBinary(): Fix | undefined {
 
 function whisperBinaryHint(): string {
   if (process.platform === 'darwin') {
-    return 'Instale com: brew install whisper-cpp (ou rode: iacmp doctor --fix)';
+    return t('Instale com: brew install whisper-cpp (ou rode: iacmp doctor --fix)', 'Install with: brew install whisper-cpp (or run: iacmp doctor --fix)');
   }
-  return 'Sem instalação automática nesta plataforma — baixe um binário em https://github.com/ggerganov/whisper.cpp/releases ou compile localmente, e configure IACMP_WHISPER_BIN.';
+  return t('Sem instalação automática nesta plataforma — baixe um binário em https://github.com/ggerganov/whisper.cpp/releases ou compile localmente, e configure IACMP_WHISPER_BIN.', 'No automatic install on this platform — download a binary at https://github.com/ggerganov/whisper.cpp/releases or build locally, and set IACMP_WHISPER_BIN.');
 }
 
 function checkWhisperBinary(): Check {
@@ -342,15 +343,15 @@ function checkWhisperBinary(): Check {
 function checkWhisperModel(cwd: string): Check {
   const modelPath = process.env.IACMP_WHISPER_MODEL;
   if (modelPath && fs.existsSync(modelPath)) {
-    return { label: 'modelo whisper (ggml)', ok: true, required: false, value: modelPath };
+    return { label: t('modelo whisper (ggml)', 'whisper model (ggml)'), ok: true, required: false, value: modelPath };
   }
   return {
-    label: 'modelo whisper (ggml)',
+    label: t('modelo whisper (ggml)', 'whisper model (ggml)'),
     ok: false,
     required: false,
-    hint: 'Necessário para o comando /voz — rode: iacmp doctor --fix para baixar um modelo padrão (~148MB) e configurar IACMP_WHISPER_MODEL',
+    hint: t('Necessário para o comando /voz — rode: iacmp doctor --fix para baixar um modelo padrão (~148MB) e configurar IACMP_WHISPER_MODEL', 'Required for the /voz command — run: iacmp doctor --fix to download a default model (~148MB) and set IACMP_WHISPER_MODEL'),
     fix: {
-      description: 'baixar modelo ggml-base (~148MB) e configurar IACMP_WHISPER_MODEL no .env',
+      description: t('baixar modelo ggml-base (~148MB) e configurar IACMP_WHISPER_MODEL no .env', 'download the ggml-base model (~148MB) and set IACMP_WHISPER_MODEL in .env'),
       run: async () => {
         // upsertEnvVar só grava no arquivo .env — o processo atual não relê o
         // .env automaticamente, então sem isso a re-checagem abaixo falharia
@@ -404,7 +405,7 @@ async function confirm(asker: Asker, question: string): Promise<boolean> {
 }
 
 export default class Doctor extends Command {
-  static description = 'Verifica o ambiente e dependências do iacmp';
+  static description = t('Verifica o ambiente e dependências do iacmp', 'Checks the iacmp environment and dependencies');
 
   static examples = [
     '$ iacmp doctor',
@@ -414,11 +415,11 @@ export default class Doctor extends Command {
 
   static flags = {
     strict: Flags.boolean({
-      description: 'Falha (exit 1) também para checagens opcionais (AWS CLI, etc.)',
+      description: t('Falha (exit 1) também para checagens opcionais (AWS CLI, etc.)', 'Fails (exit 1) for optional checks too (AWS CLI, etc.)'),
       default: false,
     }),
     fix: Flags.boolean({
-      description: 'Tenta corrigir itens ausentes com instalação conhecida (sox, whisper.cpp, modelo), pedindo confirmação antes de cada ação.',
+      description: t('Tenta corrigir itens ausentes com instalação conhecida (sox, whisper.cpp, modelo), pedindo confirmação antes de cada ação.', 'Tries to fix missing items with a known install (sox, whisper.cpp, model), asking for confirmation before each action.'),
       default: false,
     }),
   };
@@ -426,7 +427,7 @@ export default class Doctor extends Command {
   async run(): Promise<void> {
     const { flags } = await this.parse(Doctor);
     const cwd = process.cwd();
-    this.log('Verificando ambiente...\n');
+    this.log(t('Verificando ambiente...\n', 'Checking environment...\n'));
 
     const configPath = path.join(cwd, 'iacmp.json');
     let projectProvider: string | undefined;
@@ -462,7 +463,7 @@ export default class Doctor extends Command {
       if (check.ok) {
         this.log(`  ${icon} ${status}`);
       } else {
-        this.log(`  ${icon} ${check.label} nao encontrado`);
+        this.log(t(`  ${icon} ${check.label} nao encontrado`, `  ${icon} ${check.label} not found`));
         if (check.hint) {
           this.log(`      ${check.hint}`);
         }
@@ -471,25 +472,25 @@ export default class Doctor extends Command {
 
     this.log('');
     if (checks.every(c => c.ok)) {
-      this.log('Ambiente OK. Pronto para uso.');
+      this.log(t('Ambiente OK. Pronto para uso.', 'Environment OK. Ready to use.'));
     } else {
-      this.log('Alguns itens precisam de atenção.');
+      this.log(t('Alguns itens precisam de atenção.', 'Some items need attention.'));
     }
 
     if (flags.fix) {
       const fixableCount = checks.filter(c => !c.ok && c.fix).length;
       if (fixableCount === 0) {
-        this.log('\nNada para corrigir automaticamente nesta plataforma.');
+        this.log(t('\nNada para corrigir automaticamente nesta plataforma.', '\nNothing to fix automatically on this platform.'));
       } else {
-        this.log('\nCorrigindo...');
+        this.log(t('\nCorrigindo...', '\nFixing...'));
         const asker = createAsker();
         for (let i = 0; i < checks.length; i++) {
           const check = checks[i];
           if (check.ok || !check.fix) continue;
 
-          const proceed = await confirm(asker, `\n${check.label}: executar "${check.fix.description}"?`);
+          const proceed = await confirm(asker, t(`\n${check.label}: executar "${check.fix.description}"?`, `\n${check.label}: run "${check.fix.description}"?`));
           if (!proceed) {
-            this.log('  pulado.');
+            this.log(t('  pulado.', '  skipped.'));
             continue;
           }
 
@@ -497,9 +498,9 @@ export default class Doctor extends Command {
             await check.fix.run();
             const updated = makeChecks()[i];
             checks[i] = updated;
-            this.log(updated.ok ? `  ✓ ${updated.label} corrigido` : `  ✗ ainda nao encontrado apos a instalacao`);
+            this.log(updated.ok ? t(`  ✓ ${updated.label} corrigido`, `  ✓ ${updated.label} fixed`) : t(`  ✗ ainda nao encontrado apos a instalacao`, `  ✗ still not found after the install`));
           } catch (err) {
-            this.log(`  ✗ falhou: ${err instanceof Error ? err.message : String(err)}`);
+            this.log(t(`  ✗ falhou: ${err instanceof Error ? err.message : String(err)}`, `  ✗ failed: ${err instanceof Error ? err.message : String(err)}`));
           }
         }
         asker.close();
@@ -514,7 +515,7 @@ export default class Doctor extends Command {
       } catch {}
 
       if (config.plugins && config.plugins.length > 0) {
-        this.log('\nPlugins do projeto:');
+        this.log(t('\nPlugins do projeto:', '\nProject plugins:'));
 
         for (const pluginName of config.plugins) {
           let found = false;
@@ -531,7 +532,7 @@ export default class Doctor extends Command {
           const icon = found ? '✓' : '✗';
           const detail = found
             ? `(providers: ${providerNames.join(', ')})`
-            : 'não encontrado — rode npm install';
+            : t('não encontrado — rode npm install', 'not found — run npm install');
           this.log(`  ${icon} ${pluginName} ${detail}`);
         }
       }

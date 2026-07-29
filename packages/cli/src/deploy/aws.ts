@@ -1,6 +1,7 @@
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import { t, msg } from '../i18n';
 import { DeployContext, DeployExecutor, DestroyContext, NativeCommand, StackStatus } from './types';
 
 function packagedTemplatePath(ctx: DeployContext): string {
@@ -86,7 +87,10 @@ export function ensureLambdaCodeBuilt(ctx: DeployContext): void {
   try {
     esbuild = require('esbuild');
   } catch {
-    throw new Error('esbuild não encontrado — não foi possível empacotar os handlers da Lambda. Rode `npm install` no iacmp.');
+    throw new Error(t(
+      'esbuild não encontrado — não foi possível empacotar os handlers da Lambda. Rode `npm install` no iacmp.',
+      'esbuild not found — could not bundle the Lambda handlers. Run `npm install` in iacmp.',
+    ));
   }
 
   // @iacmp/runtime é dependência real do cli (não inlinada — ver tsup.config.ts):
@@ -116,7 +120,10 @@ export function ensureLambdaCodeBuilt(ctx: DeployContext): void {
         logLevel: 'silent',
       });
     } catch (err) {
-      throw new Error(`Falha ao empacotar o handler ${path.relative(ctx.cwd, entry)} com esbuild:\n${(err as Error).message}`);
+      throw new Error(t(
+        `Falha ao empacotar o handler ${path.relative(ctx.cwd, entry)} com esbuild:\n${(err as Error).message}`,
+        `Failed to bundle handler ${path.relative(ctx.cwd, entry)} with esbuild:\n${(err as Error).message}`,
+      ));
     }
   }
 }
@@ -133,9 +140,10 @@ export function getAccountId(): string {
       .toString()
       .trim();
   } catch {
-    throw new Error(
-      'Não foi possível obter a conta AWS (aws sts get-caller-identity). Configure as credenciais com: aws configure'
-    );
+    throw new Error(t(
+      'Não foi possível obter a conta AWS (aws sts get-caller-identity). Configure as credenciais com: aws configure',
+      'Could not get the AWS account (aws sts get-caller-identity). Configure credentials with: aws configure',
+    ));
   }
 }
 
@@ -206,7 +214,10 @@ export async function deleteResourceAndWait(typeName: string, identifier: string
     ) as { ProgressEvent: { OperationStatus: string; StatusMessage?: string } };
     status = poll.ProgressEvent.OperationStatus;
     if (status === 'FAILED') {
-      throw new Error(`Falha ao apagar ${typeName} "${identifier}": ${poll.ProgressEvent.StatusMessage ?? 'motivo desconhecido'}`);
+      throw new Error(t(
+        `Falha ao apagar ${typeName} "${identifier}": ${poll.ProgressEvent.StatusMessage ?? 'motivo desconhecido'}`,
+        `Failed to delete ${typeName} "${identifier}": ${poll.ProgressEvent.StatusMessage ?? 'unknown reason'}`,
+      ));
     }
   }
 }
@@ -254,7 +265,10 @@ export function findExistingRetainedResources(templatePath: string, region: stri
     // Neste caso, tratamos todos os recursos como candidatos a conflito.
     const msg = err instanceof Error ? err.message : String(err);
     if (!msg.includes('does not exist') && !msg.includes('Stack with id')) {
-      process.stderr.write(`[iacmp] aviso: não foi possível listar recursos da stack "${stackName}": ${msg}\n`);
+      process.stderr.write(t(
+        `[iacmp] aviso: não foi possível listar recursos da stack "${stackName}": ${msg}\n`,
+        `[iacmp] warning: could not list resources of stack "${stackName}": ${msg}\n`,
+      ));
     }
   }
 
@@ -307,7 +321,10 @@ export function checkExportConflicts(stackName: string, newTemplatePath: string,
       importers = []; // sem importadores (ou export inexistente) → não bloqueia
     }
     if (importers.length > 0) {
-      conflicts.push(`o export "${exp}" some no template novo mas ainda é importado por: ${importers.join(', ')}`);
+      conflicts.push(t(
+        `o export "${exp}" some no template novo mas ainda é importado por: ${importers.join(', ')}`,
+        `export "${exp}" disappears in the new template but is still imported by: ${importers.join(', ')}`,
+      ));
     }
   }
   return conflicts;
@@ -327,12 +344,7 @@ export const awsExecutor: DeployExecutor = {
     if (!ctx.dryRun) {
       const exportConflicts = checkExportConflicts(ctx.stackName, ctx.templatePath, ctx.region);
       if (exportConflicts.length > 0) {
-        throw new Error(
-          `Deploy incremental bloqueado para a stack "${ctx.stackName}": ${exportConflicts.join('; ')}. ` +
-          `O CloudFormation não deixa remover/renomear um export enquanto outra stack o importa. ` +
-          `Costuma acontecer quando o projeto foi regenerado mudando a topologia (ex: 1 role compartilhada → N roles por handler). ` +
-          `NÃO é update incremental — rode: iacmp destroy && iacmp deploy (recria limpo, sem estado antigo).`,
-        );
+        throw new Error(msg('deploy.export-conflict', { stack: ctx.stackName, list: exportConflicts.join('; ') }));
       }
     }
     // Compila os handlers TS (dist/) antes de empacotar — o synth referencia a

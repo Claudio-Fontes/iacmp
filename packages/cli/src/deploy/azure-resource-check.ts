@@ -1,4 +1,5 @@
 import { execSync } from 'child_process';
+import { t } from '../i18n';
 import { getTierEntry, AccountTier } from './resource-tier-map';
 
 export interface ResourceRestriction {
@@ -132,7 +133,10 @@ export async function checkAzureResourceAvailability(
     }
 
     // 3. 'unavailable' ou 'restricted' não confirmado → reportar
-    const reason = tierEntry.reason ?? `Não disponível em ${region} nesta subscription (${accountTier})`;
+    const reason = tierEntry.reason ?? t(
+      `Não disponível em ${region} nesta subscription (${accountTier})`,
+      `Not available in ${region} on this subscription (${accountTier})`,
+    );
     restrictions.push({
       resource: hint.resource,
       reason,

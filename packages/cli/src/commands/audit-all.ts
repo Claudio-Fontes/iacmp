@@ -1,4 +1,5 @@
 import { Command, Flags } from '@oclif/core';
+import { t } from '../i18n';
 import AuditSecurity from './audit-security';
 import AuditHA from './audit-ha';
 import AuditDR from './audit-dr';
@@ -13,7 +14,7 @@ export default class AuditAll extends Command {
 
   static flags = {
     'fail-on': Flags.string({
-      description: 'Sai com exit 1 quando qualquer audit acusa achados no nível indicado',
+      description: t('Sai com exit 1 quando qualquer audit acusa achados no nível indicado', 'Exits with code 1 when any audit reports findings at the given level'),
       options: ['critical', 'warning', 'none'],
       default: 'none',
     }),

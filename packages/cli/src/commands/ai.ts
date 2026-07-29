@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as cp from 'child_process';
 import ora from 'ora';
 import { AIProvider, AiApi, loadAi, PRO_MESSAGE } from '../pro';
+import { t } from '../i18n';
 import { ensureProjectInitialized } from '../bootstrap';
 import { runGeneration, AskFn } from '../generation';
 import { loadEnv } from '../env-loader';
@@ -104,16 +105,16 @@ function createContextualProvider(ai: AiApi, base: AIProvider, projectContext: s
 }
 
 export default class AI extends Command {
-  static description = 'Gera stacks de infraestrutura via IA (Claude ou GitHub Copilot)';
+  static description = t('Gera stacks de infraestrutura via IA (Claude ou GitHub Copilot)', 'Generates infrastructure stacks via AI (Claude or GitHub Copilot)');
 
   static args = {
     prompt: Args.string({ description: 'Descrição do que criar (obrigatório sem --chat)', required: false }),
   };
 
   static flags = {
-    chat: Flags.boolean({ description: 'Modo chat interativo', default: false }),
-    'dry-run': Flags.boolean({ description: 'Gera e exibe sem salvar arquivos', default: false }),
-    provider: Flags.string({ char: 'p', description: 'Provider alvo (aws, azure, gcp, terraform)' }),
+    chat: Flags.boolean({ description: t('Modo chat interativo', 'Interactive chat mode'), default: false }),
+    'dry-run': Flags.boolean({ description: t('Gera e exibe sem salvar arquivos', 'Generates and shows without saving files'), default: false }),
+    provider: Flags.string({ char: 'p', description: t('Provider alvo (aws, azure, gcp, terraform)', 'Target provider (aws, azure, gcp, terraform)') }),
   };
 
   static examples = [
@@ -142,7 +143,7 @@ export default class AI extends Command {
     let reviewAiProvider: AIProvider | undefined;
     if (!flags.chat) {
       if (!args.prompt) {
-        this.error('Informe o prompt ou use --chat para modo interativo.\nExemplo: iacmp ai "cria uma Lambda com API Gateway"');
+        this.error(t('Informe o prompt ou use --chat para modo interativo.\nExemplo: iacmp ai "cria uma Lambda com API Gateway"', 'Provide a prompt or use --chat for interactive mode.\nExample: iacmp ai "create a Lambda with API Gateway"'));
       }
       try {
         aiProvider = resolveAIProvider(ai);

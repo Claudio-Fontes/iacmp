@@ -3,6 +3,7 @@ import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import ora from 'ora';
+import { t } from '../i18n';
 import { loadAi, PRO_MESSAGE } from '../pro';
 import { TEMPLATES } from '../init/templates';
 import { claudeMd } from '../init/claude-md';
@@ -14,25 +15,25 @@ import { packageJson, tsConfig, gitignore, claudeSettings, dotenv, githubActions
 // ---------------------------------------------------------------------------
 
 export default class Init extends Command {
-  static description = 'Inicializa um novo projeto iacmp. Se um nome for passado, cria a pasta do projeto.';
+  static description = t('Inicializa um novo projeto iacmp. Se um nome for passado, cria a pasta do projeto.', 'Initializes a new iacmp project. If a name is given, creates the project folder.');
 
   static args = {
-    name: Args.string({ description: 'Nome do projeto (cria a pasta automaticamente)', required: false }),
+    name: Args.string({ description: t('Nome do projeto (cria a pasta automaticamente)', 'Project name (creates the folder automatically)'), required: false }),
   };
 
   static flags = {
-    language: Flags.string({ char: 'l', description: 'Linguagem (typescript, python)', default: 'typescript' }),
-    provider: Flags.string({ char: 'p', description: 'Provider padrão (aws, azure, gcp, terraform)', default: 'aws' }),
-    accountTier: Flags.string({ description: 'Tier da conta cloud: free ou standard (afeta defaults de RDS, backup, criptografia)', default: 'free', options: ['free', 'standard'] }),
-    azureRegion: Flags.string({ description: 'Região Azure do projeto (grava azureRegion no iacmp.json)', default: 'eastus2' }),
+    language: Flags.string({ char: 'l', description: t('Linguagem (typescript, python)', 'Language (typescript, python)'), default: 'typescript' }),
+    provider: Flags.string({ char: 'p', description: t('Provider padrão (aws, azure, gcp, terraform)', 'Default provider (aws, azure, gcp, terraform)'), default: 'aws' }),
+    accountTier: Flags.string({ description: t('Tier da conta cloud: free ou standard (afeta defaults de RDS, backup, criptografia)', 'Cloud account tier: free or standard (affects RDS, backup and encryption defaults)'), default: 'free', options: ['free', 'standard'] }),
+    azureRegion: Flags.string({ description: t('Região Azure do projeto (grava azureRegion no iacmp.json)', 'Azure region for the project (writes azureRegion to iacmp.json)'), default: 'eastus2' }),
     template: Flags.string({
       char: 't',
-      description: `Template de stack a usar (blank, hello, rds, webapp, network, serverless, fullstack)`,
+      description: t(`Template de stack a usar (blank, hello, rds, webapp, network, serverless, fullstack)`, `Stack template to use (blank, hello, rds, webapp, network, serverless, fullstack)`),
       default: 'hello',
     }),
-    list: Flags.boolean({ description: 'Lista os templates disponíveis', default: false }),
+    list: Flags.boolean({ description: t('Lista os templates disponíveis', 'Lists the available templates'), default: false }),
     diagram: Flags.string({
-      description: 'Caminho para imagem de diagrama de arquitetura — analisa via IA e gera stacks automaticamente',
+      description: t('Caminho para imagem de diagrama de arquitetura — analisa via IA e gera stacks automaticamente', 'Path to an architecture diagram image — analyzed by AI to generate stacks automatically'),
     }),
   };
 
@@ -51,7 +52,7 @@ export default class Init extends Command {
 
     // --list: exibe templates e sai
     if (flags.list) {
-      this.log('\nTemplates disponíveis:\n');
+      this.log(t('\nTemplates disponíveis:\n', '\nAvailable templates:\n'));
       const nameWidth = Math.max(...Object.keys(TEMPLATES).map(k => k.length)) + 2;
       for (const [name, tpl] of Object.entries(TEMPLATES)) {
         this.log(`  ${name.padEnd(nameWidth)} ${tpl.description}`);
@@ -60,24 +61,24 @@ export default class Init extends Command {
         }
         this.log('');
       }
-      this.log(`Uso: iacmp init meu-projeto --template <nome>`);
+      this.log(t(`Uso: iacmp init meu-projeto --template <nome>`, `Usage: iacmp init my-project --template <name>`));
       return;
     }
 
     const validLanguages = ['typescript', 'python'];
     if (!validLanguages.includes(flags.language)) {
-      this.error(`Linguagem '${flags.language}' não suportada. Use: ${validLanguages.join(', ')}`);
+      this.error(t(`Linguagem '${flags.language}' não suportada. Use: ${validLanguages.join(', ')}`, `Language '${flags.language}' not supported. Use: ${validLanguages.join(', ')}`));
     }
 
     const validProviders = ['aws', 'azure', 'gcp']; // 'terraform' desabilitado — use --provider aws --format tf
     if (!validProviders.includes(flags.provider)) {
-      this.error(`Provider '${flags.provider}' não suportado. Use: ${validProviders.join(', ')}`);
+      this.error(t(`Provider '${flags.provider}' não suportado. Use: ${validProviders.join(', ')}`, `Provider '${flags.provider}' not supported. Use: ${validProviders.join(', ')}`));
     }
 
     const template = TEMPLATES[flags.template];
     if (!template) {
       const available = Object.keys(TEMPLATES).join(', ');
-      this.error(`Template '${flags.template}' não encontrado. Disponíveis: ${available}\n\nUse 'iacmp init --list' para ver todos os templates.`);
+      this.error(t(`Template '${flags.template}' não encontrado. Disponíveis: ${available}\n\nUse 'iacmp init --list' para ver todos os templates.`, `Template '${flags.template}' not found. Available: ${available}\n\nUse 'iacmp init --list' to see all templates.`));
     }
 
     const cwd = process.cwd();
@@ -86,12 +87,12 @@ export default class Init extends Command {
 
     if (args.name) {
       if (fs.existsSync(projectDir)) {
-        this.error(`A pasta '${args.name}' já existe.`);
+        this.error(t(`A pasta '${args.name}' já existe.`, `The folder '${args.name}' already exists.`));
       }
       fs.mkdirSync(projectDir, { recursive: true });
     } else {
       if (fs.existsSync(path.join(projectDir, 'iacmp.json'))) {
-        this.error(`Projeto já inicializado em ${path.join(projectDir, 'iacmp.json')}`);
+        this.error(t(`Projeto já inicializado em ${path.join(projectDir, 'iacmp.json')}`, `Project already initialized at ${path.join(projectDir, 'iacmp.json')}`));
       }
     }
 
@@ -194,12 +195,12 @@ export default class Init extends Command {
 
     // npm install automático (TypeScript only)
     if (flags.language === 'typescript') {
-      const installSpinner = ora('Instalando dependências...').start();
+      const installSpinner = ora(t('Instalando dependências...', 'Installing dependencies...')).start();
       try {
         execSync('npm install', { cwd: projectDir, stdio: 'pipe' });
-        installSpinner.succeed('Dependências instaladas');
+        installSpinner.succeed(t('Dependências instaladas', 'Dependencies installed'));
       } catch {
-        installSpinner.warn('npm install falhou — rode manualmente na pasta do projeto');
+        installSpinner.warn(t('npm install falhou — rode manualmente na pasta do projeto', 'npm install failed — run it manually in the project folder'));
       }
     }
 
@@ -207,7 +208,7 @@ export default class Init extends Command {
     const isBlank = !template.stackContent;
     const templateLabel = flags.template === 'blank' ? '' : ` (template: ${flags.template})`;
 
-    this.log(`\nProjeto '${projectName}' inicializado${templateLabel}.\n`);
+    this.log(t(`\nProjeto '${projectName}' inicializado${templateLabel}.\n`, `\nProject '${projectName}' initialized${templateLabel}.\n`));
     this.log(`  ${rel}/iacmp.json`);
     this.log(`  ${rel}/.env`);
     this.log(`  ${rel}/CLAUDE.md`);
@@ -226,7 +227,7 @@ export default class Init extends Command {
 
     // mostra os constructs do template (blank não tem)
     if (template.constructs.length > 0) {
-      this.log(`\nRecursos incluídos:`);
+      this.log(t(`\nRecursos incluídos:`, `\nIncluded resources:`));
       for (const c of template.constructs) {
         this.log(`  · ${c}`);
       }
@@ -236,20 +237,20 @@ export default class Init extends Command {
     if (flags.diagram) {
       const diagramPath = path.resolve(flags.diagram);
       if (!fs.existsSync(diagramPath)) {
-        this.error(`Diagrama não encontrado: ${diagramPath}`);
+        this.error(t(`Diagrama não encontrado: ${diagramPath}`, `Diagram not found: ${diagramPath}`));
       }
 
       const anthropicKey = process.env['ANTHROPIC_API_KEY'];
       const openaiKey = process.env['OPENAI_API_KEY'];
       if (!anthropicKey && !openaiKey) {
-        this.warn('Nenhuma API key encontrada. Configure ANTHROPIC_API_KEY ou OPENAI_API_KEY no .env do projeto.');
+        this.warn(t('Nenhuma API key encontrada. Configure ANTHROPIC_API_KEY ou OPENAI_API_KEY no .env do projeto.', 'No API key found. Set ANTHROPIC_API_KEY or OPENAI_API_KEY in the project\'s .env.'));
       } else {
         this.log('');
         // Gate Pro: análise de diagrama usa o iacmp-pro — sem ele, o init segue
         // normalmente, só sem gerar as stacks a partir da imagem.
         const ai = loadAi();
         if (!ai) this.error(PRO_MESSAGE);
-        const spinner = ora('Analisando diagrama via IA...').start();
+        const spinner = ora(t('Analisando diagrama via IA...', 'Analyzing diagram with AI...')).start();
         try {
           const rawModel = process.env['IACMP_MODEL'] ?? '';
           const claudeModel = rawModel.startsWith('claude-') ? rawModel : 'claude-sonnet-4-6';
@@ -259,7 +260,7 @@ export default class Init extends Command {
             anthropicKey ? claudeModel : undefined,
             { accountTier: config.accountTier ?? 'free' },
           );
-          spinner.succeed('Diagrama analisado');
+          spinner.succeed(t('Diagrama analisado', 'Diagram analyzed'));
 
           if (result.explanation) {
             this.log(`\n${result.explanation}\n`);
@@ -277,25 +278,25 @@ export default class Init extends Command {
             for (const w of result.warnings) this.warn(w);
           }
         } catch (err) {
-          spinner.fail('Falha ao analisar o diagrama');
+          spinner.fail(t('Falha ao analisar o diagrama', 'Failed to analyze the diagram'));
           this.warn(err instanceof Error ? err.message : String(err));
-          this.log('  Rode `iacmp ai "descreva a arquitetura"` para gerar stacks manualmente.');
+          this.log(t('  Rode `iacmp ai "descreva a arquitetura"` para gerar stacks manualmente.', '  Run `iacmp ai "describe the architecture"` to generate stacks manually.'));
         }
       }
     }
 
-    this.log('\nPróximos passos:');
+    this.log(t('\nPróximos passos:', '\nNext steps:'));
     if (args.name) this.log(`  cd ${args.name}`);
     if (isBlank && !flags.diagram) {
-      this.log('  # projeto vazio — escreva sua primeira stack em stacks/ (exemplos: iacmp registry list)');
-      this.log('  # ou gere com o Claude Code: iacmp setup && abra o Claude no projeto');
+      this.log(t('  # projeto vazio — escreva sua primeira stack em stacks/ (exemplos: iacmp registry list)', '  # empty project — write your first stack in stacks/ (examples: iacmp registry list)'));
+      this.log(t('  # ou gere com o Claude Code: iacmp setup && abra o Claude no projeto', '  # or generate with Claude Code: iacmp setup && open Claude in the project'));
     }
-    this.log('  iacmp synth                # gera os templates + validações');
-    this.log('  iacmp deploy --dry-run     # mostra o plano sem executar nada');
-    this.log('  iacmp deploy               # deploy real (CLI da nuvem: iacmp doctor)');
+    this.log(t('  iacmp synth                # gera os templates + validações', '  iacmp synth                # generates the templates + validations'));
+    this.log(t('  iacmp deploy --dry-run     # mostra o plano sem executar nada', '  iacmp deploy --dry-run     # shows the plan without executing anything'));
+    this.log(t('  iacmp deploy               # deploy real (CLI da nuvem: iacmp doctor)', '  iacmp deploy               # real deploy (cloud CLI: iacmp doctor)'));
     this.log('');
-    this.log('Gerar stacks com o Claude Code (incluso):');
-    this.log('  iacmp setup                # registra as ferramentas MCP; depois abra o Claude Code aqui');
+    this.log(t('Gerar stacks com o Claude Code (incluso):', 'Generate stacks with Claude Code (included):'));
+    this.log(t('  iacmp setup                # registra as ferramentas MCP; depois abra o Claude Code aqui', '  iacmp setup                # registers the MCP tools; then open Claude Code here'));
     this.log('');
     this.log('Docs: https://github.com/Claudio-Fontes/iacmp');
   }

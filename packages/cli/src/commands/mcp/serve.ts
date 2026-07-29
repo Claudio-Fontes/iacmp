@@ -1,12 +1,16 @@
 import { Command } from '@oclif/core';
 import { spawn } from 'child_process';
+import { t } from '../../i18n';
 import { resolveMcpServer } from '../../mcp-path';
 
 export default class McpServe extends Command {
-  static description =
+  static description = t(
     'Roda o servidor MCP do iacmp (protocolo stdio) para o Claude. Você normalmente ' +
     'não chama isto à mão — `iacmp setup` registra este comando no Claude, que o ' +
-    'executa sozinho.';
+    'executa sozinho.',
+    'Runs the iacmp MCP server (stdio protocol) for Claude. You normally don\'t ' +
+    'run this by hand — `iacmp setup` registers this command in Claude, which ' +
+    'runs it on its own.');
 
   static examples = ['$ iacmp mcp serve'];
 
@@ -18,7 +22,7 @@ export default class McpServe extends Command {
     await new Promise<void>((resolve, reject) => {
       const child = spawn(process.execPath, [serverPath, 'stdio'], { stdio: 'inherit' });
       child.on('exit', code => { process.exitCode = code ?? 0; resolve(); });
-      child.on('error', err => reject(new Error(`Falha ao iniciar o servidor MCP: ${err.message}`)));
+      child.on('error', err => reject(new Error(t(`Falha ao iniciar o servidor MCP: ${err.message}`, `Failed to start the MCP server: ${err.message}`))));
     });
   }
 }

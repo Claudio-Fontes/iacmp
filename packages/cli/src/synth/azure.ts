@@ -7,6 +7,7 @@ import { IacmpConfig } from '../utils';
 import { LoadedStack } from '../validators';
 import { providerOutDir, listTemplates, orderByDependency, generateAzureMainBicep, AZURE_MAIN_FILE, TemplateRef } from '../synth-out';
 import { SynthUI } from './types';
+import { t } from '../i18n';
 
 export function synthAzure(o: {
   cwd: string;
@@ -48,9 +49,9 @@ export function synthAzure(o: {
           JSON.stringify({ functions: fnMeta, containerBuilds }, null, 2),
         );
       }
-      o.ui.log(`Sintetizado: ${outPath}`);
+      o.ui.log(t(`Sintetizado: ${outPath}`, `Synthesized: ${outPath}`));
     } catch (err) {
-      o.ui.error(`Falha ao sintetizar '${stackName}': ${(err as Error).message}`);
+      o.ui.error(t(`Falha ao sintetizar '${stackName}': ${(err as Error).message}`, `Failed to synthesize '${stackName}': ${(err as Error).message}`));
     }
   }
 
@@ -101,7 +102,7 @@ function writeAzureMain(cwd: string, ordered: TemplateRef[], ui: SynthUI): void 
   } else if (fs.existsSync(mainMetaPath)) {
     fs.rmSync(mainMetaPath);
   }
-  ui.log(`Sintetizado: ${mainPath} (deployment único — módulos com referência simbólica)`);
+  ui.log(t(`Sintetizado: ${mainPath} (deployment único — módulos com referência simbólica)`, `Synthesized: ${mainPath} (single deployment — modules with symbolic references)`));
 }
 
 /**
@@ -113,7 +114,7 @@ function writeAzureMain(cwd: string, ordered: TemplateRef[], ui: SynthUI): void 
 function validateAzureTemplates(cwd: string, ui: SynthUI, resourceGroup?: string, stack?: string): void {
   const azCheck = spawnSync('az', ['--version'], { encoding: 'utf-8' });
   if (azCheck.error) {
-    ui.log('  az CLI não encontrado — validação Azure skipped.');
+    ui.log(t('  az CLI não encontrado — validação Azure skipped.', '  az CLI not found — Azure validation skipped.'));
     return;
   }
 
@@ -138,19 +139,19 @@ function validateAzureTemplates(cwd: string, ui: SynthUI, resourceGroup?: string
     const stackName = file.replace('.bicep', '');
     const result = spawnSync('az', ['bicep', 'build', '--file', filePath, '--stdout'], { encoding: 'utf-8' });
     if (result.status !== 0) {
-      ui.warn(`az bicep build falhou para '${stackName}':\n${result.stderr || result.stdout}`);
+      ui.warn(t(`az bicep build falhou para '${stackName}':\n${result.stderr || result.stdout}`, `az bicep build failed for '${stackName}':\n${result.stderr || result.stdout}`));
       hasError = true;
     } else {
       ui.log(`  Bicep build OK: ${stackName}`);
     }
   }
   if (hasError) {
-    ui.error('Erro de sintaxe Bicep. Corrija antes de fazer deploy.');
+    ui.error(t('Erro de sintaxe Bicep. Corrija antes de fazer deploy.', 'Bicep syntax error. Fix it before deploying.'));
   }
 
   // Estágio 2: validação via API Azure (requer resource group configurado e existente)
   if (!resourceGroup) {
-    ui.log('  az deployment validate: resourceGroup não configurado no iacmp.json — skipped.');
+    ui.log(t('  az deployment validate: resourceGroup não configurado no iacmp.json — skipped.', '  az deployment validate: resourceGroup not configured in iacmp.json — skipped.'));
     return;
   }
   const rgCheck = spawnSync(
@@ -184,14 +185,14 @@ function validateAzureTemplates(cwd: string, ui: SynthUI, resourceGroup?: string
       // em deploy-time — não é um erro real de template, apenas uma limitação de
       // quota que o deploy orquestra via outputs acumulados entre stacks.
       if (output.includes('MaxNumberOfRegionalEnvironmentsInSubExceeded')) {
-        ui.log(`  az deployment validate: ${stackName} — CAE quota (sharedCaeId resolve em deploy)`);
+        ui.log(t(`  az deployment validate: ${stackName} — CAE quota (sharedCaeId resolve em deploy)`, `  az deployment validate: ${stackName} — CAE quota (sharedCaeId resolves at deploy)`));
       } else if (output.includes('Alerts are currently not supported at') && output.includes('microsoft.app/containerapps')) {
         // Metric alerts para Container Apps só aceitam escopo de recurso individual.
         // O bicep.ts gera param alarmScopeId (default '') com condition — o alarm
         // só é criado quando o deploy injeta o resource ID real do Container App.
-        ui.log(`  az deployment validate: ${stackName} — Container Apps alert scope resolve em deploy (param alarmScopeId)`);
+        ui.log(t(`  az deployment validate: ${stackName} — Container Apps alert scope resolve em deploy (param alarmScopeId)`, `  az deployment validate: ${stackName} — Container Apps alert scope resolves at deploy (param alarmScopeId)`));
       } else {
-        ui.warn(`az deployment group validate falhou para '${stackName}':\n${output}`);
+        ui.warn(t(`az deployment group validate falhou para '${stackName}':\n${output}`, `az deployment group validate failed for '${stackName}':\n${output}`));
         hasError = true;
       }
     } else {
@@ -200,7 +201,7 @@ function validateAzureTemplates(cwd: string, ui: SynthUI, resourceGroup?: string
   }
 
   if (hasError) {
-    ui.error('Validação Azure encontrou erros. Corrija antes de fazer deploy.');
+    ui.error(t('Validação Azure encontrou erros. Corrija antes de fazer deploy.', 'Azure validation found errors. Fix them before deploying.'));
   }
 }
 

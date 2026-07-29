@@ -2,6 +2,7 @@ import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { t } from '../../i18n';
 import { resourceGroupExists } from './stack-api';
 
 /** Resource group compartilhado entre projetos — guarda o ACR de bootstrap. Nunca é destruído por `iacmp destroy` de um projeto individual. */
@@ -116,7 +117,7 @@ function fetchAcrCredentials(acrName: string): BootstrapAcr {
 export function ensureBootstrapAcr(location: string): BootstrapAcr {
   const subscriptionId = getSubscriptionId();
   if (!resourceGroupExists(ACR_BOOTSTRAP_RESOURCE_GROUP)) {
-    process.stdout.write(`[iacmp] Criando resource group de bootstrap "${ACR_BOOTSTRAP_RESOURCE_GROUP}" (compartilhado entre projetos)...\n`);
+    process.stdout.write(t(`[iacmp] Criando resource group de bootstrap "${ACR_BOOTSTRAP_RESOURCE_GROUP}" (compartilhado entre projetos)...\n`, `[iacmp] Creating bootstrap resource group "${ACR_BOOTSTRAP_RESOURCE_GROUP}" (shared across projects)...\n`));
     execFileSync('az', ['group', 'create', '--name', ACR_BOOTSTRAP_RESOURCE_GROUP, '--location', location], { stdio: 'pipe' });
   }
 
@@ -132,7 +133,7 @@ export function ensureBootstrapAcr(location: string): BootstrapAcr {
 
     // 1. Show-before-create: já é nosso? Reusa sem tentar criar de novo.
     if (acrExists(acrName, ACR_BOOTSTRAP_RESOURCE_GROUP)) {
-      process.stdout.write(`[iacmp] ACR de bootstrap "${acrName}" já existe (nome ${reason}) — reaproveitando.\n`);
+      process.stdout.write(t(`[iacmp] ACR de bootstrap "${acrName}" já existe (nome ${reason}) — reaproveitando.\n`, `[iacmp] Bootstrap ACR "${acrName}" already exists (${reason} name) — reusing.\n`));
       execFileSync('az', ['acr', 'update', '--name', acrName, '--resource-group', ACR_BOOTSTRAP_RESOURCE_GROUP, '--admin-enabled', 'true'], { stdio: 'pipe' });
       if (state.acrName !== acrName) writeBootstrapState({ acrName });
       return fetchAcrCredentials(acrName);
@@ -140,12 +141,12 @@ export function ensureBootstrapAcr(location: string): BootstrapAcr {
 
     // 2. Não é nosso ainda — o nome está livre pra CRIAR (namespace global)?
     if (!acrNameAvailable(acrName)) {
-      process.stdout.write(`[iacmp] Nome de ACR "${acrName}" (${reason}) está em uso fora do nosso resource group (namespace global azurecr.io) — gerando nome alternativo...\n`);
+      process.stdout.write(t(`[iacmp] Nome de ACR "${acrName}" (${reason}) está em uso fora do nosso resource group (namespace global azurecr.io) — gerando nome alternativo...\n`, `[iacmp] ACR name "${acrName}" (${reason}) is taken outside our resource group (global azurecr.io namespace) — generating an alternative name...\n`));
       candidates.push({ name: `${deterministicName}${randomAcrSuffix()}`.slice(0, 50), reason: 'fallback' });
       continue;
     }
 
-    process.stdout.write(`[iacmp] Criando Azure Container Registry de bootstrap "${acrName}" (nome ${reason})...\n`);
+    process.stdout.write(t(`[iacmp] Criando Azure Container Registry de bootstrap "${acrName}" (nome ${reason})...\n`, `[iacmp] Creating bootstrap Azure Container Registry "${acrName}" (${reason} name)...\n`));
     try {
       execFileSync('az', [
         'acr', 'create',
@@ -160,24 +161,26 @@ export function ensureBootstrapAcr(location: string): BootstrapAcr {
     } catch (err) {
       const stderr = (err as { stderr?: Buffer }).stderr?.toString() ?? (err as Error).message;
       if (!/RegistryNameAlreadyInUse/i.test(stderr)) {
-        throw new Error(`Falha ao criar o ACR de bootstrap "${acrName}": ${stderr}`);
+        throw new Error(t(`Falha ao criar o ACR de bootstrap "${acrName}": ${stderr}`, `Failed to create the bootstrap ACR "${acrName}": ${stderr}`));
       }
       // 3. Corrida entre processos: outro deploy concorrente pode ter criado
       // esse MESMO nome entre o check-name e o create — se foi no NOSSO
       // resource group, a corrida terminou em sucesso; reusa.
       if (acrExists(acrName, ACR_BOOTSTRAP_RESOURCE_GROUP)) {
-        process.stdout.write(`[iacmp] ACR "${acrName}" foi criado por um deploy concorrente entre o check e o create — reaproveitando.\n`);
+        process.stdout.write(t(`[iacmp] ACR "${acrName}" foi criado por um deploy concorrente entre o check e o create — reaproveitando.\n`, `[iacmp] ACR "${acrName}" was created by a concurrent deploy between the check and the create — reusing.\n`));
         execFileSync('az', ['acr', 'update', '--name', acrName, '--resource-group', ACR_BOOTSTRAP_RESOURCE_GROUP, '--admin-enabled', 'true'], { stdio: 'pipe' });
         writeBootstrapState({ acrName });
         return fetchAcrCredentials(acrName);
       }
       // Não é nosso — o nome é de terceiros mesmo (reservado fora da nossa visão). Fallback.
-      process.stdout.write(`[iacmp] "${acrName}" já está em uso (RegistryNameAlreadyInUse) e não é nosso — gerando nome alternativo...\n`);
+      process.stdout.write(t(`[iacmp] "${acrName}" já está em uso (RegistryNameAlreadyInUse) e não é nosso — gerando nome alternativo...\n`, `[iacmp] "${acrName}" is already taken (RegistryNameAlreadyInUse) and not ours — generating an alternative name...\n`));
       candidates.push({ name: `${deterministicName}${randomAcrSuffix()}`.slice(0, 50), reason: 'fallback' });
     }
   }
-  throw new Error(
+  throw new Error(t(
     `Não foi possível encontrar um nome disponível para o ACR de bootstrap após ${MAX_ATTEMPTS} tentativas ` +
     `(subscription ${subscriptionId}). Verifique "az acr check-name" manualmente ou limpe ~/.iacmp/azure-bootstrap.json.`,
-  );
+    `Could not find an available name for the bootstrap ACR after ${MAX_ATTEMPTS} attempts ` +
+    `(subscription ${subscriptionId}). Check "az acr check-name" manually or clear ~/.iacmp/azure-bootstrap.json.`,
+  ));
 }

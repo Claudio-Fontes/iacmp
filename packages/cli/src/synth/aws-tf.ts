@@ -5,6 +5,7 @@ import { Stack, EnvironmentProfile } from '@iacmp/core';
 import { LoadedStack } from '../validators';
 import { providerOutDir } from '../synth-out';
 import { SynthUI } from './types';
+import { t } from '../i18n';
 
 /**
  * `--provider aws --format tf` — gera Terraform (tf.json) em synth-out/aws-tf/.
@@ -119,11 +120,11 @@ export function synthAwsTf(o: {
   if (Object.keys(mergedSharedVars).length > 0) shared.variable = mergedSharedVars;
   if (Object.keys(mergedSharedData).length > 0) shared.data = mergedSharedData;
   fs.writeFileSync(path.join(tfDir, '_providers.tf.json'), JSON.stringify(shared, null, 2) + '\n');
-  o.ui.log(`Sintetizado (aws-tf): ${path.join(tfDir, '_providers.tf.json')}`);
+  o.ui.log(t(`Sintetizado (aws-tf): ${path.join(tfDir, '_providers.tf.json')}`, `Synthesized (aws-tf): ${path.join(tfDir, '_providers.tf.json')}`));
 
   for (const { stackName, stackOut } of perStack) {
     const outPath = path.join(tfDir, `${stackName}.tf.json`);
     fs.writeFileSync(outPath, JSON.stringify(stackOut, null, 2) + '\n');
-    o.ui.log(`Sintetizado (aws-tf): ${outPath}`);
+    o.ui.log(t(`Sintetizado (aws-tf): ${outPath}`, `Synthesized (aws-tf): ${outPath}`));
   }
 }

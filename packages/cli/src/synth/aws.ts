@@ -6,6 +6,7 @@ import { Stack, EnvironmentProfile } from '@iacmp/core';
 import { LoadedStack } from '../validators';
 import { providerOutDir, listTemplates, orderByDependency } from '../synth-out';
 import { SynthUI } from './types';
+import { t } from '../i18n';
 
 export function synthAws(o: {
   cwd: string;
@@ -25,9 +26,9 @@ export function synthAws(o: {
       const template = p.synthesize(stack, o.allStacks, o.profile, o.projectName);
       const outPath = path.join(provOutDir, `${stackName}.json`);
       fs.writeFileSync(outPath, JSON.stringify(template, null, 2) + '\n');
-      o.ui.log(`Sintetizado: ${outPath}`);
+      o.ui.log(t(`Sintetizado: ${outPath}`, `Synthesized: ${outPath}`));
     } catch (err) {
-      o.ui.error(`Falha ao sintetizar '${stackName}': ${(err as Error).message}`);
+      o.ui.error(t(`Falha ao sintetizar '${stackName}': ${(err as Error).message}`, `Failed to synthesize '${stackName}': ${(err as Error).message}`));
     }
   }
 
@@ -53,7 +54,7 @@ export function synthAws(o: {
 function validateAwsTemplates(cwd: string, ui: SynthUI, stack?: string): void {
   const awsCheck = spawnSync('aws', ['--version'], { encoding: 'utf-8' });
   if (awsCheck.error) {
-    ui.log('  aws CLI não encontrado — aws cloudformation validate-template skipped.');
+    ui.log(t('  aws CLI não encontrado — aws cloudformation validate-template skipped.', '  aws CLI not found — aws cloudformation validate-template skipped.'));
     return;
   }
 
@@ -81,10 +82,10 @@ function validateAwsTemplates(cwd: string, ui: SynthUI, stack?: string): void {
     if (result.status !== 0) {
       const out = result.stderr || result.stdout || '';
       if (isAwsEnvError(out)) {
-        ui.log('  aws sem credenciais/região — validate-template skipped (synth é offline; validado no deploy).');
+        ui.log(t('  aws sem credenciais/região — validate-template skipped (synth é offline; validado no deploy).', '  aws has no credentials/region — validate-template skipped (synth is offline; validated on deploy).'));
         return;
       }
-      ui.warn(`aws cloudformation validate-template falhou para '${stackName}':\n${out}`);
+      ui.warn(t(`aws cloudformation validate-template falhou para '${stackName}':\n${out}`, `aws cloudformation validate-template failed for '${stackName}':\n${out}`));
       hasError = true;
     } else {
       ui.log(`  CFN validate OK: ${stackName}`);
@@ -92,6 +93,6 @@ function validateAwsTemplates(cwd: string, ui: SynthUI, stack?: string): void {
   }
 
   if (hasError) {
-    ui.error('Validação CloudFormation encontrou erros. Corrija antes de fazer deploy.');
+    ui.error(t('Validação CloudFormation encontrou erros. Corrija antes de fazer deploy.', 'CloudFormation validation found errors. Fix them before deploying.'));
   }
 }

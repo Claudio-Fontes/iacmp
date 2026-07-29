@@ -6,6 +6,7 @@ import ora from 'ora';
 import chalk from 'chalk';
 import Anthropic from '@anthropic-ai/sdk';
 import { AIProvider, AiApi, loadAi, PRO_MESSAGE } from '../pro';
+import { t } from '../i18n';
 import { ensureProjectInitialized } from '../bootstrap';
 import { runGeneration, AskFn } from '../generation';
 import { loadEnv } from '../env-loader';
@@ -60,11 +61,11 @@ function detectProvider(description: string): string {
 }
 
 export default class FromDiagram extends Command {
-  static description = 'Gera stacks de infraestrutura a partir de um diagrama de arquitetura (imagem).';
+  static description = t('Gera stacks de infraestrutura a partir de um diagrama de arquitetura (imagem).', 'Generates infrastructure stacks from an architecture diagram (image).');
 
   static args = {
     image: Args.string({
-      description: 'Caminho para o arquivo de imagem (PNG, JPG, WEBP, GIF)',
+      description: t('Caminho para o arquivo de imagem (PNG, JPG, WEBP, GIF)', 'Path to the image file (PNG, JPG, WEBP, GIF)'),
       required: true,
     }),
   };
@@ -72,10 +73,10 @@ export default class FromDiagram extends Command {
   static flags = {
     provider: Flags.string({
       char: 'p',
-      description: 'Provider alvo (aws, azure, gcp, terraform) — sobrepõe o detectado no diagrama',
+      description: t('Provider alvo (aws, azure, gcp, terraform) — sobrepõe o detectado no diagrama', 'Target provider (aws, azure, gcp, terraform) — overrides the one detected in the diagram'),
     }),
     'dry-run': Flags.boolean({
-      description: 'Gera e exibe sem salvar arquivos',
+      description: t('Gera e exibe sem salvar arquivos', 'Generates and shows without saving files'),
       default: false,
     }),
   };

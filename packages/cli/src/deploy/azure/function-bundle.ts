@@ -1,6 +1,7 @@
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import { t } from '../../i18n';
 import { renderHttpTriggerWrapper } from './http-trigger-wrapper';
 
 export interface AzureFunctionMeta {
@@ -64,7 +65,7 @@ export function buildFunctionBundle(
   try {
     esbuild = require('esbuild') as typeof esbuild;
   } catch {
-    throw new Error('esbuild não encontrado. Rode `npm install` no iacmp.');
+    throw new Error(t('esbuild não encontrado. Rode `npm install` no iacmp.', 'esbuild not found. Run `npm install` in iacmp.'));
   }
 
   // __dirname em runtime é dist/commands/ (tsup bundla cada command ali)

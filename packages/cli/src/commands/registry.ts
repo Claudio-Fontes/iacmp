@@ -1,4 +1,5 @@
 import { Command, Args } from '@oclif/core';
+import { t } from '../i18n';
 import { listConstructs, searchConstructs, RegistryConstruct } from '@iacmp/registry';
 
 function padEnd(str: string, len: number): string {
@@ -7,11 +8,11 @@ function padEnd(str: string, len: number): string {
 
 function printTable(constructs: RegistryConstruct[]): void {
   if (constructs.length === 0) {
-    console.log('Nenhum construct encontrado.');
+    console.log(t('Nenhum construct encontrado.', 'No construct found.'));
     return;
   }
 
-  const header = `${padEnd('Nome', 22)} ${padEnd('Pacote', 30)} ${padEnd('Providers', 14)} Descrição`;
+  const header = `${padEnd(t('Nome', 'Name'), 22)} ${padEnd(t('Pacote', 'Package'), 30)} ${padEnd('Providers', 14)} ${t('Descrição', 'Description')}`;
   const sep = '-'.repeat(header.length);
 
   console.log(sep);
@@ -26,15 +27,15 @@ function printTable(constructs: RegistryConstruct[]): void {
   }
 
   console.log(sep);
-  console.log(`${constructs.length} construct(s) encontrado(s).`);
+  console.log(t(`${constructs.length} construct(s) encontrado(s).`, `${constructs.length} construct(s) found.`));
 }
 
 export default class Registry extends Command {
-  static description = 'Acessa o registry de constructs da comunidade';
+  static description = t('Acessa o registry de constructs da comunidade', 'Accesses the community construct registry');
 
   static args = {
-    subcommand: Args.string({ description: 'Subcomando: list | search <termo>', required: true }),
-    term: Args.string({ description: 'Termo de busca (usado com search)', required: false }),
+    subcommand: Args.string({ description: t('Subcomando: list | search <termo>', 'Subcommand: list | search <term>'), required: true }),
+    term: Args.string({ description: t('Termo de busca (usado com search)', 'Search term (used with search)'), required: false }),
   };
 
   static examples = [
@@ -47,22 +48,22 @@ export default class Registry extends Command {
 
     switch (args.subcommand) {
       case 'list': {
-        this.log('Constructs disponíveis no registry:\n');
+        this.log(t('Constructs disponíveis no registry:\n', 'Constructs available in the registry:\n'));
         printTable(listConstructs());
         break;
       }
 
       case 'search': {
         if (!args.term) {
-          this.error('Informe um termo de busca. Ex: iacmp registry search cognito');
+          this.error(t('Informe um termo de busca. Ex: iacmp registry search cognito', 'Provide a search term. E.g.: iacmp registry search cognito'));
         }
-        this.log(`Buscando por "${args.term}":\n`);
+        this.log(t(`Buscando por "${args.term}":\n`, `Searching for "${args.term}":\n`));
         printTable(searchConstructs(args.term));
         break;
       }
 
       default:
-        this.error(`Subcomando desconhecido: '${args.subcommand}'. Use: list ou search <termo>`);
+        this.error(t(`Subcomando desconhecido: '${args.subcommand}'. Use: list ou search <termo>`, `Unknown subcommand: '${args.subcommand}'. Use: list or search <term>`));
     }
   }
 }

@@ -1,6 +1,7 @@
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import chalk from 'chalk';
+import { t } from '../../i18n';
 import { errMessage } from '../../utils';
 import { listApimServices, purgeApimSoftDeleted } from '../azure';
 import { confirm, DeployUI } from './common';
@@ -25,23 +26,35 @@ export async function maybeDeleteEmptyRg(rg: string, force: boolean, ui: DeployU
   }
   if (!Number.isFinite(count)) return;
   if (count > 0) {
-    ui.log(chalk.dim(`Resource group "${rg}" ainda tem ${count} recurso(s) — mantido (não é uma casca vazia).`));
+    ui.log(chalk.dim(t(
+      `Resource group "${rg}" ainda tem ${count} recurso(s) — mantido (não é uma casca vazia).`,
+      `Resource group "${rg}" still has ${count} resource(s) — kept (it is not an empty shell).`,
+    )));
     return;
   }
   let ok = force;
   if (!force) {
     if (!process.stdin.isTTY) {
-      ui.log(chalk.dim(`Resource group "${rg}" ficou vazio. Para remover: az group delete --name ${rg} --yes`));
+      ui.log(chalk.dim(t(
+        `Resource group "${rg}" ficou vazio. Para remover: az group delete --name ${rg} --yes`,
+        `Resource group "${rg}" is now empty. To remove it: az group delete --name ${rg} --yes`,
+      )));
       return;
     }
-    ok = await confirm(`O resource group "${rg}" ficou vazio. Excluir também?`);
+    ok = await confirm(t(
+      `O resource group "${rg}" ficou vazio. Excluir também?`,
+      `Resource group "${rg}" is now empty. Delete it as well?`,
+    ));
   }
   if (!ok) return;
-  ui.log(`Removendo resource group "${rg}"...`);
+  ui.log(t(`Removendo resource group "${rg}"...`, `Removing resource group "${rg}"...`));
   try {
     execFileSync('az', ['group', 'delete', '--name', rg, '--yes'], { stdio: 'inherit' });
   } catch (err) {
-    ui.log(chalk.dim(`Não consegui remover o RG (${errMessage(err)}) — remova manualmente se quiser.`));
+    ui.log(chalk.dim(t(
+      `Não consegui remover o RG (${errMessage(err)}) — remova manualmente se quiser.`,
+      `Could not remove the RG (${errMessage(err)}) — remove it manually if you want.`,
+    )));
   }
 }
 
@@ -67,23 +80,35 @@ export async function maybePurgeRetainedBuckets(templatePaths: string[], region:
   });
   if (alive.length === 0) return;
 
-  ui.log(chalk.yellow(`\nBucket(s) com DeletionPolicy Retain que sobreviveram ao destroy: ${alive.join(', ')}`));
+  ui.log(chalk.yellow(t(
+    `\nBucket(s) com DeletionPolicy Retain que sobreviveram ao destroy: ${alive.join(', ')}`,
+    `\nBucket(s) with DeletionPolicy Retain that survived the destroy: ${alive.join(', ')}`,
+  )));
   let ok = force;
   if (!force) {
     if (!process.stdin.isTTY) {
-      ui.log(chalk.dim(`Para remover cada um: esvazie as versões e rode 'aws s3api delete-bucket --bucket <nome>'.`));
+      ui.log(chalk.dim(t(
+        `Para remover cada um: esvazie as versões e rode 'aws s3api delete-bucket --bucket <nome>'.`,
+        `To remove each one: empty the versions and run 'aws s3api delete-bucket --bucket <name>'.`,
+      )));
       return;
     }
-    ok = await confirm(`Esvaziar (INCLUINDO versões) e EXCLUIR esse(s) bucket(s)? APAGA os dados permanentemente`);
+    ok = await confirm(t(
+      `Esvaziar (INCLUINDO versões) e EXCLUIR esse(s) bucket(s)? APAGA os dados permanentemente`,
+      `Empty (INCLUDING versions) and DELETE these bucket(s)? This permanently ERASES the data`,
+    ));
   }
   if (!ok) return;
   for (const b of alive) {
-    ui.log(`Esvaziando e removendo s3://${b}...`);
+    ui.log(t(`Esvaziando e removendo s3://${b}...`, `Emptying and removing s3://${b}...`));
     try {
       emptyBucket(b);
       execFileSync('aws', ['s3api', 'delete-bucket', '--bucket', b, '--region', region], { stdio: 'pipe' });
     } catch (err) {
-      ui.log(chalk.dim(`Falha em ${b} (${errMessage(err)}) — remova manualmente.`));
+      ui.log(chalk.dim(t(
+        `Falha em ${b} (${errMessage(err)}) — remova manualmente.`,
+        `Failed on ${b} (${errMessage(err)}) — remove it manually.`,
+      )));
     }
   }
 }
@@ -113,8 +138,10 @@ export function captureApimsToPurge(resourceGroup: string): ReturnType<typeof li
 export function fireApimPurge(apims: ReturnType<typeof listApimServices>, ui: DeployUI): void {
   if (apims.length === 0) return;
   purgeApimSoftDeleted(apims);
-  ui.log(chalk.dim(
+  ui.log(chalk.dim(t(
     `Purga do APIM soft-deleted disparada em background: ${apims.map(a => a.name).join(', ')} ` +
     `(libera o nome para re-deploy — sem isso ficaria 48h na lixeira do Azure).`,
-  ));
+    `Purge of soft-deleted APIM fired in background: ${apims.map(a => a.name).join(', ')} ` +
+    `(frees the name for re-deploy — without this it would sit 48h in the Azure recycle bin).`,
+  )));
 }

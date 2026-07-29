@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { Stack, isRef } from '@iacmp/core';
+import { t } from '../i18n';
 
 export interface LoadedStack {
   stackName: string;
@@ -69,11 +70,14 @@ export function validateHandlerFiles(loaded: LoadedStack[], cwd: string): string
       const expected = /^(\.\/)?dist\/.+/.test(code)
         ? `${code.replace(/^(\.\/)?dist(\/|$)/, 'src$2')}/${mod}.ts`.replace(/\/{2,}/g, '/')
         : `src/${mod.replace(/^(\.\/)?(dist|src)\//, '')}.ts`;
-      errors.push(
+      errors.push(t(
         `Fn.Lambda "${c.id}": handler '${handler}' não tem arquivo de origem — esperado ${expected}. ` +
         `AÇÃO CORRETA: CRIE o arquivo ${expected} exportando a função do handler. ` +
         `NÃO altere o campo handler na stack — o path está correto; o que falta é o arquivo ${expected}.`,
-      );
+        `Fn.Lambda "${c.id}": handler '${handler}' has no matching source file — expected ${expected}. ` +
+        `CORRECT ACTION: CREATE the file ${expected} exporting the handler function. ` +
+        `Do NOT change the handler field in the stack — the path is correct; what is missing is the file ${expected}.`,
+      ));
     }
   }
   return errors;
@@ -109,10 +113,12 @@ export function validateHandlerSql(cwd: string): string[] {
       const vals = m[2].split(',').map(x => x.trim()).filter(Boolean);
       const simpleVals = vals.every(v => /^(\$\d+|\?)$/.test(v));
       if (simpleVals && cols.length !== vals.length) {
-        errors.push(
+        errors.push(t(
           `${path.relative(cwd, file)}: INSERT com ${cols.length} coluna(s) (${cols.join(', ')}) ` +
           `mas ${vals.length} valor(es) (${vals.join(', ')}). A contagem deve bater.`,
-        );
+          `${path.relative(cwd, file)}: INSERT with ${cols.length} column(s) (${cols.join(', ')}) ` +
+          `but ${vals.length} value(s) (${vals.join(', ')}). The counts must match.`,
+        ));
       }
     }
   }
@@ -171,13 +177,24 @@ export function validateHandlerCloudSdk(cwd: string, provider: string): string[]
       .join('; ');
     const otherCloud = provider === 'azure' ? 'AWS' : 'Azure';
     errors.push(
-      `handlers usam SDK sem tradução para ${provider.toUpperCase()}: ${detail}. ` +
+      t(
+        `handlers usam SDK sem tradução para ${provider.toUpperCase()}: ${detail}. `,
+        `handlers use an SDK with no translation for ${provider.toUpperCase()}: ${detail}. `,
+      ) +
       (provider === 'azure'
-        ? `O deploy Azure traduz via shim apenas DynamoDB e S3 (${[...AZURE_SHIMMED_AWS_SDK].join(', ')}) — ` +
-          `os demais pacotes @aws-sdk quebram em runtime. `
-        : `O deploy AWS não traduz pacotes @azure/*. `) +
-      `Para este cenário em ${provider.toUpperCase()}, gere o projeto para essa cloud (iacmp ai --provider ${provider}) — ` +
-      `os handlers virão com o SDK nativo de ${provider === 'azure' ? 'Azure' : 'AWS'} (projeto gerado para ${otherCloud} continua funcionando lá).`,
+        ? t(
+            `O deploy Azure traduz via shim apenas DynamoDB e S3 (${[...AZURE_SHIMMED_AWS_SDK].join(', ')}) — ` +
+            `os demais pacotes @aws-sdk quebram em runtime. `,
+            `The Azure deploy shims only DynamoDB and S3 (${[...AZURE_SHIMMED_AWS_SDK].join(', ')}) — ` +
+            `the other @aws-sdk packages break at runtime. `,
+          )
+        : t('O deploy AWS não traduz pacotes @azure/*. ', 'The AWS deploy does not translate @azure/* packages. ')) +
+      t(
+        `Para este cenário em ${provider.toUpperCase()}, gere o projeto para essa cloud (iacmp ai --provider ${provider}) — ` +
+        `os handlers virão com o SDK nativo de ${provider === 'azure' ? 'Azure' : 'AWS'} (projeto gerado para ${otherCloud} continua funcionando lá).`,
+        `For this scenario on ${provider.toUpperCase()}, generate the project for that cloud (iacmp ai --provider ${provider}) — ` +
+        `the handlers will come with the native ${provider === 'azure' ? 'Azure' : 'AWS'} SDK (the project generated for ${otherCloud} keeps working there).`,
+      ),
     );
   }
   return errors;
@@ -203,10 +220,12 @@ export function validateHandlerVpcSecrets(loaded: LoadedStack[], cwd: string): s
       if (!srcFile) continue;
       const content = fs.readFileSync(srcFile, 'utf-8');
       if (SECRET_USE.test(content)) {
-        errors.push(
+        errors.push(t(
           `Fn.Lambda "${c.id}" (em VPC) → ${path.relative(cwd, srcFile)} usa Secrets Manager em runtime. ` +
           `A senha já vem resolvida na env: use process.env.DB_PASSWORD direto (padrão iacmp), sem @aws-sdk/client-secrets-manager.`,
-        );
+          `Fn.Lambda "${c.id}" (in a VPC) → ${path.relative(cwd, srcFile)} uses Secrets Manager at runtime. ` +
+          `The password already arrives resolved in the env: use process.env.DB_PASSWORD directly (iacmp default), without @aws-sdk/client-secrets-manager.`,
+        ));
       }
     }
   }
@@ -249,10 +268,12 @@ export function validateHandlerDynamoNoSql(loaded: LoadedStack[], cwd: string): 
   for (const file of tsFiles) {
     const content = fs.readFileSync(file, 'utf-8');
     if (SQL_DRIVER.test(content)) {
-      errors.push(
+      errors.push(t(
         `${path.relative(cwd, file)}: importa um driver SQL (pg/mysql/...) mas o projeto usa DynamoDB, que NÃO é SQL. ` +
         `Use o DocumentClient (@aws-sdk/lib-dynamodb: DynamoDBDocumentClient + GetCommand/PutCommand/QueryCommand/ScanCommand) — sem SELECT/INSERT nem pg.Client.`,
-      );
+        `${path.relative(cwd, file)}: imports a SQL driver (pg/mysql/...) but the project uses DynamoDB, which is NOT SQL. ` +
+        `Use the DocumentClient (@aws-sdk/lib-dynamodb: DynamoDBDocumentClient + GetCommand/PutCommand/QueryCommand/ScanCommand) — no SELECT/INSERT and no pg.Client.`,
+      ));
     }
   }
   return errors;
@@ -291,13 +312,18 @@ export function validateHandlerDynamoGsi(loaded: LoadedStack[], cwd: string): st
     for (const m of content.matchAll(/IndexName\s*:\s*['"]([^'"]+)['"]/g)) used.add(m[1]);
     const missing = [...used].filter(name => !declaredIndexes.has(name)).sort();
     if (missing.length > 0) {
-      errors.push(
+      errors.push(t(
         `${path.relative(cwd, file)}: consulta o(s) índice(s) ${missing.map(n => `'${n}'`).join(', ')} ` +
         `mas nenhuma Database.DynamoDB declara em globalSecondaryIndexes. ` +
         `Ou declare o GSI na tabela (globalSecondaryIndexes: [{ name, partitionKey, ... }]) e libere ` +
         `\`<TableArn>/index/*\` na Policy.IAM, ou — para limpeza por TTL — troque QueryCommand(IndexName) ` +
         `por ScanCommand + FilterExpression 'attr < :now' (sem índice).`,
-      );
+        `${path.relative(cwd, file)}: queries index(es) ${missing.map(n => `'${n}'`).join(', ')} ` +
+        `but no Database.DynamoDB declares them in globalSecondaryIndexes. ` +
+        `Either declare the GSI on the table (globalSecondaryIndexes: [{ name, partitionKey, ... }]) and allow ` +
+        `\`<TableArn>/index/*\` in the Policy.IAM, or — for TTL cleanup — replace QueryCommand(IndexName) ` +
+        `with ScanCommand + FilterExpression 'attr < :now' (no index).`,
+      ));
     }
   }
   return errors;
@@ -323,10 +349,12 @@ export function validateDbUserRef(loaded: LoadedStack[]): string[] {
       for (const key of ['DB_USER', 'PGUSER', 'DB_USERNAME']) {
         const v = env[key];
         if (typeof v === 'string') {
-          errors.push(
+          errors.push(t(
             `Fn.Lambda "${c.id}": ${key} está hardcoded como '${v}'. Use ref('<DbId>','Username') — ` +
             `o admin do Database.SQL varia por cloud (AWS/Azure = 'dbadmin'); um valor cravado quebra a auth em runtime.`,
-          );
+            `Fn.Lambda "${c.id}": ${key} is hardcoded as '${v}'. Use ref('<DbId>','Username') — ` +
+            `the Database.SQL admin varies per cloud (AWS/Azure = 'dbadmin'); a hardcoded value breaks auth at runtime.`,
+          ));
         }
       }
     }
@@ -346,10 +374,12 @@ export function validateRedisPortRef(loaded: LoadedStack[]): string[] {
       for (const key of ['REDIS_PORT', 'CACHE_PORT']) {
         const v = env[key];
         if (typeof v === 'string' && v.trim() === '6379') {
-          errors.push(
+          errors.push(t(
             `Fn.Lambda "${c.id}": ${key} hardcoded como '6379'. Redis Enterprise usa TLS na porta 10000 — ` +
             `use ref('<CacheId>','Port') que resolve para '10000'.`,
-          );
+            `Fn.Lambda "${c.id}": ${key} hardcoded as '6379'. Redis Enterprise uses TLS on port 10000 — ` +
+            `use ref('<CacheId>','Port'), which resolves to '10000'.`,
+          ));
         }
       }
     }
@@ -397,11 +427,14 @@ export function validateHandlerDynamoReservedWords(loaded: LoadedStack[], cwd: s
     }
     if (flagged.size > 0) {
       const list = [...flagged].sort();
-      errors.push(
+      errors.push(t(
         `${path.relative(cwd, file)}: a(s) expressão(ões) DynamoDB usam nome(s) reservado(s) ${list.map(w => `'${w}'`).join(', ')} sem alias. ` +
         `Aliase com ExpressionAttributeNames (${list.map(w => `{ '#${w.toLowerCase()}': '${w}' }`).join(', ')}) e use '#${list[0].toLowerCase()}' na expressão — ` +
         `nome reservado cru estoura ValidationException: Attribute name is a reserved keyword em runtime.`,
-      );
+        `${path.relative(cwd, file)}: the DynamoDB expression(s) use reserved name(s) ${list.map(w => `'${w}'`).join(', ')} without an alias. ` +
+        `Alias them with ExpressionAttributeNames (${list.map(w => `{ '#${w.toLowerCase()}': '${w}' }`).join(', ')}) and use '#${list[0].toLowerCase()}' in the expression — ` +
+        `a raw reserved name throws ValidationException: Attribute name is a reserved keyword at runtime.`,
+      ));
     }
   }
   return errors;
@@ -428,10 +461,12 @@ export function validateHandlerPgSsl(loaded: LoadedStack[], cwd: string): string
     const content = fs.readFileSync(file, 'utf-8');
     const usesPg = /from\s+['"]pg['"]|require\(\s*['"]pg['"]\s*\)/.test(content);
     if (usesPg && !/\bssl\s*:/.test(content)) {
-      errors.push(
+      errors.push(t(
         `${path.relative(cwd, file)}: usa o driver pg sem \`ssl\` na config do Client. ` +
         `Adicione \`ssl: { rejectUnauthorized: false }\` — RDS PostgreSQL exige conexão encriptada.`,
-      );
+        `${path.relative(cwd, file)}: uses the pg driver without \`ssl\` in the Client config. ` +
+        `Add \`ssl: { rejectUnauthorized: false }\` — RDS PostgreSQL requires an encrypted connection.`,
+      ));
     }
   }
   return errors;
@@ -486,10 +521,12 @@ export function validateHandlerEnvVars(loaded: LoadedStack[], cwd: string): stri
 
       const missing = [...used].filter(k => !declared.has(k) && !AZURE_AUTO_INJECTED.has(k)).sort();
       if (missing.length > 0) {
-        errors.push(
+        errors.push(t(
           `Fn.Lambda "${c.id}" → ${path.relative(cwd, srcFile)} lê process.env.${missing.join('/')} ` +
-          `mas o construct não declara essa(s) chave(s). Adicione environment: { ${missing.map(k => `${k}: <valor ou ref(...)>`).join(', ')} } no Fn.Lambda.`,
-        );
+          `mas o construct não declara essa(s) chave(s). Adicione environment: { ${missing.map(k => `${k}: <${t('valor ou ref(...)', 'value or ref(...)')}>`).join(', ')} } no Fn.Lambda.`,
+          `Fn.Lambda "${c.id}" → ${path.relative(cwd, srcFile)} reads process.env.${missing.join('/')} ` +
+          `but the construct does not declare the key(s). Add environment: { ${missing.map(k => `${k}: <${t('valor ou ref(...)', 'value or ref(...)')}>`).join(', ')} } to the Fn.Lambda.`,
+        ));
       }
     }
   }
@@ -536,11 +573,14 @@ export function validateLambdaVpcGatewayEndpoint(loaded: LoadedStack[], cwd: str
       for (const { service, re, facadeRe } of SDK_BY_SERVICE) {
         const detected = re.test(content) || (usesFacade && facadeRe.test(content));
         if (detected && !endpointServices.has(service)) {
-          errors.push(
+          errors.push(t(
             `Fn.Lambda "${c.id}" (em VPC) → ${path.relative(cwd, srcFile)} acessa ${service.toUpperCase()}, ` +
             `mas não há Gateway VPC Endpoint para '${service}'. Sem NAT, a Lambda em subnet privada não alcança o serviço e dá timeout. ` +
             `Adicione um Network.VpcEndpoint com services: ['${service}'] e os subnetIds das subnets privadas, na mesma stack da VPC.`,
-          );
+            `Fn.Lambda "${c.id}" (in a VPC) → ${path.relative(cwd, srcFile)} accesses ${service.toUpperCase()}, ` +
+            `but there is no Gateway VPC Endpoint for '${service}'. Without a NAT, a Lambda in a private subnet cannot reach the service and times out. ` +
+            `Add a Network.VpcEndpoint with services: ['${service}'] and the subnetIds of the private subnets, in the same stack as the VPC.`,
+          ));
         }
       }
     }
@@ -552,9 +592,9 @@ export function validateLambdaVpcGatewayEndpoint(loaded: LoadedStack[], cwd: str
 // stacks separadas. WAF/CDN/LB/API/Policy/Secret/Monitoring NÃO entram: são
 // serviços de borda/apoio que legitimamente acompanham a camada que servem.
 const STRUCTURAL_DOMAIN: Record<string, string> = {
-  Network: 'rede', Compute: 'compute', Function: 'compute',
-  Database: 'dados', Storage: 'storage', Cache: 'cache',
-  Messaging: 'mensageria', Events: 'mensageria',
+  Network: t('rede', 'network'), Compute: 'compute', Function: 'compute',
+  Database: t('dados', 'data'), Storage: 'storage', Cache: 'cache',
+  Messaging: t('mensageria', 'messaging'), Events: t('mensageria', 'messaging'),
 };
 
 /**
@@ -574,10 +614,12 @@ export function validateStackDomainSeparation(loaded: LoadedStack[]): string[] {
       if (d) domains.add(d);
     }
     if (domains.size >= 4) {
-      errors.push(
+      errors.push(t(
         `Stack "${stackName}" junta ${domains.size} domínios de infra (${[...domains].sort().join(', ')}) num único arquivo — isso é um monólito. ` +
         `SEPARE por domínio: um arquivo de stack para cada camada (ex: stacks/network.ts, stacks/database.ts, stacks/compute.ts, stacks/storage.ts) e ligue-as com ref() cross-stack. NÃO gere um main-stack.ts com tudo junto.`,
-      );
+        `Stack "${stackName}" bundles ${domains.size} infra domains (${[...domains].sort().join(', ')}) into a single file — that is a monolith. ` +
+        `SPLIT by domain: one stack file per layer (e.g. stacks/network.ts, stacks/database.ts, stacks/compute.ts, stacks/storage.ts) and wire them with cross-stack ref(). Do NOT generate a main-stack.ts with everything together.`,
+      ));
     }
   }
   return errors;

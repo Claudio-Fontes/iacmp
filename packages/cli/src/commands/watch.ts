@@ -2,6 +2,7 @@ import { Command, Flags } from '@oclif/core';
 import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
+import { t } from '../i18n';
 import { errMessage, loadIacmpConfig, resolveProvider, IacmpConfig } from '../utils';
 
 // Editores (vim/jetbrains/vscode) geram swap/temporários durante o salvamento;
@@ -25,10 +26,10 @@ function isStackSource(name: string): boolean {
 }
 
 export default class Watch extends Command {
-  static description = 'Monitora stacks/ e sintetiza automaticamente ao detectar mudanças';
+  static description = t('Monitora stacks/ e sintetiza automaticamente ao detectar mudanças', 'Watches stacks/ and synthesizes automatically when changes are detected');
 
   static flags = {
-    provider: Flags.string({ char: 'p', description: 'Provider alvo (aws, azure, gcp, terraform)', default: 'aws' }),
+    provider: Flags.string({ char: 'p', description: t('Provider alvo (aws, azure, gcp, terraform)', 'Target provider (aws, azure, gcp, terraform)'), default: 'aws' }),
   };
 
   static examples = [
@@ -47,16 +48,16 @@ export default class Watch extends Command {
       this.error(errMessage(err));
     }
     if (!config) {
-      this.error('Projeto não inicializado. Rode: iacmp init');
+      this.error(t('Projeto não inicializado. Rode: iacmp init', 'Project not initialized. Run: iacmp init'));
     }
     const provider = resolveProvider(config, flags.provider);
     const stacksDir = path.join(cwd, 'stacks');
 
     if (!fs.existsSync(stacksDir)) {
-      this.error('Diretório stacks/ não encontrado.');
+      this.error(t('Diretório stacks/ não encontrado.', 'stacks/ directory not found.'));
     }
 
-    this.log(`Monitorando stacks/ — pressione Ctrl+C para parar`);
+    this.log(t(`Monitorando stacks/ — pressione Ctrl+C para parar`, `Watching stacks/ — press Ctrl+C to stop`));
 
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -65,16 +66,16 @@ export default class Watch extends Command {
       const hh = String(now.getHours()).padStart(2, '0');
       const mm = String(now.getMinutes()).padStart(2, '0');
       const ss = String(now.getSeconds()).padStart(2, '0');
-      this.log(`[${hh}:${mm}:${ss}] Mudança detectada em ${changedFile} — sintetizando...`);
+      this.log(t(`[${hh}:${mm}:${ss}] Mudança detectada em ${changedFile} — sintetizando...`, `[${hh}:${mm}:${ss}] Change detected in ${changedFile} — synthesizing...`));
 
       const cliBin = path.resolve(__dirname, '../../bin/run.js');
       const cmd = `node "${cliBin}" synth --provider ${provider}`;
 
       try {
         execSync(cmd, { cwd, stdio: 'pipe' });
-        this.log(`✓ Sintetizado em synth-out/`);
+        this.log(t(`✓ Sintetizado em synth-out/`, `✓ Synthesized to synth-out/`));
       } catch (err) {
-        this.log(`✗ Erro ao sintetizar — veja acima`);
+        this.log(t(`✗ Erro ao sintetizar — veja acima`, `✗ Error synthesizing — see above`));
         const output = (err as { stdout?: Buffer; stderr?: Buffer });
         if (output.stderr) process.stderr.write(output.stderr);
         if (output.stdout) process.stdout.write(output.stdout);

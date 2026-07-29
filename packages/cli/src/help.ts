@@ -2,6 +2,7 @@ import { Command, Help } from '@oclif/core';
 import * as fs from 'fs';
 import * as path from 'path';
 import chalk from 'chalk';
+import { t } from './i18n';
 
 function firstExampleText(examples?: Command.Example[]): string | undefined {
   const first = examples?.[0];
@@ -23,11 +24,11 @@ export default class IacmpHelp extends Help {
   async showRootHelp(): Promise<void> {
     const inProject = fs.existsSync(path.join(process.cwd(), 'iacmp.json'));
     if (!inProject) {
-      console.log(chalk.bold('\nPrimeiros passos'));
-      console.log('  iacmp init meu-projeto      ' + chalk.dim('# cria um projeto de exemplo pronto para deploy'));
-      console.log('  cd meu-projeto');
-      console.log('  iacmp synth                 ' + chalk.dim('# CloudFormation, Bicep ou Terraform + validações'));
-      console.log('  iacmp deploy --dry-run      ' + chalk.dim('# o plano, sem executar nada'));
+      console.log(chalk.bold(t('\nPrimeiros passos', '\nGetting started')));
+      console.log(t('  iacmp init meu-projeto      ', '  iacmp init my-project       ') + chalk.dim(t('# cria um projeto de exemplo pronto para deploy', '# scaffolds an example project ready to deploy')));
+      console.log(t('  cd meu-projeto', '  cd my-project'));
+      console.log('  iacmp synth                 ' + chalk.dim(t('# CloudFormation, Bicep ou Terraform + validações', '# CloudFormation, Bicep or Terraform + validations')));
+      console.log('  iacmp deploy --dry-run      ' + chalk.dim(t('# o plano, sem executar nada', '# the plan, without executing anything')));
       console.log('');
       console.log('  ' + chalk.dim('Claude Code: iacmp setup · Docs: https://github.com/Claudio-Fontes/iacmp'));
     }

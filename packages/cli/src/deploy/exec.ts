@@ -1,5 +1,6 @@
 import { execFileSync, spawn } from 'child_process';
 import chalk from 'chalk';
+import { t } from '../i18n';
 import { DeployContext, DeployExecutor, NativeCommand } from './types';
 
 /**
@@ -21,10 +22,16 @@ export function formatCommand(cmd: NativeCommand): string {
  * ordem de probabilidade, deixando auth por último.
  */
 export function deployFailureMessage(cmd: NativeCommand): string {
-  return `Falha ao executar "${formatCommand(cmd)}" — o motivo está na saída acima (não é necessariamente credencial). ` +
+  return t(
+    `Falha ao executar "${formatCommand(cmd)}" — o motivo está na saída acima (não é necessariamente credencial). ` +
     `Causas comuns: erro no deploy da nuvem (veja os eventos da stack), ` +
     `artefato/handler faltando em dist/ (rode o build do projeto antes do deploy), ` +
-    `ou credencial/permissão (rode: iacmp doctor).`;
+    `ou credencial/permissão (rode: iacmp doctor).`,
+    `Failed to run "${formatCommand(cmd)}" — the reason is in the output above (not necessarily credentials). ` +
+    `Common causes: cloud deploy error (check the stack events), ` +
+    `missing artifact/handler in dist/ (run the project build before deploying), ` +
+    `or credential/permission issues (run: iacmp doctor).`,
+  );
 }
 
 /** Imprime o plano de comandos sem executar nada (--dry-run). */
@@ -60,7 +67,10 @@ async function runWithPolling(
             // APIM/Cosmos seguram o delete no ARM por vários minutos DEPOIS de
             // sumirem do portal (soft-delete interno) — sem a dica, parece travado.
             const hint = /deleting/i.test(status) && elapsed > 120
-              ? chalk.dim(' (normal: APIM/Cosmos levam 5-10min para o ARM confirmar, mesmo com o RG já vazio)')
+              ? chalk.dim(t(
+                  ' (normal: APIM/Cosmos levam 5-10min para o ARM confirmar, mesmo com o RG já vazio)',
+                  ' (normal: APIM/Cosmos take 5-10min for ARM to confirm, even with the RG already empty)',
+                ))
               : '';
             process.stdout.write(`\r${chalk.dim(`[${stackName}]`)} ${status} ${chalk.dim(`${elapsed}s`)}${hint}   `);
           }
@@ -101,7 +111,7 @@ async function runWithPolling(
       } else if (code === null) {
         handleError(new Error(`Process terminated by signal: ${signal ?? 'unknown'}`));
       } else {
-        handleError(new Error(`${cmd.bin} terminou com código ${code}`));
+        handleError(new Error(t(`${cmd.bin} terminou com código ${code}`, `${cmd.bin} exited with code ${code}`)));
       }
     });
   });
@@ -136,7 +146,10 @@ export async function runCommands(
         } catch (e) {
           lastErr = e as Error;
           if (attempt < maxAttempts) {
-            process.stdout.write(`[iacmp] Tentativa ${attempt}/${maxAttempts} falhou — retentando em 10s...\n`);
+            process.stdout.write(t(
+              `[iacmp] Tentativa ${attempt}/${maxAttempts} falhou — retentando em 10s...\n`,
+              `[iacmp] Attempt ${attempt}/${maxAttempts} failed — retrying in 10s...\n`,
+            ));
             execFileSync('sleep', ['10']);
           }
         }

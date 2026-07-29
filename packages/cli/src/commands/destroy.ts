@@ -2,6 +2,7 @@ import { Command, Flags } from '@oclif/core';
 import * as fs from 'fs';
 import * as path from 'path';
 import chalk from 'chalk';
+import { t } from '../i18n';
 import { listTemplates, countResources, orderByDependency, providerOutDir, AZURE_MAIN_FILE } from '../synth-out';
 import { errMessage, loadIacmpConfig, resolveProvider, resolveProviderRegion, IacmpConfig } from '../utils';
 import { commandExists } from './doctor';
@@ -13,14 +14,14 @@ import { destroyStackLoop } from '../deploy/flows/destroy-stacks';
 import { captureApimsToPurge, fireApimPurge, maybeDeleteEmptyRg, maybePurgeRetainedBuckets } from '../deploy/flows/destroy-cleanup';
 
 export default class Destroy extends Command {
-  static description = 'Destroi a infraestrutura do provider configurado';
+  static description = t('Destroi a infraestrutura do provider configurado', 'Destroys the configured provider\'s infrastructure');
 
   static flags = {
-    provider: Flags.string({ char: 'p', description: 'Provider alvo (aws, azure, gcp) — default: o provider do iacmp.json' }),
-    stack: Flags.string({ char: 's', description: 'Nome da stack específica' }),
-    format: Flags.string({ options: ['tf'], description: 'Formato: tf = destroy via Terraform em vez do deployer nativo.' }),
-    force: Flags.boolean({ char: 'f', description: 'Pula confirmação' }),
-    'dry-run': Flags.boolean({ description: 'Mostra os comandos que seriam executados, sem rodar nada', default: false }),
+    provider: Flags.string({ char: 'p', description: t('Provider alvo (aws, azure, gcp) — default: o provider do iacmp.json', 'Target provider (aws, azure, gcp) — default: the provider from iacmp.json') }),
+    stack: Flags.string({ char: 's', description: t('Nome da stack específica', 'Name of a specific stack') }),
+    format: Flags.string({ options: ['tf'], description: t('Formato: tf = destroy via Terraform em vez do deployer nativo.', 'Format: tf = destroy via Terraform instead of the native deployer.') }),
+    force: Flags.boolean({ char: 'f', description: t('Pula confirmação', 'Skips confirmation') }),
+    'dry-run': Flags.boolean({ description: t('Mostra os comandos que seriam executados, sem rodar nada', 'Shows the commands that would run, without executing anything'), default: false }),
   };
 
   static examples = [
@@ -42,7 +43,7 @@ export default class Destroy extends Command {
       this.error(errMessage(err));
     }
     if (!config) {
-      this.error('Projeto não inicializado. Rode: iacmp init');
+      this.error(t('Projeto não inicializado. Rode: iacmp init', 'Project not initialized. Run: iacmp init'));
     }
     const provider = resolveProvider(config, flags.provider);
     const effectiveProvider =
@@ -59,7 +60,7 @@ export default class Destroy extends Command {
     }
 
     if ((effectiveProvider === 'terraform' || effectiveProvider === 'azure-tf') && flags.stack) {
-      this.error('--stack não é suportado com --format tf — destroy opera no diretório terraform inteiro (todas as stacks compartilham um state).');
+      this.error(t('--stack não é suportado com --format tf — destroy opera no diretório terraform inteiro (todas as stacks compartilham um state).', '--stack is not supported with --format tf — destroy operates on the whole terraform directory (all stacks share one state).'));
     }
 
     // Confere se há algo sintetizado antes de checar CLI/credenciais — "rode
@@ -69,11 +70,11 @@ export default class Destroy extends Command {
     // ser removida enquanto o Export ainda está em uso por outra stack.
     const templates = orderByDependency(listTemplates(cwd, effectiveProvider, flags.stack)).reverse();
     if (templates.length === 0) {
-      this.error(`Nenhuma stack encontrada para destruir. Rode: iacmp synth --provider ${provider}${flags.format === 'tf' ? ' --format tf' : ''}`);
+      this.error(t(`Nenhuma stack encontrada para destruir. Rode: iacmp synth --provider ${provider}${flags.format === 'tf' ? ' --format tf' : ''}`, `No stack found to destroy. Run: iacmp synth --provider ${provider}${flags.format === 'tf' ? ' --format tf' : ''}`));
     }
 
     if (provider === 'azure' && !config.resourceGroup) {
-      this.error('Configure "resourceGroup" no iacmp.json para usar --provider azure.');
+      this.error(t('Configure "resourceGroup" no iacmp.json para usar --provider azure.', 'Set "resourceGroup" in iacmp.json to use --provider azure.'));
     }
 
     // Nome físico da stack no CloudFormation = prefixado com o nome do projeto
@@ -112,7 +113,7 @@ export default class Destroy extends Command {
     // Terraform (aws-tf / azure-tf) opera no diretório inteiro — executa uma vez.
     if (effectiveProvider === 'terraform' || effectiveProvider === 'azure-tf') {
       const done = await destroyTerraformDir(flow, effectiveProvider);
-      if (done) this.log(chalk.green('\nDestroy concluído.'));
+      if (done) this.log(chalk.green(t('\nDestroy concluído.', '\nDestroy complete.')));
       return;
     }
 
@@ -123,20 +124,20 @@ export default class Destroy extends Command {
       stackNames.push(t.stackName);
     }
 
-    this.log(`Stacks a destruir: ${stackNames.join(', ')}`);
-    this.log(`Total de recursos: ${totalResources} em ${provider.toUpperCase()}`);
+    this.log(t(`Stacks a destruir: ${stackNames.join(', ')}`, `Stacks to destroy: ${stackNames.join(', ')}`));
+    this.log(t(`Total de recursos: ${totalResources} em ${provider.toUpperCase()}`, `Total resources: ${totalResources} on ${provider.toUpperCase()}`));
     this.log('');
 
     if (!flags.force && !dryRun) {
-      const confirmed = await confirm('Tem certeza que deseja destruir esses recursos?');
+      const confirmed = await confirm(t('Tem certeza que deseja destruir esses recursos?', 'Are you sure you want to destroy these resources?'));
       if (!confirmed) {
-        this.log('Operação cancelada.');
+        this.log(t('Operação cancelada.', 'Operation cancelled.'));
         return;
       }
     }
 
     if (!dryRun && !commandExists(executor.requiredBinary)) {
-      this.error(`${executor.requiredBinary} não encontrado no PATH. Rode: iacmp doctor --fix (ou instale manualmente) e tente novamente.`);
+      this.error(t(`${executor.requiredBinary} não encontrado no PATH. Rode: iacmp doctor --fix (ou instale manualmente) e tente novamente.`, `${executor.requiredBinary} not found in PATH. Run: iacmp doctor --fix (or install it manually) and try again.`));
     }
 
     // APIM soft-deleted: captura os vivos ANTES do delete para purgar depois.
@@ -147,7 +148,7 @@ export default class Destroy extends Command {
     // Deployment único Azure (_main.bicep): ver deploy/flows/destroy-azure-main.ts.
     if (provider === 'azure' && fs.existsSync(path.join(providerOutDir(cwd, 'azure'), AZURE_MAIN_FILE))) {
       const done = await destroyAzureMain(flow, apimsToPurge);
-      if (done) this.log(chalk.green('\nDestroy concluído.'));
+      if (done) this.log(chalk.green(t('\nDestroy concluído.', '\nDestroy complete.')));
       return;
     }
 
@@ -161,6 +162,6 @@ export default class Destroy extends Command {
     if (!dryRun && provider === 'aws') {
       await maybePurgeRetainedBuckets(templates.map(t => t.filePath), region, flags.force, ui);
     }
-    this.log(chalk.green('Destroy concluído.'));
+    this.log(chalk.green(t('Destroy concluído.', 'Destroy complete.')));
   }
 }

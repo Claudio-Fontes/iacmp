@@ -2,6 +2,7 @@ import { Command, Flags } from '@oclif/core';
 import * as fs from 'fs';
 import * as path from 'path';
 import chalk from 'chalk';
+import { t } from '../i18n';
 import { listTemplates, orderByDependency, providerOutDir, AZURE_MAIN_FILE } from '../synth-out';
 import { errMessage, loadIacmpConfig, resolveProvider, resolveProviderRegion, IacmpConfig } from '../utils';
 import { commandExists } from './doctor';
@@ -16,14 +17,14 @@ import { deployTerraformDir } from '../deploy/flows/terraform';
 import { deployStackLoop } from '../deploy/flows/stacks';
 
 export default class Deploy extends Command {
-  static description = 'Faz deploy das stacks no provider configurado';
+  static description = t('Faz deploy das stacks no provider configurado', 'Deploys the stacks to the configured provider');
 
   static flags = {
-    provider: Flags.string({ char: 'p', description: 'Provider alvo (aws, azure, gcp) — default: o provider do iacmp.json' }),
-    stack: Flags.string({ char: 's', description: 'Nome da stack específica' }),
-    format: Flags.string({ options: ['tf'], description: 'Formato de deploy: tf = usa Terraform em vez do deployer nativo. Para Azure requer synth --format tf prévio.' }),
-    'dry-run': Flags.boolean({ description: 'Mostra os comandos que seriam executados, sem rodar nada', default: false }),
-    yes: Flags.boolean({ char: 'y', description: 'Responde sim a todas as confirmações (apagar recurso órfão, criar resource group). Obrigatório para confirmações destrutivas em stdin não-interativo.', default: false }),
+    provider: Flags.string({ char: 'p', description: t('Provider alvo (aws, azure, gcp) — default: o provider do iacmp.json', 'Target provider (aws, azure, gcp) — default: the provider from iacmp.json') }),
+    stack: Flags.string({ char: 's', description: t('Nome da stack específica', 'Name of a specific stack') }),
+    format: Flags.string({ options: ['tf'], description: t('Formato de deploy: tf = usa Terraform em vez do deployer nativo. Para Azure requer synth --format tf prévio.', 'Deploy format: tf = use Terraform instead of the native deployer. For Azure, requires a prior synth --format tf.') }),
+    'dry-run': Flags.boolean({ description: t('Mostra os comandos que seriam executados, sem rodar nada', 'Shows the commands that would run, without executing anything'), default: false }),
+    yes: Flags.boolean({ char: 'y', description: t('Responde sim a todas as confirmações (apagar recurso órfão, criar resource group). Obrigatório para confirmações destrutivas em stdin não-interativo.', 'Answers yes to every confirmation (delete orphaned resource, create resource group). Required for destructive confirmations on non-interactive stdin.'), default: false }),
   };
 
   static examples = [
@@ -48,7 +49,7 @@ export default class Deploy extends Command {
       this.error(errMessage(err));
     }
     if (!config) {
-      this.error('Projeto não inicializado. Rode: iacmp init');
+      this.error(t('Projeto não inicializado. Rode: iacmp init', 'Project not initialized. Run: iacmp init'));
     }
     const provider = resolveProvider(config, flags.provider);
     // --format tf redireciona AWS → executor terraform (synth-out/aws-tf/)
@@ -78,7 +79,7 @@ export default class Deploy extends Command {
     }
 
     if ((effectiveProvider === 'terraform' || effectiveProvider === 'azure-tf') && flags.stack) {
-      this.error('--stack não é suportado com --format tf — deploy/destroy operam no diretório terraform inteiro (todas as stacks compartilham um state).');
+      this.error(t('--stack não é suportado com --format tf — deploy/destroy operam no diretório terraform inteiro (todas as stacks compartilham um state).', '--stack is not supported with --format tf — deploy/destroy operate on the whole terraform directory (all stacks share one state).'));
     }
 
     // Confere se há algo sintetizado antes de checar CLI/credenciais — "rode
@@ -90,14 +91,14 @@ export default class Deploy extends Command {
     const templates = flags.stack ? allTemplates.filter(t => t.stackName === flags.stack) : allTemplates;
     if (templates.length === 0) {
       const hint = flags.format === 'tf' ? ` --format tf` : '';
-      this.error(`Nenhum template encontrado para '${effectiveProvider}'. Rode: iacmp synth --provider ${provider}${hint}`);
+      this.error(t(`Nenhum template encontrado para '${effectiveProvider}'. Rode: iacmp synth --provider ${provider}${hint}`, `No template found for '${effectiveProvider}'. Run: iacmp synth --provider ${provider}${hint}`));
     }
 
     // --dry-run nunca chama a CLI nativa de verdade — não exige o binário
     // instalado, só mostra o plano (os helpers de leitura usados no plano
     // degradam graciosamente quando o binário está ausente).
     if (!dryRun && !commandExists(executor.requiredBinary)) {
-      this.error(`${executor.requiredBinary} não encontrado no PATH. Rode: iacmp doctor --fix (ou instale manualmente) e tente novamente.`);
+      this.error(t(`${executor.requiredBinary} não encontrado no PATH. Rode: iacmp doctor --fix (ou instale manualmente) e tente novamente.`, `${executor.requiredBinary} not found in PATH. Run: iacmp doctor --fix (or install it manually) and try again.`));
     }
 
     const ui: DeployUI = {
@@ -151,7 +152,7 @@ export default class Deploy extends Command {
     // único — uma única chamada ao executor, não um loop por stack.
     if (effectiveProvider === 'terraform' || effectiveProvider === 'azure-tf') {
       await deployTerraformDir(flow, effectiveProvider);
-      this.log(chalk.green('\nDeploy concluído.'));
+      this.log(chalk.green(t('\nDeploy concluído.', '\nDeploy complete.')));
       return;
     }
 
@@ -162,7 +163,7 @@ export default class Deploy extends Command {
     if (azureMainPath !== null && fs.existsSync(azureMainPath)) {
       await deployAzureMain(flow, azureMainPath);
       if (!dryRun) await this.afterDeploy(cwd, provider, config, flags.yes);
-      this.log(chalk.green('\nDeploy concluído.'));
+      this.log(chalk.green(t('\nDeploy concluído.', '\nDeploy complete.')));
       return;
     }
 
@@ -170,7 +171,7 @@ export default class Deploy extends Command {
     await deployStackLoop(flow);
 
     if (!dryRun) await this.afterDeploy(cwd, provider, config, flags.yes);
-    this.log(chalk.green('Deploy concluído.'));
+    this.log(chalk.green(t('Deploy concluído.', 'Deploy complete.')));
   }
 
   // Loop de aprendizado (Modo 1): oferece gravar o padrão deste deploy na base

@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { t } from './i18n';
 
 /**
  * Resolução centralizada dos artefatos de `iacmp synth`.
@@ -285,19 +286,27 @@ function orderByDependencyStrict(
         const provided = exportsByPath.get(exporter.filePath)!;
         const mutual = [...needed].filter(name => provided.has(name));
         if (mutual.length > 0) {
-          cycleEdges.push(
-            `  "${importer.stackName}" importa ${mutual.map(n => `"${n}"`).join(', ')} exportado por "${exporter.stackName}"`
-          );
+          cycleEdges.push(t(
+            `  "${importer.stackName}" importa ${mutual.map(n => `"${n}"`).join(', ')} exportado por "${exporter.stackName}"`,
+            `  "${importer.stackName}" imports ${mutual.map(n => `"${n}"`).join(', ')} exported by "${exporter.stackName}"`,
+          ));
         }
       }
     }
 
     const stackNames = inCycle.map(t => `"${t.stackName}"`).join(' ↔ ');
     throw new Error(
-      `Dependência circular entre stacks detectada: ${stackNames}\n` +
+      t(
+        `Dependência circular entre stacks detectada: ${stackNames}\n`,
+        `Circular dependency between stacks detected: ${stackNames}\n`,
+      ) +
       (cycleEdges.length > 0 ? `\n${cycleEdges.join('\n')}\n` : '') +
-      `\nFix: coloque os constructs com referência mútua na MESMA stack` +
-      ` (ex: o bucket com eventNotifications + a Lambda-alvo juntos).`
+      t(
+        `\nFix: coloque os constructs com referência mútua na MESMA stack` +
+        ` (ex: o bucket com eventNotifications + a Lambda-alvo juntos).`,
+        `\nFix: put the mutually referencing constructs in the SAME stack` +
+        ` (e.g. the bucket with eventNotifications + the target Lambda together).`,
+      )
     );
   }
 
@@ -425,12 +434,16 @@ export function generateAzureMainBicep(ordered: TemplateRef[], containerBuildIma
       }
       const src = exported.get(p.toLowerCase());
       if (!src) {
-        throw new Error(
+        throw new Error(t(
           `_main.bicep: a stack "${m.ref.stackName}" precisa do parâmetro obrigatório "${p}", ` +
           `mas nenhuma stack anterior exporta um output com esse nome.\n` +
           `Fix: garanta que a stack dona do recurso declara \`output ${p}\` — ou coloque os ` +
           `constructs interdependentes na mesma stack.`,
-        );
+          `_main.bicep: stack "${m.ref.stackName}" needs the required parameter "${p}", ` +
+          `but no earlier stack exports an output with that name.\n` +
+          `Fix: make sure the stack that owns the resource declares \`output ${p}\` — or put the ` +
+          `interdependent constructs in the same stack.`,
+        ));
       }
       wired.push(`    ${p}: ${src.sym}.outputs.${src.name}`);
     }

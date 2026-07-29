@@ -1,4 +1,5 @@
 import * as path from 'path';
+import { t } from '../../i18n';
 import { errMessage } from '../../utils';
 import { providerOutDir, AZURE_MAIN_FILE, AZURE_MAIN_STACK } from '../../synth-out';
 import { listApimServices } from '../azure';
@@ -18,17 +19,25 @@ export async function destroyAzureMain(
   apimsToPurge: ReturnType<typeof listApimServices>,
 ): Promise<boolean> {
   if (o.stackFlag) {
-    o.ui.error(
+    o.ui.error(t(
       'Este projeto usa deployment único no Azure (_main.bicep) — --stack não se aplica: ' +
       'o destroy remove a stack "main" inteira. Rode sem --stack.',
-    );
+      'This project uses a single Azure deployment (_main.bicep) — --stack does not apply: ' +
+      'destroy removes the whole "main" stack. Run it without --stack.',
+    ));
   }
   const mainStackName = o.physicalStackName(AZURE_MAIN_STACK);
   if (!o.dryRun && o.executor.describeStatus && !o.executor.describeStatus(mainStackName, o.baseCtx).deployed) {
-    o.ui.log(`Stack "${AZURE_MAIN_STACK}" (deployment único) não está deployada — nada a destruir.`);
+    o.ui.log(t(
+      `Stack "${AZURE_MAIN_STACK}" (deployment único) não está deployada — nada a destruir.`,
+      `Stack "${AZURE_MAIN_STACK}" (single deployment) is not deployed — nothing to destroy.`,
+    ));
     return false;
   }
-  o.ui.log(`Stack: ${AZURE_MAIN_STACK} (deployment único — remove todos os módulos)`);
+  o.ui.log(t(
+    `Stack: ${AZURE_MAIN_STACK} (deployment único — remove todos os módulos)`,
+    `Stack: ${AZURE_MAIN_STACK} (single deployment — removes all modules)`,
+  ));
   const ctx: DestroyContext = { ...o.baseCtx, stackName: mainStackName, templatePath: path.join(providerOutDir(o.cwd, 'azure'), AZURE_MAIN_FILE) };
   let commands;
   try {

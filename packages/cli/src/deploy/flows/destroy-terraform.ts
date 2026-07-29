@@ -1,3 +1,4 @@
+import { t } from '../../i18n';
 import { errMessage } from '../../utils';
 import { countResources } from '../../synth-out';
 import { commandExists } from '../../commands/doctor';
@@ -12,16 +13,25 @@ import { confirm, DestroyFlowOptions } from './common';
  * Retorna false se o usuário cancelou na confirmação.
  */
 export async function destroyTerraformDir(o: DestroyFlowOptions, effectiveProvider: string): Promise<boolean> {
-  for (const t of o.templates) {
-    o.ui.log(`Stack: ${t.stackName} — ${countResources(t.filePath, effectiveProvider)} recurso(s)`);
+  for (const tpl of o.templates) {
+    o.ui.log(t(
+      `Stack: ${tpl.stackName} — ${countResources(tpl.filePath, effectiveProvider)} recurso(s)`,
+      `Stack: ${tpl.stackName} — ${countResources(tpl.filePath, effectiveProvider)} resource(s)`,
+    ));
   }
   o.ui.log('');
   if (!o.force && !o.dryRun) {
-    const confirmed = await confirm('Tem certeza que deseja destruir todos os recursos?');
-    if (!confirmed) { o.ui.log('Operação cancelada.'); return false; }
+    const confirmed = await confirm(t(
+      'Tem certeza que deseja destruir todos os recursos?',
+      'Are you sure you want to destroy all resources?',
+    ));
+    if (!confirmed) { o.ui.log(t('Operação cancelada.', 'Operation canceled.')); return false; }
   }
   if (!o.dryRun && !commandExists(o.executor.requiredBinary)) {
-    o.ui.error(`${o.executor.requiredBinary} não encontrado no PATH.`);
+    o.ui.error(t(
+      `${o.executor.requiredBinary} não encontrado no PATH.`,
+      `${o.executor.requiredBinary} not found in PATH.`,
+    ));
   }
   const ctx: DestroyContext = { ...o.baseCtx, stackName: o.config.name ?? 'iacmp' };
   let commands;

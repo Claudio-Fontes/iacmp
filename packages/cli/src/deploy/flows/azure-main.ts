@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import { t } from '../../i18n';
 import { errMessage } from '../../utils';
 import { countResources, AZURE_MAIN_STACK } from '../../synth-out';
 import { getAzureStackOutputs } from '../azure';
@@ -17,13 +18,18 @@ import { DeployFlowOptions } from './common';
  */
 export async function deployAzureMain(o: DeployFlowOptions, azureMainPath: string): Promise<void> {
   if (o.stackFlag) {
-    o.ui.error(
+    o.ui.error(t(
       'Este projeto usa deployment único no Azure (_main.bicep) — --stack não se aplica: ' +
       'o ARM ordena e deploya os módulos juntos. Rode "iacmp deploy --provider azure" sem --stack.',
-    );
+      'This project uses a single Azure deployment (_main.bicep) — --stack does not apply: ' +
+      'ARM orders and deploys the modules together. Run "iacmp deploy --provider azure" without --stack.',
+    ));
   }
-  for (const t of o.templates) {
-    o.ui.log(`Stack: ${t.stackName} — ${countResources(t.filePath, o.provider)} recurso(s) (módulo)`);
+  for (const tpl of o.templates) {
+    o.ui.log(t(
+      `Stack: ${tpl.stackName} — ${countResources(tpl.filePath, o.provider)} recurso(s) (módulo)`,
+      `Stack: ${tpl.stackName} — ${countResources(tpl.filePath, o.provider)} resource(s) (module)`,
+    ));
   }
   o.ui.log('');
   const mainStackName = o.physicalStackName(AZURE_MAIN_STACK);
@@ -65,7 +71,10 @@ export async function deployAzureMain(o: DeployFlowOptions, azureMainPath: strin
     if (value && value !== beforeLower.get(m[1].toLowerCase())) satisfied.push(m[1]);
   }
   if (satisfied.length > 0) {
-    o.ui.log(`\n2º passo (params agora disponíveis: ${satisfied.join(', ')})`);
+    o.ui.log(t(
+      `\n2º passo (params agora disponíveis: ${satisfied.join(', ')})`,
+      `\n2nd pass (params now available: ${satisfied.join(', ')})`,
+    ));
     const ctx2: DeployContext = { ...ctx, outputParams: { ...after } };
     let commands2;
     try {

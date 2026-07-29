@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { EnvironmentProfile, AccountTier } from '@iacmp/core';
+import { t } from './i18n';
 
 /**
  * Lê e parseia um arquivo JSON. Lança Error com mensagem amigável (inclui o
@@ -12,12 +13,12 @@ export function readJsonFile<T = unknown>(filePath: string): T {
   try {
     content = fs.readFileSync(filePath, 'utf-8');
   } catch (e) {
-    throw new Error(`Falha ao ler '${filePath}': ${errMessage(e)}`);
+    throw new Error(t(`Falha ao ler '${filePath}': ${errMessage(e)}`, `Failed to read '${filePath}': ${errMessage(e)}`));
   }
   try {
     return JSON.parse(content) as T;
   } catch (e) {
-    throw new Error(`JSON inválido em '${filePath}': ${errMessage(e)}`);
+    throw new Error(t(`JSON inválido em '${filePath}': ${errMessage(e)}`, `Invalid JSON in '${filePath}': ${errMessage(e)}`));
   }
 }
 

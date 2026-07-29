@@ -1,5 +1,6 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
+import { t } from '../i18n';
 import { readConfig, loadStacks, saveReport, today } from '../audit';
 import { BaseConstruct } from '@iacmp/core';
 import { Stack } from '@iacmp/core';
@@ -126,7 +127,7 @@ export default class AuditSecurity extends Command {
 
   static flags = {
     'fail-on': Flags.string({
-      description: 'Sai com exit 1 quando há achados no nível indicado',
+      description: t('Sai com exit 1 quando há achados no nível indicado', 'Exits with code 1 when there are findings at the given level'),
       options: ['critical', 'warning', 'none'],
       default: 'none',
     }),

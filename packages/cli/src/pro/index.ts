@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { AiApi, KnowledgeApi } from './types';
+import { t } from '../i18n';
 
 export * from './types';
 
@@ -15,10 +16,14 @@ export * from './types';
  * Ausente → null; quem chama decide entre degradar com mensagem (comandos
  * Pro) ou virar no-op (autolearn).
  */
-export const PRO_MESSAGE =
+export const PRO_MESSAGE = t(
   'Este recurso faz parte do iacmp Pro (geração via IA com corpus validado em deploy real).\n' +
   'O restante do CLI (init/synth/deploy/destroy/diff/diagram) funciona normalmente sem ele.\n' +
-  'Saiba mais: https://github.com/Claudio-Fontes/iacmp#iacmp-pro';
+  'Saiba mais: https://github.com/Claudio-Fontes/iacmp#iacmp-pro',
+  'This feature is part of iacmp Pro (AI generation backed by a deploy-validated corpus).\n' +
+  'The rest of the CLI (init/synth/deploy/destroy/diff/diagram) works fully without it.\n' +
+  'Learn more: https://github.com/Claudio-Fontes/iacmp#iacmp-pro',
+);
 
 function loadProModule<T>(specifier: string, proSubdir: string): T | null {
   if (process.env.IACMP_DISABLE_PRO === '1') return null;

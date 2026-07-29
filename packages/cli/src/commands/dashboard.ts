@@ -2,6 +2,7 @@ import { Command, Flags } from '@oclif/core';
 import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
+import { t } from '../i18n';
 import { startDashboard, ProjectInfo, StackInfo } from '@iacmp/dashboard';
 import { listTemplates } from '../synth-out';
 
@@ -46,11 +47,11 @@ function parseResources(filePath: string, provider: string): Array<{ type: strin
 }
 
 export default class Dashboard extends Command {
-  static description = 'Inicia o dashboard web de visualização das stacks';
+  static description = t('Inicia o dashboard web de visualização das stacks', 'Starts the web dashboard for viewing the stacks');
 
   static flags = {
-    port: Flags.integer({ char: 'p', description: 'Porta do servidor', default: 4000 }),
-    open: Flags.boolean({ description: 'Abre o browser automaticamente', default: false }),
+    port: Flags.integer({ char: 'p', description: t('Porta do servidor', 'Server port'), default: 4000 }),
+    open: Flags.boolean({ description: t('Abre o browser automaticamente', 'Opens the browser automatically'), default: false }),
   };
 
   static examples = [
@@ -65,7 +66,7 @@ export default class Dashboard extends Command {
     const configPath = path.join(cwd, 'iacmp.json');
 
     if (!fs.existsSync(configPath)) {
-      this.error('Projeto não inicializado. Rode: iacmp init');
+      this.error(t('Projeto não inicializado. Rode: iacmp init', 'Project not initialized. Run: iacmp init'));
     }
 
     const config = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as {
@@ -92,7 +93,7 @@ export default class Dashboard extends Command {
     await startDashboard(info, port);
 
     const url = `http://localhost:${port}`;
-    this.log(`Dashboard disponível em ${url}`);
+    this.log(t(`Dashboard disponível em ${url}`, `Dashboard available at ${url}`));
 
     if (flags.open) {
       try {

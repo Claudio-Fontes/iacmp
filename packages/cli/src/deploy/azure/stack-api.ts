@@ -1,4 +1,5 @@
 import { execFileSync } from 'child_process';
+import { t } from '../../i18n';
 import { StackStatus } from '../types';
 
 /**
@@ -70,7 +71,7 @@ export function resourceGroupExists(resourceGroup: string): boolean {
 
 export function requireResourceGroup(ctx: { resourceGroup?: string }): string {
   if (!ctx.resourceGroup) {
-    throw new Error('Configure "resourceGroup" no iacmp.json para usar --provider azure (ex: "resourceGroup": "meu-rg").');
+    throw new Error(t('Configure "resourceGroup" no iacmp.json para usar --provider azure (ex: "resourceGroup": "meu-rg").', 'Set "resourceGroup" in iacmp.json to use --provider azure (e.g. "resourceGroup": "my-rg").'));
   }
   return ctx.resourceGroup;
 }
@@ -108,11 +109,11 @@ export function waitForStackTerminal(stackName: string, resourceGroup: string): 
     const { deployed, status } = describeStackStatus(stackName, resourceGroup);
     if (!deployed) return;
     if (!status || !NON_TERMINAL_STATES.has(status)) return;
-    process.stdout.write(`[iacmp] Stack "${stackName}" em estado "${status}" — aguardando... (${i + 1}/${maxAttempts})\n`);
+    process.stdout.write(t(`[iacmp] Stack "${stackName}" em estado "${status}" — aguardando... (${i + 1}/${maxAttempts})\n`, `[iacmp] Stack "${stackName}" in state "${status}" — waiting... (${i + 1}/${maxAttempts})\n`));
     // Espera síncrona: deployment stacks de Container App Environment levam 15-20min
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 30_000);
   }
-  throw new Error(`Stack "${stackName}" continua em estado não-terminal após 30 minutos. Cancele o deploy no portal e tente novamente.`);
+  throw new Error(t(`Stack "${stackName}" continua em estado não-terminal após 30 minutos. Cancele o deploy no portal e tente novamente.`, `Stack "${stackName}" is still in a non-terminal state after 30 minutes. Cancel the deployment in the portal and try again.`));
 }
 
 /**
@@ -125,18 +126,20 @@ export function recoverFromAzCliCrash(stackName: string, resourceGroup: string):
   const { deployed } = describeStackStatus(stackName, resourceGroup);
   if (!deployed) {
     // Stack não existe no ARM — falha real, não recuperável.
-    throw new Error(
-      `Stack "${stackName}" não pôde ser criada. Verifique o portal Azure para detalhes.`
-    );
+    throw new Error(t(
+      `Stack "${stackName}" não pôde ser criada. Verifique o portal Azure para detalhes.`,
+      `Stack "${stackName}" could not be created. Check the Azure portal for details.`,
+    ));
   }
   // Stack existe e pode estar deploying — aguarda até estado terminal.
-  process.stdout.write(`[iacmp] az CLI crashou localmente mas deploy iniciou no ARM. Aguardando stack "${stackName}"...\n`);
+  process.stdout.write(t(`[iacmp] az CLI crashou localmente mas deploy iniciou no ARM. Aguardando stack "${stackName}"...\n`, `[iacmp] az CLI crashed locally but the deployment started in ARM. Waiting for stack "${stackName}"...\n`));
   waitForStackTerminal(stackName, resourceGroup);
   const { status } = describeStackStatus(stackName, resourceGroup);
   if (status && /fail/i.test(status)) {
-    throw new Error(
-      `Stack "${stackName}" falhou (status: ${status}). Verifique o portal Azure para detalhes do erro.`
-    );
+    throw new Error(t(
+      `Stack "${stackName}" falhou (status: ${status}). Verifique o portal Azure para detalhes do erro.`,
+      `Stack "${stackName}" failed (status: ${status}). Check the Azure portal for error details.`,
+    ));
   }
-  process.stdout.write(`[iacmp] Stack "${stackName}" concluída com sucesso (recuperado de crash do az CLI).\n`);
+  process.stdout.write(t(`[iacmp] Stack "${stackName}" concluída com sucesso (recuperado de crash do az CLI).\n`, `[iacmp] Stack "${stackName}" completed successfully (recovered from az CLI crash).\n`));
 }

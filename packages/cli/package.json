@@ -32,14 +32,13 @@
     "/bin/run.js",
     "/dist",
     "/scripts/postinstall.js",
-    "/oclif.manifest.json",
     "/LICENSE"
   ],
   "scripts": {
-    "build": "tsup && oclif manifest",
+    "build": "tsup",
     "manifest": "oclif manifest",
     "postinstall": "node scripts/postinstall.js",
-    "prepack": "cp ../../LICENSE ./LICENSE && IACMP_PUBLIC_BUILD=1 tsup && oclif manifest",
+    "prepack": "cp ../../LICENSE ./LICENSE && IACMP_PUBLIC_BUILD=1 tsup",
     "dev": "tsup --watch",
     "clean": "rm -rf dist oclif.manifest.json",
     "typecheck": "tsc --noEmit",
@@ -102,6 +101,9 @@
       "ts-jest": {
         "tsconfig": "tsconfig.test.json"
       }
-    }
+    },
+    "setupFiles": [
+      "<rootDir>/test/jest.setup.js"
+    ]
   }
 }
