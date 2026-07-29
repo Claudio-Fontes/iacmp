@@ -6,7 +6,7 @@ import AuditDR from './audit-dr';
 import AuditImprovements from './audit-improvements';
 
 export default class AuditAll extends Command {
-  static description = 'Run all audits and generate all reports';
+  static description = t('Roda todas as auditorias e gera todos os relatórios', 'Run all audits and generate all reports');
   static examples = [
     '$ iacmp audit-all',
     '$ iacmp audit-all --fail-on=critical',

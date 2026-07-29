@@ -138,7 +138,7 @@ function scoreLabel(score: number): string {
 }
 
 export default class AuditDR extends Command {
-  static description = 'Audit stacks for disaster recovery (DR) readiness';
+  static description = t('Audita a prontidão das stacks para disaster recovery (DR)', 'Audit stacks for disaster recovery (DR) readiness');
   static examples = [
     '$ iacmp audit-dr',
     '$ iacmp audit-dr --fail-on=critical',

@@ -159,7 +159,7 @@ function analyzeStack(stackName: string, stack: Stack): { improvements: Improvem
 }
 
 export default class AuditImprovements extends Command {
-  static description = 'Suggest architecture and performance improvements for stacks';
+  static description = t('Sugere melhorias de arquitetura e performance para as stacks', 'Suggest architecture and performance improvements for stacks');
   static examples = [
     '$ iacmp audit-improvements',
     '$ iacmp audit-improvements --fail-on=critical',

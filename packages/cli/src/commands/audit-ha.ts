@@ -147,7 +147,7 @@ function analyzeStack(stackName: string, stack: Stack): HAFinding[] {
 }
 
 export default class AuditHA extends Command {
-  static description = 'Audit stacks for high availability (HA) issues';
+  static description = t('Audita as stacks quanto a alta disponibilidade (HA)', 'Audit stacks for high availability (HA) issues');
   static examples = [
     '$ iacmp audit-ha',
     '$ iacmp audit-ha --fail-on=critical',

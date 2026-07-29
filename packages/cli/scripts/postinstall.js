@@ -67,7 +67,37 @@ const alreadyConfigured = candidates.some(cfg => {
   catch { return false; }
 });
 
-if (alreadyConfigured) { console.log(WELCOME); process.exit(0); }
+// Uso IMEDIATO no terminal atual: o export no perfil só vale para novos
+// shells. Se algum diretório do PATH da sessão for gravável, cria ali um
+// symlink para o binário — o comando funciona sem abrir outro terminal.
+function linkIntoCurrentPath() {
+  const pathDirs = (process.env.PATH || '').split(':').filter(Boolean);
+  if (pathDirs.includes(binDir)) return true; // já resolvível
+  const src = path.join(binDir, 'iacmp');
+  if (!existsSync(src)) return false;
+  for (const dir of pathDirs) {
+    if (dir.startsWith('/usr/') || dir.startsWith('/bin') || dir.startsWith('/sbin') || dir.startsWith('/System')) continue;
+    try {
+      const dest = path.join(dir, 'iacmp');
+      try { require('fs').unlinkSync(dest); } catch {}
+      require('fs').symlinkSync(src, dest);
+      console.log(LANG_PT ? `[iacmp] Atalho criado: ${dest}` : `[iacmp] Shortcut created: ${dest}`);
+      return true;
+    } catch { /* dir não gravável — tenta o próximo */ }
+  }
+  return false;
+}
+const immediatelyUsable = linkIntoCurrentPath();
+
+if (alreadyConfigured) {
+  if (!immediatelyUsable) {
+    console.log(LANG_PT
+      ? '[iacmp] Abra um novo terminal para o comando "iacmp" ficar disponível.'
+      : '[iacmp] Open a new terminal for the "iacmp" command to become available.');
+  }
+  console.log(WELCOME);
+  process.exit(0);
+}
 
 // Adicionar ao primeiro arquivo que existir; se nenhum existir, criar .zprofile
 const target = candidates.find(f => existsSync(f)) || path.join(home, '.zprofile');

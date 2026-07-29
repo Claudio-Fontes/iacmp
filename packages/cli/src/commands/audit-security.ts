@@ -118,7 +118,7 @@ function analyzeStack(stackName: string, stack: Stack): { findings: Finding[]; o
 }
 
 export default class AuditSecurity extends Command {
-  static description = 'Audit stacks for security issues';
+  static description = t('Audita as stacks em busca de problemas de segurança', 'Audit stacks for security issues');
   static examples = [
     '$ iacmp audit-security',
     '$ iacmp audit-security --fail-on=critical',
