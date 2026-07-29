@@ -9,15 +9,17 @@ import { resolveMcpServer } from '../mcp-path';
 interface Target {
   label: string;
   file: string;
-  /** Claude Code (~/.claude.json) é gerido pelo app — só atualizamos se já existe.
-   * O Claude Desktop lê um arquivo dedicado — podemos criá-lo. */
   createIfMissing: boolean;
 }
 
 function claudeTargets(): Target[] {
   const home = homedir();
+  // ~/.claude.json pode não existir (Claude Code instalado mas nunca aberto);
+  // criamos com só o mcpServers — é o mesmo que `claude mcp add --scope user`
+  // faz, e o app funde o resto na primeira execução. Pular aqui deixava a
+  // máquina "configurada" sem o Claude Code configurado.
   const targets: Target[] = [
-    { label: 'Claude Code', file: path.join(home, '.claude.json'), createIfMissing: false },
+    { label: 'Claude Code', file: path.join(home, '.claude.json'), createIfMissing: true },
   ];
   const p = platform();
   let desktop: string | undefined;
@@ -102,7 +104,20 @@ export default class Setup extends Command {
     if (!touched) {
       this.log(chalk.yellow(t('Nenhum config do Claude encontrado. Instale o Claude Code ou o Claude Desktop e rode `iacmp setup` de novo.', 'No Claude config found. Install Claude Code or Claude Desktop and run `iacmp setup` again.')));
     } else if (!flags['dry-run']) {
-      this.log(chalk.bold(t('Pronto.', 'Done.')) + t(' Reinicie o Claude para carregar os tools do iacmp.', ' Restart Claude to load the iacmp tools.'));
+      // MCP carrega no STARTUP da sessão — rodar o setup de dentro de uma sessão
+      // do Claude Code (cenário comum: o próprio agente roda) não dá as tools à
+      // sessão atual, e nada avisa. CLAUDECODE=1 identifica esse caso.
+      if (process.env.CLAUDECODE) {
+        this.log(chalk.yellow.bold(t(
+          '⚠ Você está DENTRO de uma sessão do Claude Code — esta sessão NÃO ganha as tools agora.',
+          '⚠ You are INSIDE a Claude Code session — this session does NOT get the tools now.')));
+        this.log(chalk.yellow(t(
+          '  Saia e abra o Claude Code de novo (as tools carregam no início da sessão).',
+          '  Exit and reopen Claude Code (tools load at session startup).')));
+      } else {
+        this.log(chalk.bold(t('Pronto.', 'Done.')) + t(' Reinicie o Claude para carregar os tools do iacmp.', ' Restart Claude to load the iacmp tools.'));
+      }
+      this.log(chalk.dim(t('Para conferir: digite /mcp no Claude Code — o servidor "iacmp" deve aparecer na lista.', 'To verify: type /mcp in Claude Code — the "iacmp" server should appear in the list.')));
     }
   }
 }
