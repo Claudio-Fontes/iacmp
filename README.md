@@ -57,7 +57,7 @@ iacmp deploy                    # deploya de verdade, na sua conta
 npm install -g iacmp
 ```
 
-**Idioma:** o CLI fala português e inglês — detecta o idioma do sistema automaticamente. Para forçar: `IACMP_LANG=pt` ou `IACMP_LANG=en` (por comando, ou `export` no seu shell).
+**Idioma:** o CLI fala inglês (padrão) e português. Para usar em português: `IACMP_LANG=pt iacmp <comando>` (uma vez), ou defina de vez com `export IACMP_LANG=pt` no seu shell (`~/.zshrc`).
 
 **Requisitos:** Node.js 20+. Para deploy: CLI da nuvem alvo (`aws`, `az` ou `gcloud`) e, para os caminhos Terraform, o binário `terraform`. `iacmp doctor` confere tudo.
 

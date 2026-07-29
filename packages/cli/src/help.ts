@@ -31,7 +31,10 @@ export default class IacmpHelp extends Help {
       console.log('  iacmp deploy --dry-run      ' + chalk.dim(t('# o plano, sem executar nada', '# the plan, without executing anything')));
       console.log('');
       console.log('  ' + chalk.dim('Claude Code: iacmp setup · Docs: https://github.com/Claudio-Fontes/iacmp'));
-      console.log('  ' + chalk.dim(t('Idioma: IACMP_LANG=pt|en (padrão: idioma do sistema)', 'Language: IACMP_LANG=pt|en (default: system language)')));
+      console.log('  ' + chalk.dim(t(
+        'Idioma: IACMP_LANG=pt iacmp <comando> · ou defina de vez: export IACMP_LANG=pt (padrão: en)',
+        'Language: IACMP_LANG=pt iacmp <command> · or set it once: export IACMP_LANG=pt (default: en)',
+      )));
     }
     await super.showRootHelp();
   }

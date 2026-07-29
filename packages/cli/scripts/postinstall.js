@@ -6,13 +6,7 @@ const { existsSync, readFileSync, appendFileSync, writeFileSync } = require('fs'
 const path = require('path');
 
 
-const LANG_PT = (() => {
-  const forced = (process.env.IACMP_LANG || '').trim().toLowerCase();
-  if (forced.startsWith('pt')) return true;
-  if (forced === 'en') return false;
-  const sys = (process.env.LC_ALL || process.env.LC_MESSAGES || process.env.LANG || '').toLowerCase();
-  return sys.startsWith('pt');
-})();
+const LANG_PT = (process.env.IACMP_LANG || '').trim().toLowerCase().startsWith('pt');
 
 const WELCOME = LANG_PT ? `
 [iacmp] Instalado! Comece agora:
