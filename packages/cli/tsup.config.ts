@@ -49,7 +49,7 @@ const includeMcpServer = existsSync(MCP_SERVER_ENTRY);
 export default defineConfig([
   {
     ...common,
-    entry: ['src/index.ts', 'src/help.ts', 'src/commands/**/*.ts', 'src/deploy/azure-dynamo-shim.ts', 'src/deploy/azure-s3-shim.ts'],
+    entry: ['src/index.ts', 'src/help.ts', 'src/commands/**/*.ts', 'src/hooks/welcome.ts', 'src/deploy/azure-dynamo-shim.ts', 'src/deploy/azure-s3-shim.ts'],
     outDir: 'dist',
     clean: true,
     // @iacmp/registry foi inlinado, mas seu client.ts lê registry.json via

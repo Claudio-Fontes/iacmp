@@ -8,25 +8,25 @@ const path = require('path');
 
 const LANG_PT = (process.env.IACMP_LANG || '').trim().toLowerCase().startsWith('pt');
 
+const B = '\x1b[1m', Y = '\x1b[1;33m', C = '\x1b[1;36m', G = '\x1b[32m', R = '\x1b[0m';
+
 const WELCOME = LANG_PT ? `
-[iacmp] Instalado! Comece agora:
+${C}${B}[iacmp] Instalado! Comece agora:${R}
 
-  iacmp init meu-projeto      # cria um projeto de exemplo pronto para deploy
-  cd meu-projeto
-  iacmp synth                 # gera CloudFormation/Bicep/Terraform + validações
-  iacmp deploy --dry-run      # mostra o plano sem executar nada
+  ${G}iacmp init meu-projeto${R}      # cria um projeto de exemplo pronto para deploy
+  ${G}cd meu-projeto && iacmp synth${R}
 
-  Claude Code: iacmp setup    # registra as ferramentas MCP do iacmp
+  ${Y}${B}⚡ Claude Code: rode \`iacmp setup\` para o agente gerar e operar sua infra${R}
+
   Docs: https://github.com/Claudio-Fontes/iacmp
 ` : `
-[iacmp] Installed! Get started:
+${C}${B}[iacmp] Installed! Get started:${R}
 
-  iacmp init my-project       # scaffolds an example project ready to deploy
-  cd my-project
-  iacmp synth                 # generates CloudFormation/Bicep/Terraform + validations
-  iacmp deploy --dry-run      # shows the plan without executing anything
+  ${G}iacmp init my-project${R}       # scaffolds an example project ready to deploy
+  ${G}cd my-project && iacmp synth${R}
 
-  Claude Code: iacmp setup    # registers the iacmp MCP tools
+  ${Y}${B}⚡ Claude Code: run \`iacmp setup\` so the agent can generate and operate your infra${R}
+
   Docs: https://github.com/Claudio-Fontes/iacmp
 `;
 // Windows gerencia PATH via instalador — não mexer
