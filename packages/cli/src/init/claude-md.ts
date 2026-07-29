@@ -109,12 +109,12 @@ resources:   [ref('UsuariosTable', 'Arn')]
 
 Toda stack com \`Fn.Lambda\` exige:
 1. Handler em \`src/handlers/<nome>/index.ts\` — código completo, nunca TODOs
-2. Propriedade \`code: 'dist/handlers/<nome>'\` na stack (aponta para o compilado, não para src/)
+2. Propriedade \`code: 'dist/handlers/<nome>'\` na stack (é o DESTINO do bundle que o deploy gera; o fonte fica em src/)
 
 **Estrutura obrigatória:**
 \`\`\`
 src/handlers/<nome-da-lambda>/index.ts   ← escreva aqui
-dist/handlers/<nome-da-lambda>/index.js  ← gerado por npm run build (não edite)
+dist/handlers/<nome-da-lambda>/index.js  ← o DEPLOY gera via esbuild (não edite, não crie)
 \`\`\`
 
 **Na stack TypeScript:**
@@ -155,18 +155,23 @@ export async function handler(event: any) {
 - Sempre use \`DynamoDBDocumentClient\` de \`@aws-sdk/lib-dynamodb\`
 - Retorne sempre \`{ statusCode, body: JSON.stringify(...) }\`
 
-## Build antes do deploy (OBRIGATÓRIO quando houver Fn.Lambda)
+## Empacotamento no deploy (NÃO rode build manual)
 
-O deploy empacota o código compilado de \`dist/\` — sem build a Lambda sobe vazia ou falha.
+O \`iacmp deploy\` empacota os handlers sozinho, nas três nuvens: ele deriva o
+fonte do \`code\` (\`dist/…\` → \`src/…\`) e roda esbuild direto no \`.ts\` — bundle
+self-contained, sem passo manual. **NUNCA adicione \`npm run build\`/\`tsc\` ao
+fluxo por causa das Lambdas.**
+
+- Dependências npm que o handler importa (ex: \`pg\`, \`ioredis\`) são INLINADAS
+  no bundle — basta \`npm install <dep>\` no projeto antes do deploy.
+- Na AWS, \`@aws-sdk/*\` fica de fora do bundle de propósito (o runtime da
+  Lambda já provê o SDK v3) — não precisa instalar.
+- Código compartilhado em \`src/lib/\` entra no bundle de quem o importa.
 
 \`\`\`bash
-npm install @aws-sdk/client-dynamodb @aws-sdk/lib-dynamodb  # se usar DynamoDB
-npm run build          # compila src/ → dist/
+npm install pg         # só se o handler usar deps de terceiros
 iacmp deploy --provider aws
-iacmp deploy --provider azure
 \`\`\`
-
-**Sempre rode \`npm run build\` antes de qualquer deploy** (AWS ou Azure).
 
 ## Policy stack (OBRIGATÓRIO em todo projeto com Fn.Lambda)
 

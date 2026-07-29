@@ -135,6 +135,22 @@ inversa). Você não precisa fazer nada manual pra isso funcionar.
 > `@iacmp/runtime` resolvida para o adaptador da cloud alvo — zip + upload
 > automáticos (S3/`config-zip`/bucket de artefatos GCP). Nenhum passo manual.
 
+**Como o empacotamento funciona** (importante para não criar passo de build à toa):
+
+- O `code` da Lambda (ex: `code: 'dist/handlers/itens'`) é o **destino** do
+  bundle, não algo que você precisa gerar. O deploy deriva o **fonte** trocando
+  `dist/` por `src/` e procurando o módulo do handler — para
+  `handler: 'index.handler'`, o fonte é `src/handlers/itens/index.ts` (ou `.js`).
+  Você nunca roda `tsc`/build manualmente.
+- O bundle é **self-contained**: dependências npm do projeto (ex: `ioredis`,
+  `zod`) são inlinadas — pode usá-las no handler. Código compartilhado em
+  `src/lib/` também entra no bundle de quem o importa.
+- Na AWS, `@aws-sdk/*` fica **de fora** do bundle de propósito: o runtime Node
+  da Lambda já provê o SDK v3. Não o adicione às dependências por causa disso.
+- `import { table, blob, ... } from '@iacmp/runtime'` é resolvido em build para
+  o adaptador da cloud alvo (Lambda/Azure Functions/Cloud Functions) — o mesmo
+  handler roda nas três nuvens sem mudança.
+
 ---
 
 ### `iacmp destroy [--provider aws] [--stack nome] [--dry-run]`
@@ -548,13 +564,13 @@ O `iacmp init` gera automaticamente:
 | Fase 4 | Plugin system, watch, dashboard, registry, CI/CD | Disponível |
 | Fase 5 | Testes de integração, documentação, exemplos, publicação npm | Disponível |
 | Fase 6 | Templates no `init`, auditorias, diagramas de arquitetura | Disponível |
-| Fase 7 | `iacmp deploy`/`destroy` real (AWS completo; Azure/GCP/Terraform sem código de função) | Disponível — aguardando validação manual |
-| Fase 8 | Empacotamento de código de função (`Function.Lambda`) em Azure, GCP e Terraform | Planejado — próxima etapa após a validação da Fase 7 |
+| Fase 7 | `iacmp deploy`/`destroy` real nas três nuvens | Disponível — validado por bateria e2e (20 cenários por provider) |
+| Fase 8 | Empacotamento de código de função (`Function.Lambda`) em AWS, Azure, GCP e Terraform | Disponível — esbuild no deploy, três nuvens |
 | Fase 9 | Estudo: suportar stacks escritas em outra linguagem além de TypeScript, sem alterar a API do `@iacmp/core` (exigiria um SDK paralelo emitindo um JSON equivalente, consumido pelo `synth.ts`) | A estudar — sem decisão de implementação ainda |
 
 ---
 
-*iacmp v1.1.0 — IaC Multi Plataforma*
+*iacmp — IaC Multi Plataforma*
 
 Para configurar `ANTHROPIC_API_KEY` (e opcionalmente `GITHUB_TOKEN`), copie o
 `.env.example` da raiz para `.env` e preencha. O `iacmp` lê do ambiente — você
