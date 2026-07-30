@@ -369,7 +369,8 @@ export function synthDatabase(
       return [[logicalId, {
         Type: 'AWS::SecretsManager::Secret',
         Properties: {
-          Name: construct.id,
+          // physicalName: dois projetos com o mesmo construct id não colidem
+          Name: physicalName(ctx, construct.id, 256),
           Description: (props.description as string) ?? `Secret ${construct.id}`,
           GenerateSecretString: {
             PasswordLength: 32,
