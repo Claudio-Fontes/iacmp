@@ -2,7 +2,7 @@ import * as path from 'path';
 import { t } from '../../i18n';
 import { errMessage } from '../../utils';
 import { providerOutDir, AZURE_MAIN_FILE, AZURE_MAIN_STACK } from '../../synth-out';
-import { listApimServices } from '../azure';
+import { listApimServices, describeStackStatus, waitForStackTerminal } from '../azure';
 import { printPlan, runCommands } from '../exec';
 import { DestroyContext } from '../types';
 import { DestroyFlowOptions } from './common';
@@ -51,7 +51,28 @@ export async function destroyAzureMain(
     try {
       await runCommands(commands);
     } catch (err) {
-      o.ui.error(errMessage(err));
+      // O `az stack group delete` às vezes perde a conexão local (ou colide com
+      // DeploymentStackInNonTerminalState) DEPOIS que a ARM já começou a deletar —
+      // recursos como APIM levam minutos. Se a stack está em deleção (ou já sumiu),
+      // esperamos o estado terminal em vez de reportar falha — espelho do
+      // recoverFromAzCliCrash do deploy. Provado na bateria de validação
+      // (cv-az-notes: 2 "falhas" de destroy que eram deleções em andamento).
+      const rg = o.config.resourceGroup ?? '';
+      const st = rg ? describeStackStatus(mainStackName, rg) : { deployed: true as const, status: undefined };
+      if (!st.deployed) {
+        o.ui.log(t('[iacmp] A stack já não existe no ARM — destroy concluído.', '[iacmp] The stack no longer exists in ARM — destroy complete.'));
+      } else if (st.status && /delet/i.test(st.status)) {
+        o.ui.log(t(
+          `[iacmp] O az perdeu a conexão mas a ARM está deletando (estado: ${st.status}). Aguardando...`,
+          `[iacmp] az lost the connection but ARM is deleting (state: ${st.status}). Waiting...`,
+        ));
+        waitForStackTerminal(mainStackName, rg);
+        const after = describeStackStatus(mainStackName, rg);
+        if (after.deployed) o.ui.error(errMessage(err));
+        o.ui.log(t('[iacmp] Deleção concluída pela ARM.', '[iacmp] Deletion completed by ARM.'));
+      } else {
+        o.ui.error(errMessage(err));
+      }
     }
     fireApimPurge(apimsToPurge, o.ui);
     if (o.config.resourceGroup) await maybeDeleteEmptyRg(o.config.resourceGroup, o.force, o.ui);

@@ -17,7 +17,7 @@ import { buildAndPushContainerImage, AzureContainerBuildMeta } from './container
 import { buildFunctionBundle, AzureFunctionMeta } from './function-bundle';
 
 // API pública do módulo — consumida por deploy/index.ts, flows/ e testes.
-export { getAzureStackOutputs, listApimServices, purgeApimSoftDeleted, resourceGroupExists, describeStackStatus } from './stack-api';
+export { getAzureStackOutputs, listApimServices, purgeApimSoftDeleted, resourceGroupExists, describeStackStatus, waitForStackTerminal } from './stack-api';
 
 export const azureExecutor: DeployExecutor = {
   provider: 'azure',
