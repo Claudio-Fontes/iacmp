@@ -311,6 +311,6 @@ export default class Init extends Command {
     this.log(t('Gerar stacks com o Claude Code (incluso):', 'Generate stacks with Claude Code (included):'));
     this.log(t('  iacmp setup                # registra as ferramentas MCP; depois abra o Claude Code aqui', '  iacmp setup                # registers the MCP tools; then open Claude Code here'));
     this.log('');
-    this.log('Docs: https://github.com/Claudio-Fontes/iacmp');
+    this.log(t('Docs: https://claudio-fontes.github.io/iacmp/pt/', 'Docs: https://claudio-fontes.github.io/iacmp'));
   }
 }
