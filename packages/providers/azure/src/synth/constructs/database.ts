@@ -167,7 +167,11 @@ export function synthesizeDatabase(construct: BaseConstruct, ctx: SynthContext):
         apiVersion: '2023-04-15',
         parent: dbSym,
         name: 'documents',
-        properties: { resource: { id: 'documents' }, options: {} },
+        // Índice wildcard: o Cosmos Mongo REJEITA sort() em campo sem índice
+        // ("The index path corresponding to the specified order-by item is
+        // excluded") — diferente do MongoDB real, que aceita. Com o wildcard,
+        // handlers portados de Mongo (sort por qualquer campo) funcionam.
+        properties: { resource: { id: 'documents', indexes: [{ key: { keys: ['_id'] } }, { key: { keys: ['$**'] } }] }, options: {} },
       });
       outputs.push({ name: crossParamName(construct.id, 'Endpoint'), type: 'string', value: `${sym}.properties.documentEndpoint` });
       outputs.push({ name: crossParamName(construct.id, 'ConnectionString'), type: 'string', value: `${sym}.listConnectionStrings().connectionStrings[0].connectionString` });
@@ -207,7 +211,8 @@ export function synthesizeDatabase(construct: BaseConstruct, ctx: SynthContext):
         apiVersion: '2023-04-15',
         parent: dbSym,
         name: construct.id.toLowerCase(),
-        properties: { resource: { id: construct.id.toLowerCase() }, options: {} },
+        // Wildcard index — mesma razão do Database.DocumentDB acima.
+        properties: { resource: { id: construct.id.toLowerCase(), indexes: [{ key: { keys: ['_id'] } }, { key: { keys: ['$**'] } }] }, options: {} },
       });
       outputs.push({ name: outputName(construct.id, 'Endpoint'), type: 'string', value: `${sym}.properties.documentEndpoint` });
       outputs.push({ name: crossParamName(construct.id, 'Name'), type: 'string', value: `'${construct.id.toLowerCase()}'` });

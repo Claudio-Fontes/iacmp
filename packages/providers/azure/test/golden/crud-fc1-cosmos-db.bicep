@@ -46,6 +46,22 @@ resource itemsTableColl 'Microsoft.DocumentDB/databaseAccounts/mongodbDatabases/
   properties: {
     resource: {
       id: 'itemstable'
+      indexes: [
+        {
+          key: {
+            keys: [
+              '_id'
+            ]
+          }
+        }
+        {
+          key: {
+            keys: [
+              '$**'
+            ]
+          }
+        }
+      ]
     }
     options: {}
   }
