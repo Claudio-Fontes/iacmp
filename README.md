@@ -128,4 +128,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Issues and PRs in English or Portuguese 
 
 ## License
 
-[Apache-2.0](LICENSE).
+[Apache-2.0](LICENSE) — © 2026 [Claudio Melo](https://github.com/Claudio-Fontes), creator and maintainer.

@@ -30,6 +30,10 @@ export default defineConfig({
           pattern: 'https://github.com/Claudio-Fontes/iacmp/edit/main/website/:path',
           text: 'Edit this page on GitHub',
         },
+        footer: {
+          message: 'Released under the Apache-2.0 License.',
+          copyright: '© 2026 Claudio Melo — creator and maintainer',
+        },
       },
     },
     pt: {
@@ -56,6 +60,10 @@ export default defineConfig({
         editLink: {
           pattern: 'https://github.com/Claudio-Fontes/iacmp/edit/main/website/:path',
           text: 'Editar esta página no GitHub',
+        },
+        footer: {
+          message: 'Publicado sob a licença Apache-2.0.',
+          copyright: '© 2026 Claudio Melo — criador e mantenedor',
         },
         outline: { label: 'Nesta página' },
         docFooter: { prev: 'Anterior', next: 'Próxima' },

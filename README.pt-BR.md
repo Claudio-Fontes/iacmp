@@ -138,4 +138,4 @@ Veja [CONTRIBUTING.md](CONTRIBUTING.md). Issues e PRs em português ou inglês s
 
 ## Licença
 
-[Apache-2.0](LICENSE).
+[Apache-2.0](LICENSE) — © 2026 [Claudio Melo](https://github.com/Claudio-Fontes), criador e mantenedor.
