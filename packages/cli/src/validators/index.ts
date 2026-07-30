@@ -624,3 +624,44 @@ export function validateStackDomainSeparation(loaded: LoadedStack[]): string[] {
   }
   return errors;
 }
+
+/**
+ * Event source mapping de SQS exige visibility timeout da fila ≥ timeout da
+ * função consumidora — senão o CREATE do mapping falha no deploy com
+ * "Queue visibility timeout: Xs is less than Function timeout: Ys". Cross-stack:
+ * a fila costuma estar em stacks/messaging e o consumer em stacks/compute.
+ * Defaults da AWS quando omitidos: visibility 30s, timeout de Lambda 3s.
+ */
+export function validateQueueVisibilityVsConsumerTimeout(loaded: LoadedStack[]): string[] {
+  const errors: string[] = [];
+  const queues = new Map<string, number>();
+  for (const { stack } of loaded) {
+    for (const c of stack.constructs) {
+      if (c.type !== 'Messaging.Queue') continue;
+      const props = c.props as Record<string, unknown>;
+      queues.set(c.id, typeof props.visibilityTimeoutSeconds === 'number' ? props.visibilityTimeoutSeconds : 30);
+    }
+  }
+  if (queues.size === 0) return errors;
+  for (const { stack } of loaded) {
+    for (const c of stack.constructs) {
+      if (c.type !== 'Function.Lambda') continue;
+      const props = c.props as Record<string, unknown>;
+      const timeout = typeof props.timeout === 'number' ? props.timeout : 3;
+      const sources = props.eventSources as Array<{ queueId?: string }> | undefined;
+      for (const src of sources ?? []) {
+        if (!src.queueId || !queues.has(src.queueId)) continue;
+        const visibility = queues.get(src.queueId)!;
+        if (visibility < timeout) {
+          errors.push(t(
+            `Fn.Lambda "${c.id}" (timeout: ${timeout}s) consome a fila "${src.queueId}" cujo visibilityTimeoutSeconds é ${visibility}s. ` +
+            `A AWS exige visibility ≥ timeout da função — aumente visibilityTimeoutSeconds para ${timeout} ou mais (recomendado: ~6× o timeout para retries).`,
+            `Fn.Lambda "${c.id}" (timeout: ${timeout}s) consumes queue "${src.queueId}" whose visibilityTimeoutSeconds is ${visibility}s. ` +
+            `AWS requires visibility ≥ the function timeout — raise visibilityTimeoutSeconds to ${timeout} or more (recommended: ~6× the timeout for retries).`,
+          ));
+        }
+      }
+    }
+  }
+  return errors;
+}

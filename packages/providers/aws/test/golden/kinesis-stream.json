@@ -37,9 +37,6 @@
     "ProducerPolicyRole": {
       "Type": "AWS::IAM::Role",
       "Properties": {
-        "RoleName": {
-          "Fn::Sub": "ProducerFn-role-${AWS::StackName}"
-        },
         "AssumeRolePolicyDocument": {
           "Version": "2012-10-17",
           "Statement": [

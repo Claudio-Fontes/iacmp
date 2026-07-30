@@ -15,6 +15,7 @@ import {
   validateDbUserRef,
   validateRedisPortRef,
   validateStackDomainSeparation,
+  validateQueueVisibilityVsConsumerTimeout,
 } from '../validators';
 import { SynthUI } from './types';
 import { t } from '../i18n';
@@ -121,6 +122,12 @@ export function runSynthGuards(
       // Redis Enterprise (Azure) usa TLS na porta 10000 — não existe porta 6379.
       header: t("REDIS_PORT hardcoded no Fn.Lambda (Redis Enterprise usa TLS:10000 — '6379' não existe):", "REDIS_PORT hardcoded in the Fn.Lambda (Redis Enterprise uses TLS:10000 — '6379' does not exist):"),
       run: () => validateRedisPortRef(loadedStacks),
+    },
+    {
+      // Event source de SQS com visibility da fila < timeout do consumer falha o
+      // CREATE do mapping no deploy ("visibility timeout is less than Function timeout").
+      header: t('Fila com visibility timeout menor que o timeout do consumer (o deploy do event source falha):', 'Queue visibility timeout lower than the consumer timeout (the event source deploy fails):'),
+      run: () => validateQueueVisibilityVsConsumerTimeout(loadedStacks),
     },
   ];
 

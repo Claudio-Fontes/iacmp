@@ -453,10 +453,13 @@ export function synthFunction(
       }
 
       const roleLogicalId = `${logicalId}Role`;
+      // Sem RoleName: o CloudFormation gera um nome único ≤64 chars. Nomear com
+      // `${attachTo}-role-${AWS::StackName}` estourava o limite de 64 do IAM em
+      // projetos/stacks de nome longo (ValidationError no deploy) — e o nome não
+      // é usado por ninguém: o wiring cross-stack é por ARN (GetAtt + Export).
       const roleResource: CloudFormationResource = {
         Type: 'AWS::IAM::Role',
         Properties: {
-          RoleName: { 'Fn::Sub': `${attachTo}-role-\${AWS::StackName}` },
           AssumeRolePolicyDocument: {
             Version: '2012-10-17',
             Statement: [{ Effect: 'Allow', Principal: { Service: principalService }, Action: 'sts:AssumeRole' }],
