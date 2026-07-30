@@ -122,11 +122,14 @@ export function synthesizeMonitoring(construct: BaseConstruct, ctx: SynthContext
         RequestDuration: 'AverageResponseTime', Invocations: 'FunctionExecutionCount',
         Count: 'Requests', ThrottledRequests: 'Http429',
       };
+      // CPU/memória em containerApps são ABSOLUTOS: UsageNanoCores (nanocores) e
+      // WorkingSetBytes (bytes) — não existem métricas percentuais nem
+      // 'TotalCpuUsage' (ARM rejeita: "Couldn't find a metric"; provado em deploy).
       const containerMetricMap: Record<string, string> = {
         Errors: 'Requests', p99: 'Requests', Latency: 'Requests',
-        ThrottledRequests: 'Requests', Duration: 'TotalCpuUsage', Invocations: 'Requests',
+        ThrottledRequests: 'Requests', Duration: 'UsageNanoCores', Invocations: 'Requests',
         ConcurrentExecutions: 'Replicas', Count: 'Requests', RequestDuration: 'Requests',
-        CPUUtilization: 'CpuPercentage', MemoryUtilization: 'MemoryWorkingSetBytes',
+        CPUUtilization: 'UsageNanoCores', MemoryUtilization: 'WorkingSetBytes',
       };
 
       let alarmScopes: unknown[];

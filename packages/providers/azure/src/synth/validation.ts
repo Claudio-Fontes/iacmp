@@ -24,9 +24,12 @@ export const AZURE_METRICS_BY_NAMESPACE: Record<string, ReadonlySet<string>> = {
     'AverageResponseTime', 'Requests', 'FunctionExecutionCount', 'FunctionExecutionUnits',
     'BytesReceived', 'BytesSent', 'HealthCheckStatus', 'Threads', 'HttpResponseTime',
   ]),
+  // Métricas REAIS do namespace (provado em deploy: 'TotalCpuUsage'/'CpuPercentage'
+  // não existem em containerApps — ARM rejeita com "Couldn't find a metric").
+  // CPU = UsageNanoCores (valor absoluto em nanocores, não %).
   'Microsoft.App/containerApps': new Set([
     'Requests', 'Replicas', 'RestartCount', 'RxBytes', 'TxBytes',
-    'CpuPercentage', 'MemoryPercentage', 'TotalCpuUsage', 'WorkingSetBytes',
+    'UsageNanoCores', 'WorkingSetBytes', 'CoresQuotaUsed',
   ]),
 };
 
