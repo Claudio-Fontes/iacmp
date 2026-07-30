@@ -34,14 +34,16 @@ cd my-api
 4. When (and only when) you are happy with the result, deploy it yourself:
 
 ```bash
-iacmp deploy --dry-run    # shows the full plan without touching your cloud
-iacmp deploy              # real deploy (asks for confirmation)
+iacmp deploy --dry-run --provider aws   # shows the full plan without touching your cloud
+iacmp deploy --provider aws             # real deploy (asks for confirmation)
 ```
+
+Without `--provider`, iacmp uses the one set in the project's `iacmp.json` (`aws`, `azure` or `gcp`).
 
 5. Done experimenting? Remove everything:
 
 ```bash
-iacmp destroy             # removes all deployed resources (asks for confirmation)
+iacmp destroy --provider aws            # removes all deployed resources (asks for confirmation)
 ```
 
 ## No MCP? Still works

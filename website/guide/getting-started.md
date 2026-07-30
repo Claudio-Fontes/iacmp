@@ -109,14 +109,16 @@ iacmp doctor         # checks everything is in place
 Then:
 
 ```bash
-iacmp deploy --dry-run    # shows exactly what would be created
-iacmp deploy              # deploys for real (asks for confirmation)
+iacmp deploy --dry-run --provider aws   # shows exactly what would be created
+iacmp deploy --provider aws             # deploys for real (asks for confirmation)
 ```
+
+Without `--provider`, iacmp uses the one set in the project's `iacmp.json` (`aws`, `azure` or `gcp`).
 
 When you're done experimenting:
 
 ```bash
-iacmp destroy             # removes everything (asks for confirmation)
+iacmp destroy --provider aws            # removes everything (asks for confirmation)
 ```
 
 ## 6. Explore
