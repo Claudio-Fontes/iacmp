@@ -1,5 +1,6 @@
 import { BaseConstruct, isRef, ref } from '@iacmp/core';
 import type { CloudFormationResource, SynthContext } from '../types';
+import { physicalName } from '../types';
 import { resolveLambdaArnRef, resolveRef, normalizeRate, resolveQueueArn } from '../resolvers';
 import { resourceRef } from '../graph';
 
@@ -14,7 +15,10 @@ export function synthMessaging(
       return [[logicalId, {
         Type: 'AWS::Kinesis::Stream',
         Properties: {
-          Name: construct.id,
+          // physicalName: prefixa com o projeto — dois projetos na mesma conta
+          // com o mesmo construct id não podem colidir (streams/filas/topics
+          // têm nome global por conta+região, diferente do logical id da stack).
+          Name: physicalName(ctx, construct.id, 128),
           ShardCount: (props.shards as number) ?? 1,
           RetentionPeriodHours: (props.retentionHours as number) ?? 24,
           ...(props.encrypted ? { StreamEncryption: { EncryptionType: 'KMS', KeyId: 'alias/aws/kinesis' } } : {}),
@@ -27,7 +31,7 @@ export function synthMessaging(
       return [[logicalId, {
         Type: 'AWS::SQS::Queue',
         Properties: {
-          QueueName: fifo ? `${construct.id}.fifo` : construct.id,
+          QueueName: fifo ? `${physicalName(ctx, construct.id, 75)}.fifo` : physicalName(ctx, construct.id, 80),
           VisibilityTimeout: (props.visibilityTimeoutSeconds as number) ?? 30,
           MessageRetentionPeriod: (props.messageRetentionSeconds as number) ?? 345600,
           DelaySeconds: (props.delaySeconds as number) ?? 0,
@@ -44,7 +48,7 @@ export function synthMessaging(
       const topicEntries: Array<[string, CloudFormationResource]> = [[logicalId, {
         Type: 'AWS::SNS::Topic',
         Properties: {
-          TopicName: fifo ? `${construct.id}.fifo` : construct.id,
+          TopicName: fifo ? `${physicalName(ctx, construct.id, 251)}.fifo` : physicalName(ctx, construct.id, 256),
           DisplayName: (props.displayName as string) ?? construct.id,
           ...(fifo ? { FifoTopic: true } : {}),
           ...(props.encrypted ? { KmsMasterKeyId: 'alias/aws/sns' } : {}),
