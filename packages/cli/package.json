@@ -1,6 +1,6 @@
 {
   "name": "iacmp",
-  "version": "2.5.7",
+  "version": "2.5.8",
   "description": "Multi-cloud IaC — one TypeScript codebase, CloudFormation (AWS), Bicep (Azure) and Terraform (GCP) out. Synth, deploy, diff, audits and diagrams in a single CLI.",
   "keywords": [
     "iac",
