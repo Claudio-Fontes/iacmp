@@ -29,7 +29,20 @@ cd my-api
 
 > Create an API for managing customers: API Gateway, a Lambda for CRUD and a DynamoDB table. Then synth and show me the result.
 
-3. The agent writes the stacks, runs `synth_project`, reads any validation errors and fixes them until green. You review the generated TypeScript — and only you decide when to `deploy`.
+3. The agent writes the stacks, runs `synth_project`, reads any validation errors and fixes them until green. You review the generated TypeScript.
+
+4. When (and only when) you are happy with the result, deploy it yourself:
+
+```bash
+iacmp deploy --dry-run    # shows the full plan without touching your cloud
+iacmp deploy              # real deploy (asks for confirmation)
+```
+
+5. Done experimenting? Remove everything:
+
+```bash
+iacmp destroy             # removes all deployed resources (asks for confirmation)
+```
 
 ## No MCP? Still works
 
@@ -38,5 +51,14 @@ cd my-api
 ## Tips
 
 - Keep one stack per domain (`stacks/network/`, `stacks/database/`, `stacks/compute/`) — the agent follows the existing structure.
-- Ask for `iacmp audit-all` after generation: security, HA and DR audits in seconds.
-- `iacmp diagram` gives you a C4 diagram to check the architecture the agent built.
+- After the agent generates the stacks, audit them — security, high availability and disaster recovery, in seconds:
+
+```bash
+iacmp audit-all
+```
+
+- Want to see the architecture the agent built? Generate a C4 diagram:
+
+```bash
+iacmp diagram
+```

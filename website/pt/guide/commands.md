@@ -1,6 +1,11 @@
 # Comandos
 
-Rodar `iacmp` sozinho (ou `iacmp --help`) lista todos os comandos com um exemplo de uso. `iacmp <comando> --help` mostra todas as flags.
+Rodar `iacmp` sozinho lista todos os comandos com um exemplo de uso:
+
+```bash
+iacmp                    # lista todos os comandos, cada um com exemplo
+iacmp synth --help       # todas as flags de um comando específico (vale pra qualquer um)
+```
 
 | Comando | Descrição |
 |---|---|

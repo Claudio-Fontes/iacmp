@@ -1,6 +1,11 @@
 # Commands
 
-Running `iacmp` on its own (or `iacmp --help`) lists every command with a usage example. `iacmp <command> --help` shows all flags.
+Running `iacmp` on its own lists every command with a usage example:
+
+```bash
+iacmp                    # lists all commands, each with an example
+iacmp synth --help       # all flags of a specific command (works for any command)
+```
 
 | Command | Description |
 |---|---|

@@ -15,7 +15,11 @@ iacmp --version
 ```
 
 ::: tip Command not found?
-The installer links `iacmp` into your PATH for immediate use. If your shell still can't find it, open a new terminal — or run `iacmp doctor` from `npx iacmp doctor` to diagnose.
+The installer links `iacmp` into your PATH for immediate use. If your shell still can't find it, open a new terminal. Still nothing? Diagnose with:
+
+```bash
+npx iacmp doctor
+```
 :::
 
 ## 2. Create a project
@@ -35,7 +39,11 @@ my-api/
   CLAUDE.md           # guides AI agents through the right flow
 ```
 
-Want to see the other templates? `iacmp init --list` (blank, hello, rds, webapp, network, serverless, fullstack).
+Want to see the other templates (blank, hello, rds, webapp, network, serverless, fullstack)?
+
+```bash
+iacmp init --list
+```
 
 ## 3. Look at what you got
 

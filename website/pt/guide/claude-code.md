@@ -29,7 +29,20 @@ cd minha-api
 
 > Crie uma API de clientes: API Gateway, uma Lambda de CRUD e uma tabela DynamoDB. Depois rode o synth e me mostre o resultado.
 
-3. O agente escreve as stacks, roda `synth_project`, lê os erros de validação e corrige até ficar verde. Você revisa o TypeScript gerado — e só você decide a hora do `deploy`.
+3. O agente escreve as stacks, roda `synth_project`, lê os erros de validação e corrige até ficar verde. Você revisa o TypeScript gerado.
+
+4. Quando (e só quando) você estiver satisfeito com o resultado, o deploy é seu:
+
+```bash
+iacmp deploy --dry-run    # mostra o plano completo sem tocar na sua nuvem
+iacmp deploy              # deploy de verdade (pede confirmação)
+```
+
+5. Terminou de experimentar? Remova tudo:
+
+```bash
+iacmp destroy             # remove todos os recursos deployados (pede confirmação)
+```
 
 ## Sem MCP? Também funciona
 
@@ -38,5 +51,14 @@ O `iacmp init` gera um `CLAUDE.md` no projeto que guia qualquer agente pelo flux
 ## Dicas
 
 - Mantenha uma stack por domínio (`stacks/network/`, `stacks/database/`, `stacks/compute/`) — o agente segue a estrutura existente.
-- Peça `iacmp audit-all` depois da geração: auditorias de segurança, HA e DR em segundos.
-- `iacmp diagram` te dá um diagrama C4 para conferir a arquitetura que o agente montou.
+- Depois que o agente gerar as stacks, audite — segurança, alta disponibilidade e DR, em segundos:
+
+```bash
+iacmp audit-all
+```
+
+- Quer ver a arquitetura que o agente montou? Gere o diagrama C4:
+
+```bash
+iacmp diagram
+```
