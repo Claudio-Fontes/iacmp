@@ -136,6 +136,10 @@ comandos Pro apenas indicam a ausência.
 
 Veja [CONTRIBUTING.md](CONTRIBUTING.md). Issues e PRs em português ou inglês são bem-vindos.
 
+## Contato
+
+Bugs e dúvidas: [GitHub Issues](https://github.com/Claudio-Fontes/iacmp/issues) · Negócios, imprensa e o resto: [LinkedIn](https://www.linkedin.com/in/claudio-me1o)
+
 ## Licença
 
 [Apache-2.0](LICENSE) — © 2026 [Claudio Melo](https://github.com/Claudio-Fontes), criador e mantenedor.

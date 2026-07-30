@@ -77,7 +77,10 @@ export default defineConfig({
 
   themeConfig: {
     logo: '/logo.svg',
-    socialLinks: [{ icon: 'github', link: 'https://github.com/Claudio-Fontes/iacmp' }],
+    socialLinks: [
+      { icon: 'github', link: 'https://github.com/Claudio-Fontes/iacmp' },
+      { icon: 'linkedin', link: 'https://www.linkedin.com/in/claudio-me1o' },
+    ],
     search: { provider: 'local' },
   },
 });

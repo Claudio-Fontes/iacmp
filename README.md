@@ -126,6 +126,10 @@ AI generation (`iacmp ai`, `from-diagram`) and corpus search over MCP (`search_e
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Issues and PRs in English or Portuguese are welcome.
 
+## Contact
+
+Bugs and questions: [GitHub Issues](https://github.com/Claudio-Fontes/iacmp/issues) · Business, press and everything else: [LinkedIn](https://www.linkedin.com/in/claudio-me1o)
+
 ## License
 
 [Apache-2.0](LICENSE) — © 2026 [Claudio Melo](https://github.com/Claudio-Fontes), creator and maintainer.
