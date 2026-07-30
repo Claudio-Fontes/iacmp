@@ -57,7 +57,7 @@ export async function destroyAzureMain(
       // esperamos o estado terminal em vez de reportar falha — espelho do
       // recoverFromAzCliCrash do deploy. Provado na bateria de validação
       // (cv-az-notes: 2 "falhas" de destroy que eram deleções em andamento).
-      const rg = o.config.resourceGroup ?? '';
+      const rg = ctx.resourceGroup ?? o.config.resourceGroup ?? '';
       const st = rg ? describeStackStatus(mainStackName, rg) : { deployed: true as const, status: undefined };
       if (!st.deployed) {
         o.ui.log(t('[iacmp] A stack já não existe no ARM — destroy concluído.', '[iacmp] The stack no longer exists in ARM — destroy complete.'));
