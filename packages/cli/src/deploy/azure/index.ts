@@ -87,6 +87,28 @@ export const azureExecutor: DeployExecutor = {
         };
         lazyCmd.retries = 2;
         zipCmds.push(lazyCmd);
+
+        // Function com trigger de Service Bus (sbTrigger): no plano Consumption o
+        // SCALE CONTROLLER só monitora a fila depois de um sync de triggers — o
+        // config-zip nem sempre dispara esse sync, e sem ele o worker NUNCA acorda
+        // (mensagens ficam active na fila indefinidamente; provado em deploy real,
+        // cv-az-q1-check: consumo só começou após o syncfunctiontriggers manual).
+        if (fn.sbTrigger) {
+          const syncCmd: NativeCommand = { bin: 'az', args: [] };
+          syncCmd.preRun = () => {
+            const outputs = getAzureStackOutputs(ctx.stackName, resourceGroup);
+            const appName = outputs[outputKey] ?? outputs[Object.keys(outputs).find(k => k.toLowerCase() === outputKey) ?? ''];
+            syncCmd.args = [
+              'resource', 'invoke-action',
+              '--action', 'syncfunctiontriggers',
+              '--resource-group', resourceGroup,
+              '--resource-type', 'Microsoft.Web/sites',
+              '--name', appName,
+            ];
+          };
+          syncCmd.retries = 2;
+          zipCmds.push(syncCmd);
+        }
       }
     }
 
