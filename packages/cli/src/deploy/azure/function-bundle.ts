@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { t } from '../../i18n';
 import { renderHttpTriggerWrapper } from './http-trigger-wrapper';
+import { renderServiceBusTriggerWrapper } from './service-bus-trigger-wrapper';
 
 export interface AzureFunctionMeta {
   constructId: string;
@@ -11,6 +12,10 @@ export interface AzureFunctionMeta {
   code: string;
   runtime: string;
   routePatterns?: string[];
+  /** Service Bus queue trigger (ver AzureFunctionMeta.sbTrigger em
+   * packages/providers/azure/src/synth/bicep.ts) — quando presente, empacota um
+   * binding `serviceBusTrigger` (ServiceBusTrigger/) além do HttpTrigger. */
+  sbTrigger?: { queueName: string; connectionSetting: string };
 }
 
 /**
@@ -58,7 +63,7 @@ export function buildFunctionBundle(
   if (!srcEntry) return null;
 
   const buildDir = path.join(path.dirname(templatePath), '.packaged', fn.functionAppName);
-  fs.mkdirSync(path.join(buildDir, 'HttpTrigger'), { recursive: true });
+  fs.mkdirSync(buildDir, { recursive: true });
 
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   let esbuild: { buildSync: (opts: Record<string, unknown>) => unknown };
@@ -130,21 +135,51 @@ export function buildFunctionBundle(
     extensionBundle: { id: 'Microsoft.Azure.Functions.ExtensionBundle', version: '[4.*, 5.0.0)' },
   }, null, 2));
 
-  fs.writeFileSync(path.join(buildDir, 'HttpTrigger', 'function.json'), JSON.stringify({
-    bindings: [
-      {
-        authLevel: 'anonymous',
-        type: 'httpTrigger',
-        direction: 'in',
-        name: 'req',
-        methods: ['get', 'post', 'put', 'delete', 'patch', 'head', 'options'],
-        route: '{*path}',
-      },
-      { type: 'http', direction: 'out', name: 'res' },
-    ],
-  }, null, 2));
+  // HttpTrigger: empacotado sempre, EXCETO quando a Function só existe para
+  // drenar uma fila Service Bus (sbTrigger) e não tem NENHUMA rota HTTP mapeada
+  // por um Function.ApiGateway — nesse caso nada chama essa Function via HTTP, e
+  // manter o HttpTrigger anônimo catch-all só abriria uma superfície sem uso.
+  const hasHttpRoutes = (fn.routePatterns ?? []).length > 0;
+  if (!fn.sbTrigger || hasHttpRoutes) {
+    fs.mkdirSync(path.join(buildDir, 'HttpTrigger'), { recursive: true });
+    fs.writeFileSync(path.join(buildDir, 'HttpTrigger', 'function.json'), JSON.stringify({
+      bindings: [
+        {
+          authLevel: 'anonymous',
+          type: 'httpTrigger',
+          direction: 'in',
+          name: 'req',
+          methods: ['get', 'post', 'put', 'delete', 'patch', 'head', 'options'],
+          route: '{*path}',
+        },
+        { type: 'http', direction: 'out', name: 'res' },
+      ],
+    }, null, 2));
 
-  fs.writeFileSync(path.join(buildDir, 'HttpTrigger', 'index.js'), renderHttpTriggerWrapper(fn.routePatterns ?? []));
+    fs.writeFileSync(path.join(buildDir, 'HttpTrigger', 'index.js'), renderHttpTriggerWrapper(fn.routePatterns ?? []));
+  }
+
+  // ServiceBusTrigger: binding que drena a fila (queueName = construct.id literal
+  // da Messaging.Queue) autenticando via app setting `connectionSetting` (o synth
+  // grava a connection string do namespace ali — ver constructs/function.ts). O
+  // adapter (renderServiceBusTriggerWrapper) converte a mensagem para o formato
+  // Lambda `{ Records: [...] }` que os handlers do corpus já esperam.
+  if (fn.sbTrigger) {
+    fs.mkdirSync(path.join(buildDir, 'ServiceBusTrigger'), { recursive: true });
+    fs.writeFileSync(path.join(buildDir, 'ServiceBusTrigger', 'function.json'), JSON.stringify({
+      bindings: [
+        {
+          type: 'serviceBusTrigger',
+          direction: 'in',
+          name: 'msg',
+          queueName: fn.sbTrigger.queueName,
+          connection: fn.sbTrigger.connectionSetting,
+        },
+      ],
+    }, null, 2));
+
+    fs.writeFileSync(path.join(buildDir, 'ServiceBusTrigger', 'index.js'), renderServiceBusTriggerWrapper());
+  }
 
   const zipPath = path.join(path.dirname(templatePath), '.packaged', `${fn.functionAppName}.zip`);
   try { fs.unlinkSync(zipPath); } catch { /* não existe ainda */ }

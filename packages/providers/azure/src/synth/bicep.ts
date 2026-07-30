@@ -138,6 +138,15 @@ export interface AzureFunctionMeta {
   runtime: string;
   /** Path patterns (ex: "/files/{key}", "/files/{key+}") de todos os ApiGateway que apontam pra esse lambda. */
   routePatterns: string[];
+  /** Service Bus queue trigger (Fn.Lambda com eventSources[].queueId) — o deploy
+   * (function-bundle.ts) usa isto para empacotar um binding `serviceBusTrigger`
+   * (ServiceBusTrigger/function.json) além do (ou no lugar do) HttpTrigger.
+   * `queueName` é sempre o construct.id literal da fila (Messaging.Queue nomeia
+   * o recurso `queues` assim — ver constructs/messaging.ts), nunca depende de
+   * resolução cross-stack. `connectionSetting` é o nome do app setting que o
+   * synth (constructs/function.ts) grava com a connection string do namespace
+   * (mesmo mecanismo de listKeys já usado por ref(queueId,'ConnectionString')). */
+  sbTrigger?: { queueName: string; connectionSetting: string };
 }
 
 export function extractAzureFunctionMeta(stack: Stack, allStacks?: Stack[]): AzureFunctionMeta[] {
@@ -162,6 +171,18 @@ export function extractAzureFunctionMeta(stack: Stack, allStacks?: Stack[]): Azu
     .filter(c => c.type === 'Function.Lambda')
     .map(c => {
       const props = c.props as Record<string, unknown>;
+      // sbTrigger: só a PRIMEIRA fila declarada em eventSources (mesma limitação
+      // do synth em constructs/function.ts) — queueName é sempre o construct.id
+      // literal (aceita string ou Ref, mas nunca depende de allStacks para
+      // resolver o nome: Messaging.Queue sempre nomeia a fila com o próprio id).
+      const eventSources = (props.eventSources as Array<Record<string, unknown>> | undefined) ?? [];
+      const queueEventSource = eventSources.find(es => es.queueId !== undefined);
+      const sbTrigger = queueEventSource
+        ? {
+            queueName: isRef(queueEventSource.queueId) ? (queueEventSource.queueId as Ref).constructId : queueEventSource.queueId as string,
+            connectionSetting: 'SERVICEBUS_CONNECTION',
+          }
+        : undefined;
       return {
         constructId: c.id,
         functionAppName: c.id.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 20),
@@ -169,6 +190,7 @@ export function extractAzureFunctionMeta(stack: Stack, allStacks?: Stack[]): Azu
         code: (props.code as string) ?? 'dist/',
         runtime: (props.runtime as string) ?? 'nodejs20',
         routePatterns: routesByLambda.get(c.id) ?? [],
+        ...(sbTrigger ? { sbTrigger } : {}),
       };
     });
 }

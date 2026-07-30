@@ -75,6 +75,28 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
         }
       }
 
+      // eventSources (Service Bus queue trigger — padrão worker): a fila drena via
+      // binding `serviceBusTrigger` empacotado pelo deploy (ver function-bundle.ts),
+      // que autentica com a connection string do namespace — sem o app setting
+      // abaixo o binding não teria como conectar. `SERVICEBUS_CONNECTION` é o
+      // nome FIXO consumido pelo binding (ver AzureFunctionMeta.sbTrigger em
+      // extractAzureFunctionMeta, mais abaixo neste arquivo/bicep.ts). Suporta só
+      // a PRIMEIRA fila declarada — o padrão worker é 1 Function.Lambda por fila;
+      // múltiplas filas na mesma Function exigiriam várias app settings de conexão
+      // e não são suportadas por ora.
+      const eventSources = (props.eventSources as Array<Record<string, unknown>> | undefined) ?? [];
+      const queueEventSource = eventSources.find(es => es.queueId !== undefined);
+      if (queueEventSource) {
+        const rawQueueId = queueEventSource.queueId;
+        const queueId = isRef(rawQueueId) ? (rawQueueId as Ref).constructId : rawQueueId as string;
+        const qc = ctx.globalIdx.get(queueId);
+        if (!qc || qc.type !== 'Messaging.Queue') {
+          throw new Error(`Function.Lambda "${construct.id}": eventSources[].queueId aponta para "${queueId}" (${qc?.type ?? 'não encontrado em nenhuma stack'}). queueId é só para Messaging.Queue.`);
+        }
+        const sbConnStr = resolveRef({ constructId: queueId, attribute: 'ConnectionString' } as Ref, ctx.idx, crossParams);
+        appSettings.push({ name: 'SERVICEBUS_CONNECTION', value: sbConnStr });
+      }
+
       // Múltiplos Function Apps no mesmo stack causam conflito de criação
       // paralela do serverFarm implícito (EastUS2LinuxDynamicPlan) — serializar
       // via dependsOn quando já existe outro functionapp,linux no template.

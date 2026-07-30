@@ -1,5 +1,5 @@
 import { Stack, Compute, Storage, Network, Database, Fn, Messaging, Cache, Monitoring, ref, CONSTRUCT_TYPES } from '@iacmp/core';
-import { AzureProvider, emitBicep, extractAzureContainerBuilds } from '../src';
+import { AzureProvider, emitBicep, extractAzureContainerBuilds, extractAzureFunctionMeta } from '../src';
 import { AZURE_ATTR_MAP, bv, expr } from '../src/synth/constructs/shared';
 
 function synth(stack: Stack): string {
@@ -150,6 +150,69 @@ describe('AzureProvider (Bicep)', () => {
     const out2 = synth(stack2);
     expect(out2.match(/'Microsoft\.Web\/sites@2023-12-01'/g)?.length).toBe(2);
     expect(out2).not.toContain('Microsoft.Web/serverfarms');
+  });
+
+  // ── Fn.Lambda eventSources (Service Bus queue trigger) ───────────────────────
+
+  test('Fn.Lambda com eventSources[].queueId (same-stack) → app setting SERVICEBUS_CONNECTION via listKeys', () => {
+    const stack = new Stack('test');
+    new Messaging.Queue(stack, 'OrderQueue', {});
+    new Fn.Lambda(stack, 'Worker', {
+      runtime: 'nodejs20', handler: 'dist/worker.handler', code: 'dist/',
+      eventSources: [{ queueId: 'OrderQueue' }],
+    } as any);
+    const out = synth(stack);
+    expect(out).toContain("name: 'SERVICEBUS_CONNECTION'");
+    expect(out).toContain(
+      "listKeys(resourceId('Microsoft.ServiceBus/namespaces/authorizationRules', orderQueueNs.name, 'RootManageSharedAccessKey'), '2022-10-01-preview').primaryConnectionString",
+    );
+  });
+
+  test('Fn.Lambda com eventSources[].queueId em OUTRA stack → cross-stack param + output produtor', () => {
+    const queueStack = new Stack('queue-stack');
+    new Messaging.Queue(queueStack, 'OrderQueue', {});
+    const workerStack = new Stack('worker-stack');
+    new Fn.Lambda(workerStack, 'Worker', {
+      runtime: 'nodejs20', handler: 'dist/worker.handler', code: 'dist/',
+      eventSources: [{ queueId: 'OrderQueue' }],
+    } as any);
+
+    const workerOut = new AzureProvider().synthesize(workerStack, [queueStack, workerStack]);
+    expect(workerOut).toContain('param OrderQueueConnectionString string');
+    expect(workerOut).toContain("name: 'SERVICEBUS_CONNECTION'");
+    expect(workerOut).toContain('value: OrderQueueConnectionString');
+
+    const queueOut = new AzureProvider().synthesize(queueStack, [queueStack, workerStack]);
+    expect(queueOut).toContain('output OrderQueueConnectionString string');
+  });
+
+  test('Fn.Lambda com eventSources[].queueId apontando para tipo que não é Messaging.Queue → erro claro', () => {
+    const stack = new Stack('test');
+    new Storage.Bucket(stack, 'NotAQueue', {});
+    new Fn.Lambda(stack, 'Worker', {
+      runtime: 'nodejs20', handler: 'dist/worker.handler', code: 'dist/',
+      eventSources: [{ queueId: 'NotAQueue' }],
+    } as any);
+    expect(() => synth(stack)).toThrow(/Messaging\.Queue/);
+  });
+
+  test('extractAzureFunctionMeta → sbTrigger com queueName e connectionSetting fixo', () => {
+    const stack = new Stack('test');
+    new Messaging.Queue(stack, 'OrderQueue', {});
+    new Fn.Lambda(stack, 'Worker', {
+      runtime: 'nodejs20', handler: 'dist/worker.handler', code: 'src/worker',
+      eventSources: [{ queueId: 'OrderQueue' }],
+    } as any);
+    const meta = extractAzureFunctionMeta(stack, [stack]);
+    const worker = meta.find(m => m.constructId === 'Worker');
+    expect(worker?.sbTrigger).toEqual({ queueName: 'OrderQueue', connectionSetting: 'SERVICEBUS_CONNECTION' });
+  });
+
+  test('extractAzureFunctionMeta → Fn.Lambda sem eventSources não tem sbTrigger', () => {
+    const stack = new Stack('test');
+    new Fn.Lambda(stack, 'Handler', { runtime: 'nodejs20', handler: 'index.handler', code: 'dist/' });
+    const meta = extractAzureFunctionMeta(stack);
+    expect(meta[0].sbTrigger).toBeUndefined();
   });
 
   // ── Compute.Container → Container Apps (BCP055 fix) ──────────────────────────
