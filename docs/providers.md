@@ -1,21 +1,21 @@
 # Providers
 
-O iacmp suporta três nuvens. O provider define para qual formato nativo os
-constructs são sintetizados — e como o `iacmp deploy` os aplica de verdade.
+iacmp supports three clouds. The provider determines which native format the
+constructs are synthesized to — and how `iacmp deploy` actually applies them.
 
-| Provider | Formato de synth | Deploy via | Cobertura e2e |
+| Provider | Synth format | Deploy via | e2e coverage |
 |---|---|---|---|
-| `aws` | CloudFormation JSON | `aws cloudformation package` + `deploy` | 20/20 cenários |
-| `azure` | Bicep (Deployment Stacks) | `az stack group create` | 20/20 cenários |
-| `gcp` | Terraform (tf.json) | `terraform apply` | 20/20 cenários |
-| `aws --format tf` | Terraform (tf.json) | `terraform apply` | deploy real validado |
-| `azure --format tf` | Terraform (azurerm) | `terraform apply` | deploy real validado |
+| `aws` | CloudFormation JSON | `aws cloudformation package` + `deploy` | 20/20 scenarios |
+| `azure` | Bicep (Deployment Stacks) | `az stack group create` | 20/20 scenarios |
+| `gcp` | Terraform (tf.json) | `terraform apply` | 20/20 scenarios |
+| `aws --format tf` | Terraform (tf.json) | `terraform apply` | validated with real deploys |
+| `azure --format tf` | Terraform (azurerm) | `terraform apply` | validated with real deploys |
 
 ---
 
-## Configurando o provider
+## Configuring the provider
 
-No `iacmp.json` do projeto:
+In the project's `iacmp.json`:
 
 ```json
 {
@@ -24,29 +24,29 @@ No `iacmp.json` do projeto:
 }
 ```
 
-Ou via flag em cada comando:
+Or via a flag on each command:
 
 ```bash
 iacmp synth --provider aws
 iacmp deploy --provider azure
 ```
 
-Campos específicos por nuvem no `iacmp.json`: `resourceGroup` e `azureRegion`
-(Azure), `projectId` e `gcpRegion` (GCP), `drRegion` (AWS, stacks de DR),
-`accountTier` (`free`/`standard` — ajusta SKUs e emite avisos de tier).
+Cloud-specific fields in `iacmp.json`: `resourceGroup` and `azureRegion`
+(Azure), `projectId` and `gcpRegion` (GCP), `drRegion` (AWS, DR stacks),
+`accountTier` (`free`/`standard` — adjusts SKUs and emits tier warnings).
 
-## Onde ficam os artefatos sintetizados
+## Where synthesized artifacts live
 
-`iacmp synth` escreve em `synth-out/<provider>/`. Cada provider tem sua
-subpasta — sintetizar a mesma stack para múltiplos providers nunca sobrescreve
-resultados. Os consumidores (`deploy`, `destroy`, `diff`, `dashboard`) leem da
-mesma subpasta.
+`iacmp synth` writes to `synth-out/<provider>/`. Each provider has its own
+subfolder — synthesizing the same stack for multiple providers never overwrites
+results. Consumers (`deploy`, `destroy`, `diff`, `dashboard`) read from the
+same subfolder.
 
-| Provider | Path | Conteúdo |
+| Provider | Path | Contents |
 |---|---|---|
-| AWS | `synth-out/aws/<stack>.json` | CloudFormation por stack |
-| Azure | `synth-out/azure/<stack>.bicep` + `_main.bicep` | módulos Bicep + deployment único |
-| GCP | `synth-out/gcp/<stack>.tf.json` + `_providers.tf.json` | root module Terraform único |
+| AWS | `synth-out/aws/<stack>.json` | CloudFormation per stack |
+| Azure | `synth-out/azure/<stack>.bicep` + `_main.bicep` | Bicep modules + single deployment |
+| GCP | `synth-out/gcp/<stack>.tf.json` + `_providers.tf.json` | single Terraform root module |
 | AWS via Terraform | `synth-out/aws-tf/` | tf.json + `_providers.tf.json` |
 | Azure via Terraform | `synth-out/azure-tf/` | tf.json (azurerm) + `_providers.tf.json` |
 
@@ -54,61 +54,60 @@ mesma subpasta.
 
 ## AWS
 
-Sintetiza **CloudFormation JSON**, uma stack por arquivo, com Export/ImportValue
-para referências cross-stack. O deploy ordena as stacks por dependência,
-empacota handlers (`aws cloudformation package`) e protege contra recursos
-órfãos com `DeletionPolicy: Retain` (detecção pré-deploy com confirmação).
+Synthesizes **CloudFormation JSON**, one stack per file, with Export/ImportValue
+for cross-stack references. Deploy orders stacks by dependency, packages
+handlers (`aws cloudformation package`), and guards against orphaned resources
+with `DeletionPolicy: Retain` (pre-deploy detection with confirmation).
 
 ```bash
-brew install awscli   # ou winget install Amazon.AWSCLI
+brew install awscli   # or winget install Amazon.AWSCLI
 aws configure
 ```
 
-Qualquer região AWS válida (`us-east-1`, `sa-east-1`, …). Stacks marcadas para
-DR deployam na `drRegion` do `iacmp.json`.
+Any valid AWS region (`us-east-1`, `sa-east-1`, …). Stacks marked for DR
+deploy to the `drRegion` from `iacmp.json`.
 
 ## Azure
 
-Sintetiza **Bicep** — uma stack por módulo, amarradas por um `_main.bicep` de
-deployment único: o ARM resolve ordem e referências simbolicamente, e o destroy
-remove a deployment stack inteira (`az stack group`). O deploy também builda os
-handlers (esbuild), publica via `config-zip` nas Function Apps e ativa static
-websites (data-plane) quando o synth os declara.
+Synthesizes **Bicep** — one stack per module, tied together by a single-deployment
+`_main.bicep`: ARM resolves ordering and references symbolically, and destroy
+removes the entire deployment stack (`az stack group`). Deploy also builds the
+handlers (esbuild), publishes them via `config-zip` to the Function Apps, and
+enables static websites (data-plane) when the synth declares them.
 
 ```bash
 brew install azure-cli
 az login
 ```
 
-Particularidades cobertas pelo synth/deploy: plano Consumption compartilhado
-para Functions, APIM (inclusive compartilhado entre projetos via
-`azure.sharedApim`), Container Apps com build de imagem (Docker local ou ACR
-Tasks), Cosmos DB serverless, Key Vault, Event Grid com 2º passo automático
-para ciclos de referência.
+Particulars covered by synth/deploy: shared Consumption plan for Functions,
+APIM (including shared across projects via `azure.sharedApim`), Container Apps
+with image build (local Docker or ACR Tasks), Cosmos DB serverless, Key Vault,
+Event Grid with an automatic second pass for reference cycles.
 
 ## GCP
 
-Sintetiza **Terraform (tf.json)** — o formato nativo do provider GCP. Todos os
-`<stack>.tf.json` do projeto formam UM root module (state único); os blocos
-`terraform`/`provider`/`variable` ficam em `_providers.tf.json`, uma vez por
-diretório. O deploy faz pré-flight (habilita APIs necessárias e concede roles à
-default compute service account), builda e sobe os handlers para o bucket de
-artefatos (objetos versionados por hash de conteúdo) e roda `terraform apply`.
+Synthesizes **Terraform (tf.json)** — the native format of the GCP provider. All
+the project's `<stack>.tf.json` files form ONE root module (single state); the
+`terraform`/`provider`/`variable` blocks live in `_providers.tf.json`, once per
+directory. Deploy runs a pre-flight (enables required APIs and grants roles to
+the default compute service account), builds and uploads the handlers to the
+artifacts bucket (objects versioned by content hash), and runs `terraform apply`.
 
 ```bash
 brew install google-cloud-sdk terraform
 gcloud auth login && gcloud auth application-default login
 ```
 
-Particularidades cobertas: Cloud Functions gen2 com adapter HTTP/CloudEvent,
-API Gateway com OpenAPI + SA invoker, Cloud SQL privado (private service
-access), Memorystore com TLS/auth, Cloud Armor, serverless NEG atrás de LB
-global, Firestore `(default)` importado automaticamente quando já existe.
+Particulars covered: Cloud Functions gen2 with HTTP/CloudEvent adapter,
+API Gateway with OpenAPI + SA invoker, private Cloud SQL (private service
+access), Memorystore with TLS/auth, Cloud Armor, serverless NEG behind a global
+LB, Firestore `(default)` imported automatically when it already exists.
 
 ## Terraform (`--format tf`)
 
-Terraform não é um provider isolado — é um **formato alternativo de saída** para
-AWS e Azure:
+Terraform is not a standalone provider — it is an **alternative output format**
+for AWS and Azure:
 
 ```bash
 iacmp synth  --provider aws   --format tf   # → synth-out/aws-tf/
@@ -117,18 +116,18 @@ iacmp synth  --provider azure --format tf   # → synth-out/azure-tf/ (azurerm)
 iacmp deploy --provider azure --format tf
 ```
 
-O diretório inteiro é um state único (sem `--stack` no deploy/destroy);
-referências cross-stack viram referências diretas de recurso. Requer o binário
-`terraform` no PATH (`iacmp doctor` confere).
+The entire directory is a single state (no `--stack` on deploy/destroy);
+cross-stack references become direct resource references. Requires the
+`terraform` binary on PATH (`iacmp doctor` checks for it).
 
 ---
 
-## Mapeamento de constructs
+## Construct mapping
 
-A tabela completa AWS ↔ Azure ↔ GCP, construct por construct, está em
+The complete AWS ↔ Azure ↔ GCP table, construct by construct, is in
 [constructs.md](constructs.md).
 
-## Providers customizados
+## Custom providers
 
-Providers fora dos nativos entram via `@iacmp/plugin-sdk` — veja
-[arquitetura.md](arquitetura.md#como-o-plugin-system-funciona).
+Providers beyond the native ones plug in via `@iacmp/plugin-sdk` — see
+[architecture.md](architecture.md#como-o-plugin-system-funciona).

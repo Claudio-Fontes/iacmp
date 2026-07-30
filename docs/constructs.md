@@ -1,18 +1,18 @@
 # Constructs
 
-Constructs são os blocos de construção do iacmp. Cada construct representa um
-recurso de infraestrutura de forma agnóstica ao provider — o mesmo código
-funciona em AWS, Azure e GCP (e no formato Terraform via `--format tf`).
+Constructs are the building blocks of iacmp. Each construct represents an
+infrastructure resource in a provider-agnostic way — the same code works on
+AWS, Azure, and GCP (and in Terraform format via `--format tf`).
 
-A API completa é exportada por `@iacmp/core` em 13 namespaces. Cada namespace
-agrupa subtipos relacionados (`Compute.Instance`, `Compute.AutoScaling`, etc.).
-O `type` do construct é o discriminador que cada provider usa para sintetizar
-o recurso nativo (`Compute.Instance` → `AWS::EC2::Instance` na AWS,
-`Microsoft.Compute/virtualMachines` no Azure, e assim por diante).
+The full API is exported by `@iacmp/core` across 13 namespaces. Each namespace
+groups related subtypes (`Compute.Instance`, `Compute.AutoScaling`, etc.).
+The construct's `type` is the discriminator each provider uses to synthesize
+the native resource (`Compute.Instance` → `AWS::EC2::Instance` on AWS,
+`Microsoft.Compute/virtualMachines` on Azure, and so on).
 
 ---
 
-## Importando
+## Importing
 
 ```typescript
 import {
@@ -23,15 +23,15 @@ import {
 } from '@iacmp/core';
 ```
 
-> **Nota:** `Function` é palavra reservada em JavaScript, por isso o namespace
-> de funções serverless é exportado como `Fn`.
+> **Note:** `Function` is a reserved word in JavaScript, so the serverless
+> functions namespace is exported as `Fn`.
 
 ---
 
 ## Stack
 
-Toda infraestrutura vive dentro de uma `Stack`. Ela agrupa os recursos e carrega
-metadados como nome, provider e região.
+All infrastructure lives inside a `Stack`. It groups resources and carries
+metadata such as name, provider, and region.
 
 ```typescript
 const stack = new Stack('nome-da-stack', {
@@ -40,19 +40,19 @@ const stack = new Stack('nome-da-stack', {
 });
 ```
 
-| Parâmetro | Tipo | Obrigatório | Descrição |
+| Parameter | Type | Required | Description |
 |---|---|---|---|
-| `name` | `string` | sim | Nome único da stack |
-| `options.provider` | `string` | não | Provider alvo (`aws`, `azure`, `gcp`, `terraform`) |
-| `options.region` | `string` | não | Região do provider |
+| `name` | `string` | yes | Unique stack name |
+| `options.provider` | `string` | no | Target provider (`aws`, `azure`, `gcp`, `terraform`) |
+| `options.region` | `string` | no | Provider region |
 
 ---
 
-## Compute — máquinas, escala e containers
+## Compute — machines, scaling, and containers
 
 ### Compute.Instance
 
-Máquina virtual única. Mapeia para EC2 (AWS), VM (Azure), Compute Engine (GCP),
+Single virtual machine. Maps to EC2 (AWS), VM (Azure), Compute Engine (GCP),
 `aws_instance` (Terraform).
 
 ```typescript
@@ -63,15 +63,15 @@ new Compute.Instance(stack, 'Servidor', {
 });
 ```
 
-| Prop | Tipo | Descrição |
+| Prop | Type | Description |
 |---|---|---|
-| `instanceType` | `'small' \| 'medium' \| 'large'` | Tamanho lógico |
-| `image` | `string` | AMI/imagem do SO |
-| `region` | `string?` | Região (default: região da stack) |
+| `instanceType` | `'small' \| 'medium' \| 'large'` | Logical size |
+| `image` | `string` | AMI/OS image |
+| `region` | `string?` | Region (default: stack region) |
 
 ### Compute.AutoScaling
 
-Grupo de instâncias com escala automática. Mapeia para AutoScalingGroup (AWS),
+Auto-scaling instance group. Maps to AutoScalingGroup (AWS),
 VMSS (Azure), MIG (GCP).
 
 ```typescript
@@ -84,13 +84,13 @@ new Compute.AutoScaling(stack, 'Web', {
 });
 ```
 
-Props relevantes: `minCapacity`, `maxCapacity`, `desiredCapacity?`,
+Relevant props: `minCapacity`, `maxCapacity`, `desiredCapacity?`,
 `targetCpuUtilization?`, `subnetIds?`, `securityGroupIds?`, `healthCheckPath?`,
 `healthCheckPort?`.
 
 ### Compute.Container
 
-Container gerenciado (ECS Fargate / Container Apps / Cloud Run).
+Managed container (ECS Fargate / Container Apps / Cloud Run).
 
 ```typescript
 new Compute.Container(stack, 'Api', {
@@ -104,7 +104,7 @@ new Compute.Container(stack, 'Api', {
 
 ### Compute.Kubernetes
 
-Cluster Kubernetes gerenciado (EKS / AKS / GKE).
+Managed Kubernetes cluster (EKS / AKS / GKE).
 
 ```typescript
 new Compute.Kubernetes(stack, 'K8s', {
@@ -118,7 +118,7 @@ new Compute.Kubernetes(stack, 'K8s', {
 
 ---
 
-## Storage — buckets, file systems e archives
+## Storage — buckets, file systems, and archives
 
 ### Storage.Bucket
 
@@ -134,7 +134,7 @@ new Storage.Bucket(stack, 'Assets', {
 
 ### Storage.FileSystem
 
-Sistema de arquivos compartilhado (EFS / Azure Files / Filestore).
+Shared file system (EFS / Azure Files / Filestore).
 
 ```typescript
 new Storage.FileSystem(stack, 'Shared', {
@@ -146,7 +146,7 @@ new Storage.FileSystem(stack, 'Shared', {
 
 ### Storage.Archive
 
-Armazenamento frio com retenção (Glacier / Archive Storage / Coldline).
+Cold storage with retention (Glacier / Archive Storage / Coldline).
 
 ```typescript
 new Storage.Archive(stack, 'Backups', {
@@ -162,7 +162,7 @@ new Storage.Archive(stack, 'Backups', {
 
 ### Network.VPC
 
-Rede privada virtual.
+Virtual private network.
 
 ```typescript
 new Network.VPC(stack, 'Rede', { cidr: '10.0.0.0/16', maxAzs: 3 });
@@ -170,7 +170,7 @@ new Network.VPC(stack, 'Rede', { cidr: '10.0.0.0/16', maxAzs: 3 });
 
 ### Network.Subnet
 
-Subnet pública ou privada dentro de uma VPC.
+Public or private subnet within a VPC.
 
 ```typescript
 new Network.Subnet(stack, 'Privada1', {
@@ -183,7 +183,7 @@ new Network.Subnet(stack, 'Privada1', {
 
 ### Network.SecurityGroup
 
-Conjunto de regras de ingress/egress.
+Set of ingress/egress rules.
 
 ```typescript
 new Network.SecurityGroup(stack, 'WebSg', {
@@ -208,7 +208,7 @@ new Network.WAF(stack, 'Edge', {
 
 ### Network.LoadBalancer
 
-Balanceador de carga ALB/NLB/Application Gateway.
+ALB/NLB/Application Gateway load balancer.
 
 ```typescript
 new Network.LoadBalancer(stack, 'Edge', {
@@ -231,7 +231,7 @@ new Network.CDN(stack, 'Site', {
 
 ### Network.Dns
 
-Zona DNS gerenciada (Route 53 / Azure DNS / Cloud DNS).
+Managed DNS zone (Route 53 / Azure DNS / Cloud DNS).
 
 ```typescript
 new Network.Dns(stack, 'Zona', {
@@ -246,7 +246,7 @@ new Network.Dns(stack, 'Zona', {
 
 ### Database.SQL
 
-Banco relacional gerenciado. Engines suportados: `mysql`, `postgres`,
+Managed relational database. Supported engines: `mysql`, `postgres`,
 `mariadb`, `oracle`, `sqlserver`.
 
 ```typescript
@@ -261,7 +261,7 @@ new Database.SQL(stack, 'Principal', {
 
 ### Database.DocumentDB
 
-Documento NoSQL compatível com MongoDB (DocumentDB / CosmosDB Mongo API).
+MongoDB-compatible NoSQL document database (DocumentDB / CosmosDB Mongo API).
 
 ```typescript
 new Database.DocumentDB(stack, 'Mongo', {
@@ -290,7 +290,7 @@ new Database.DynamoDB(stack, 'Users', {
 
 ### Fn.Lambda
 
-Função serverless. Runtimes suportados: `nodejs20`, `nodejs18`, `python3.12`,
+Serverless function. Supported runtimes: `nodejs20`, `nodejs18`, `python3.12`,
 `python3.11`, `java21`, `go1.x`, `dotnet8`.
 
 ```typescript
@@ -305,7 +305,7 @@ new Fn.Lambda(stack, 'Handler', {
 
 ### Fn.ApiGateway
 
-Endpoint HTTP em frente a Lambdas (API Gateway / API Management /
+HTTP endpoint in front of Lambdas (API Gateway / API Management /
 API Gateway).
 
 ```typescript
@@ -323,7 +323,7 @@ new Fn.ApiGateway(stack, 'Api', {
 
 ### Policy.IAM
 
-Política anexada a um recurso (lambda, instância, bucket, banco, role, group).
+Policy attached to a resource (lambda, instance, bucket, database, role, group).
 
 ```typescript
 new Policy.IAM(stack, 'LambdaReadBucket', {
@@ -343,7 +343,7 @@ new Policy.IAM(stack, 'LambdaReadBucket', {
 
 ### Events.EventBridge
 
-Bus de eventos com regras de roteamento.
+Event bus with routing rules.
 
 ```typescript
 new Events.EventBridge(stack, 'Bus', {
@@ -363,7 +363,7 @@ new Events.EventBridge(stack, 'Bus', {
 
 ### Workflow.StepFunctions
 
-Máquina de estados (Step Functions / Logic Apps / Workflows).
+State machine (Step Functions / Logic Apps / Workflows).
 
 ```typescript
 new Workflow.StepFunctions(stack, 'PedidoFlow', {
@@ -378,11 +378,11 @@ new Workflow.StepFunctions(stack, 'PedidoFlow', {
 
 ---
 
-## Cache — Redis e Memcached
+## Cache — Redis and Memcached
 
 ### Cache.Redis
 
-Cluster Redis gerenciado (ElastiCache / Azure Cache / Memorystore).
+Managed Redis cluster (ElastiCache / Azure Cache / Memorystore).
 
 ```typescript
 new Cache.Redis(stack, 'Sessions', {
@@ -396,7 +396,7 @@ new Cache.Redis(stack, 'Sessions', {
 
 ### Cache.Memcached
 
-Cluster Memcached gerenciado.
+Managed Memcached cluster.
 
 ```typescript
 new Cache.Memcached(stack, 'Items', { nodeType: 'small', numCacheNodes: 2 });
@@ -404,11 +404,11 @@ new Cache.Memcached(stack, 'Items', { nodeType: 'small', numCacheNodes: 2 });
 
 ---
 
-## Messaging — filas e tópicos
+## Messaging — queues and topics
 
 ### Messaging.Queue
 
-Fila (SQS / Service Bus Queue / Pub/Sub subscription).
+Queue (SQS / Service Bus Queue / Pub/Sub subscription).
 
 ```typescript
 new Messaging.Queue(stack, 'Orders', {
@@ -421,7 +421,7 @@ new Messaging.Queue(stack, 'Orders', {
 
 ### Messaging.Topic
 
-Tópico pub/sub (SNS / Service Bus Topic / Pub/Sub topic).
+Pub/sub topic (SNS / Service Bus Topic / Pub/Sub topic).
 
 ```typescript
 new Messaging.Topic(stack, 'OrderEvents', {
@@ -434,11 +434,11 @@ new Messaging.Topic(stack, 'OrderEvents', {
 
 ---
 
-## Secret — vault e certificados
+## Secret — vault and certificates
 
 ### Secret.Vault
 
-Cofre de segredos (Secrets Manager / Key Vault / Secret Manager).
+Secrets vault (Secrets Manager / Key Vault / Secret Manager).
 
 ```typescript
 new Secret.Vault(stack, 'DbCredentials', {
@@ -449,8 +449,8 @@ new Secret.Vault(stack, 'DbCredentials', {
 
 ### Certificate.TLS
 
-Certificado TLS gerenciado (ACM / Key Vault TLS / Certificate Manager). Exportado
-em um namespace próprio para deixar claro que é um recurso separado do `Vault`.
+Managed TLS certificate (ACM / Key Vault TLS / Certificate Manager). Exported
+in its own namespace to make it clear it is a separate resource from `Vault`.
 
 ```typescript
 new Certificate.TLS(stack, 'EdgeCert', {
@@ -466,7 +466,7 @@ new Certificate.TLS(stack, 'EdgeCert', {
 
 ### Monitoring.Alarm
 
-Alarme baseado em métrica (CloudWatch Alarm / Azure Alert / Cloud Monitoring).
+Metric-based alarm (CloudWatch Alarm / Azure Alert / Cloud Monitoring).
 
 ```typescript
 new Monitoring.Alarm(stack, 'HighCpu', {
@@ -481,7 +481,7 @@ new Monitoring.Alarm(stack, 'HighCpu', {
 
 ### Monitoring.Dashboard
 
-Painel de métricas.
+Metrics dashboard.
 
 ```typescript
 new Monitoring.Dashboard(stack, 'Prod', {
@@ -509,9 +509,9 @@ new Logging.Stream(stack, 'AppLogs', {
 
 ---
 
-## Exemplo completo
+## Full example
 
-Stack de uma API serverless com banco, fila, cache e monitoramento:
+Stack for a serverless API with a database, queue, cache, and monitoring:
 
 ```typescript
 import {

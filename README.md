@@ -1,12 +1,12 @@
 <p align="center"><img src="https://raw.githubusercontent.com/Claudio-Fontes/iacmp/main/docs/assets/logo.svg" width="110" alt="iacmp"></p>
 
-# iacmp — IaC Multi Plataforma
+# iacmp — Multi-Platform IaC
 
-> 🇺🇸 [English version](README.en.md) · 📖 **[Guia passo a passo](https://claudio-fontes.github.io/iacmp/pt/)**
+> 🇧🇷 [Versão em português](README.pt-BR.md) · 📖 **[Step-by-step guide](https://claudio-fontes.github.io/iacmp)**
 
-CLI de infraestrutura como código que gera **CloudFormation (AWS), Bicep (Azure) e Terraform (GCP)** a partir dos mesmos constructs TypeScript — com deploy, destroy, diff, auditoria e diagramas no mesmo fluxo.
+An infrastructure-as-code CLI that generates **CloudFormation (AWS), Bicep (Azure) and Terraform (GCP)** from the same TypeScript constructs — with deploy, destroy, diff, audits and diagrams in a single flow.
 
-![Um código, três nuvens](docs/assets/hero-flow.svg)
+![One codebase, three clouds](docs/assets/hero-flow-en.svg)
 
 ```typescript
 import { Stack, Fn, Database, ref } from '@iacmp/core';
@@ -27,115 +27,105 @@ export default stack;
 
 ```bash
 iacmp synth --provider aws      # → CloudFormation
-iacmp synth --provider azure    # → Bicep (deployment único via _main.bicep)
+iacmp synth --provider azure    # → Bicep (single deployment via _main.bicep)
 iacmp synth --provider gcp      # → Terraform (tf.json)
 iacmp synth --provider aws --format tf    # → AWS via Terraform
-iacmp deploy                    # deploya de verdade, na sua conta
+iacmp deploy                    # deploys for real, to your account
 ```
 
-## Por que iacmp
+## Why iacmp
 
-![Validado em deploy real](docs/assets/e2e-cycle.svg)
+![Validated by real deploys](docs/assets/e2e-cycle-en.svg)
 
-- **Validado em deploy real, não só em synth.** Cada provider passou por uma bateria de 20 cenários ponta a ponta (deploy → teste de runtime → destroy) em contas reais de AWS, Azure e GCP. Dezenas de bugs que só aparecem na nuvem de verdade — ordering do ARM, quotas, IAM de service accounts, TLS de Redis, peering de VPC — foram encontrados e corrigidos na ferramenta.
-- **Um construct, três nuvens.** `Database.SQL` vira RDS na AWS, PostgreSQL Flexible Server no Azure e Cloud SQL (com private service access) no GCP — com as amarrações corretas de rede, senha e SSL em cada uma.
-- **Runtime agnóstico.** Os handlers usam a facade [`@iacmp/runtime`](packages/runtime) (`table()`, `blob()`, `queue()`, `sql()`, `secret()`) — o mesmo código roda em Lambda, Azure Functions e Cloud Functions.
-- **Guards de synth-time.** Mais de uma dúzia de validações barram em segundos erros que custariam um deploy: handler sem env var declarada, Lambda em VPC sem gateway endpoint, SQL sem SSL contra RDS, GSI não declarado, e outros.
+- **Validated by real deploys, not just synth.** Every provider went through a battery of 20 end-to-end scenarios (deploy → runtime test → destroy) on real AWS, Azure and GCP accounts. Dozens of bugs that only show up in a real cloud — ARM ordering, quotas, service-account IAM, Redis TLS, VPC peering — were found and fixed in the tool.
+- **One construct, three clouds.** `Database.SQL` becomes RDS on AWS, PostgreSQL Flexible Server on Azure and Cloud SQL (with private service access) on GCP — with the correct network, password and SSL wiring on each.
+- **Cloud-agnostic runtime.** Handlers use the [`@iacmp/runtime`](packages/runtime) facade (`table()`, `blob()`, `queue()`, `sql()`, `secret()`) — the same handler code runs on Lambda, Azure Functions and Cloud Functions.
+- **Synth-time guards.** More than a dozen validations catch, in seconds, mistakes that would cost you a deploy: a handler reading an env var the stack never declares, a Lambda in a VPC without a gateway endpoint, SQL without SSL against RDS, an undeclared GSI, and more.
 
-## Status dos providers
+## Provider status
 
-| Provider | Formato | Cobertura |
+| Provider | Format | Coverage |
 |---|---|---|
-| `aws` | CloudFormation | 20/20 cenários da bateria e2e |
-| `azure` | Bicep (Deployment Stacks) | 20/20 cenários |
-| `gcp` | Terraform (tf.json) | 20/20 cenários |
-| `aws --format tf` / `azure --format tf` | Terraform | deploy real validado |
+| `aws` | CloudFormation | 20/20 e2e battery scenarios |
+| `azure` | Bicep (Deployment Stacks) | 20/20 scenarios |
+| `gcp` | Terraform (tf.json) | 20/20 scenarios |
+| `aws --format tf` / `azure --format tf` | Terraform | validated by real deploys |
 
-## Instalação
+## Install
 
 ```bash
 npm install -g iacmp
 ```
 
-**Idioma:** o CLI fala inglês (padrão) e português. Para usar em português: `IACMP_LANG=pt iacmp <comando>` (uma vez), ou defina de vez com `export IACMP_LANG=pt` no seu shell (`~/.zshrc`).
+**Language:** the CLI speaks English (default) and Portuguese. For Portuguese: `IACMP_LANG=pt iacmp <command>` (one-off), or set it once with `export IACMP_LANG=pt` in your shell.
 
-**Requisitos:** Node.js 20+. Para deploy: CLI da nuvem alvo (`aws`, `az` ou `gcloud`) e, para os caminhos Terraform, o binário `terraform`. `iacmp doctor` confere tudo.
+**Requirements:** Node.js 20+. For deploys: the target cloud's CLI (`aws`, `az` or `gcloud`) and, for the Terraform paths, the `terraform` binary. `iacmp doctor` checks everything.
 
-## Uso rápido
+## Quick start
 
 ```bash
-iacmp init meu-projeto --template serverless
-cd meu-projeto
+iacmp init my-project --template serverless
+cd my-project
 
-iacmp synth                 # gera os templates + validações
-iacmp diagram               # diagrama da arquitetura (Structurizr/Mermaid)
-iacmp audit-all             # auditoria de segurança, HA e DR
-iacmp deploy                # deploy real (com confirmações)
-iacmp diff                  # o que mudaria num próximo deploy
-iacmp destroy               # remove tudo (com confirmação)
+iacmp synth                 # generates templates + validations
+iacmp diagram               # architecture diagram (Structurizr/Mermaid)
+iacmp audit-all             # security, HA and DR audits
+iacmp deploy                # real deploy (with confirmations)
+iacmp diff                  # what would change on the next deploy
+iacmp destroy               # removes everything (with confirmation)
 ```
 
-## Comandos
+## Commands
 
-| Comando | Descrição |
+| Command | Description |
 |---|---|
-| `init` | Cria um projeto (templates: blank, hello, rds, webapp, network, serverless, fullstack) |
-| `synth` | Sintetiza as stacks para o formato do provider (+ validação via CLI da nuvem) |
-| `deploy` / `destroy` | Deploy e destroy reais, com ordenação por dependência e confirmações |
-| `diff` | Diferença entre o synth atual e o que está deployado |
-| `diagram` | Diagramas C4 (Structurizr DSL ou Mermaid) a partir das stacks |
-| `audit` / `audit-all` | Auditorias de segurança, alta disponibilidade e DR |
-| `doctor` | Diagnóstico do ambiente (CLIs, credenciais, versões) |
-| `registry` | Catálogo de constructs e exemplos |
-| `setup` | Registra o servidor MCP embutido no Claude Code e no Claude Desktop |
-| `ai` / `from-diagram` | Geração via IA (parte do **iacmp Pro** — ver abaixo) |
+| `init` | Creates a project (templates: blank, hello, rds, webapp, network, serverless, fullstack) |
+| `synth` | Synthesizes stacks to the provider's format (+ validation via the cloud CLI) |
+| `deploy` / `destroy` | Real deploy and destroy, dependency-ordered, with confirmations |
+| `diff` | Difference between the current synth and what is deployed |
+| `diagram` | C4 diagrams (Structurizr DSL or Mermaid) from the stacks |
+| `audit` / `audit-all` | Security, high-availability and DR audits |
+| `doctor` | Environment diagnostics (CLIs, credentials, versions) |
+| `registry` | Catalog of constructs and examples |
+| `setup` | Registers the embedded MCP server in Claude Code and Claude Desktop |
+| `ai` / `from-diagram` | AI generation (part of **iacmp Pro** — see below) |
 
-## Organização das stacks
+## Stack organization
 
-Uma stack por domínio (rede, dados, compute…), ligadas por `ref()` cross-stack:
+One stack per domain (network, data, compute…), wired by cross-stack `ref()`:
 
 ```
 stacks/
   network/api-stack.ts      # Fn.ApiGateway
   compute/fn-stack.ts       # Fn.Lambda
   database/db-stack.ts      # Database.DynamoDB
-src/handlers/…              # handlers TypeScript (facade @iacmp/runtime)
+src/handlers/…              # TypeScript handlers (@iacmp/runtime facade)
 ```
 
-O synth resolve as referências para o mecanismo certo de cada nuvem: Export/ImportValue no CloudFormation, referência simbólica de módulo no Bicep, referência direta de recurso no Terraform.
+The synth resolves references to the right mechanism for each cloud: Export/ImportValue in CloudFormation, symbolic module references in Bicep, direct resource references in Terraform.
 
-## Claude Code integrado de fábrica
+## Claude Code out of the box
 
-O iacmp embute um servidor MCP. Um comando registra as ferramentas no Claude
-Code e no Claude Desktop:
+iacmp embeds an MCP server. One command registers the tools in Claude Code and Claude Desktop:
 
 ```bash
 iacmp setup
 ```
 
-O agente ganha `write_stack`, `synth_project`, `deploy_project`,
-`destroy_project`, `validate_stack` e `read_synth_output` — chamadas
-estruturadas para escrever stacks e operar o CLI, todas locais e sem IA
-embutida. O `iacmp init` também gera um `CLAUDE.md` no projeto que orienta
-qualquer agente a usar o fluxo correto (escrever stack → `iacmp synth` até
-passar), com ou sem MCP.
+The agent gets `write_stack`, `synth_project`, `deploy_project`, `destroy_project`, `validate_stack` and `read_synth_output` — structured calls to write stacks and operate the CLI, all local, no embedded AI. `iacmp init` also generates a `CLAUDE.md` in the project that guides any agent through the right flow (write stack → `iacmp synth` until green), with or without MCP.
 
 ## iacmp Pro
 
-A geração via IA (`iacmp ai`, `from-diagram`) e a busca no corpus pelo MCP
-(`search_examples`/`list_examples`) são parte do **iacmp Pro**: um corpus de
-exemplos em que cada padrão foi validado em deploy real nas três nuvens,
-servido por RAG para a geração. O CLI aberto funciona 100% sem ele — os
-comandos Pro apenas indicam a ausência.
+AI generation (`iacmp ai`, `from-diagram`) and corpus search over MCP (`search_examples`/`list_examples`) are part of **iacmp Pro**: a corpus of examples where every pattern was validated by real deploys on the three clouds, served through RAG to the generator. The open CLI works 100% without it — Pro commands simply report the absence.
 
-## Documentação
+## Documentation
 
-**[Site com guia passo a passo](https://claudio-fontes.github.io/iacmp/pt/)** · [Manual de uso](docs/manual-de-uso.md) · [Constructs (tabela AWS ↔ Azure ↔ GCP)](docs/constructs.md) · [Providers](docs/providers.md) · [Arquitetura interna](docs/arquitetura.md) · [FAQ](docs/faq.md) · [Changelog](docs/changelog.md)
+**[Site with step-by-step guide](https://claudio-fontes.github.io/iacmp)** · [User guide](docs/user-guide.md) · [Constructs (AWS ↔ Azure ↔ GCP table)](docs/constructs.md) · [Providers](docs/providers.md) · [Internal architecture](docs/architecture.md) · [FAQ](docs/faq.md) · [Changelog](docs/changelog.md)
 
-## Contribuindo
+## Contributing
 
-Veja [CONTRIBUTING.md](CONTRIBUTING.md) e [docs/contribuindo.md](docs/contribuindo.md). Issues e PRs em português ou inglês são bem-vindos.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Issues and PRs in English or Portuguese are welcome.
 
-## Licença
+## License
 
 [Apache-2.0](LICENSE).

@@ -33,4 +33,4 @@ iacmp synth --provider aws --format tf  # AWS via Terraform
 
 ## Full reference
 
-The complete manual (every flag, every construct) lives in the repository: [docs/manual-de-uso.md](https://github.com/Claudio-Fontes/iacmp/blob/main/docs/manual-de-uso.md) · [docs/constructs.md](https://github.com/Claudio-Fontes/iacmp/blob/main/docs/constructs.md) · [FAQ](https://github.com/Claudio-Fontes/iacmp/blob/main/docs/faq.md)
+The complete manual (every flag, every construct) lives in the repository: [User guide](https://github.com/Claudio-Fontes/iacmp/blob/main/docs/user-guide.md) · [Constructs](https://github.com/Claudio-Fontes/iacmp/blob/main/docs/constructs.md) · [FAQ](https://github.com/Claudio-Fontes/iacmp/blob/main/docs/faq.md)
