@@ -65,15 +65,16 @@ export function ensureLambdaCodeBuilt(ctx: DeployContext): void {
     if (typeof code !== 'string' || typeof handler !== 'string') continue;
 
     const handlerModule = handler.replace(/\.[^./]+$/, ''); // 'index.handler' → 'index'
-    // O fonte espelha o Code (o diretório de saída): dist/… → src/…, e o arquivo
-    // é o MÓDULO do Handler. Antes derivávamos só do Handler ('index'), o que
-    // procurava src/index.ts e falhava para handlers aninhados por pasta
-    // (src/handlers/list-messages/index.ts) — o build era pulado em silêncio e o
-    // `cloudformation package` quebrava com "file does not exist".
-    const srcDir = code.replace(/^(\.\/)?dist(\/|$)/, 'src$2');
+    // O fonte espelha o caminho COMPLETO do bundle (Code + módulo do Handler),
+    // com dist/ → src/. O dist/ pode vir do Code ('dist/handlers/x' + 'index')
+    // OU embutido no Handler ('.' + 'dist/enqueueOrder') — dois formatos vivos
+    // nos projetos reais. Derivar só do Code quebrava o segundo: o build era
+    // pulado em silêncio e a Lambda subia sem o .js ("Cannot find module").
+    const rel = path.join(code, handlerModule);
+    const srcRel = rel.replace(/^(\.\/)?dist(\/|$)/, 'src$2');
     const entry = [
-      path.join(ctx.cwd, srcDir, `${handlerModule}.ts`),
-      path.join(ctx.cwd, srcDir, `${handlerModule}.js`),
+      path.join(ctx.cwd, `${srcRel}.ts`),
+      path.join(ctx.cwd, `${srcRel}.js`),
     ].find(p => fs.existsSync(p));
     if (!entry) continue; // sem fonte — nada a bundlar (handler pré-compilado à parte)
 
