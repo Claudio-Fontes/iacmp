@@ -34,6 +34,10 @@ features:
     details: iacmp setup registers an embedded MCP server — your agent writes stacks, synthesizes and deploys through structured tools, all local.
 ---
 
+## Architecture
+
+![iacmp architecture and system flow](/architecture-en.png)
+
 ## 30 seconds of iacmp
 
 ```typescript

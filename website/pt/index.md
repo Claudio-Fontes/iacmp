@@ -34,6 +34,10 @@ features:
     details: iacmp setup registra um servidor MCP embutido — seu agente escreve stacks, sintetiza e faz deploy por ferramentas estruturadas, tudo local.
 ---
 
+## Arquitetura
+
+![Arquitetura e fluxo do iacmp](/architecture-pt.png)
+
 ## 30 segundos de iacmp
 
 ```typescript
