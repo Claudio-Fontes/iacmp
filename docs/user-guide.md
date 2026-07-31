@@ -191,8 +191,10 @@ iacmp ls
 
 ### `iacmp ai [prompt]` — iacmp Pro
 
-Generates infrastructure stacks in TypeScript via AI (Claude, OpenAI, or
-GitHub Copilot), with RAG over a corpus of examples validated in real deploys.
+Generates infrastructure stacks in TypeScript via AI, with RAG over a corpus of
+examples validated in real deploys. **Claude (Anthropic) is the tested and
+supported provider.** OpenAI and GitHub Copilot providers exist in the codebase
+but are experimental — not validated end to end.
 
 > **iacmp Pro.** This command (and `from-diagram`) is part of iacmp Pro. On the
 > open installation it shows a message indicating the module is absent — the
@@ -201,8 +203,8 @@ GitHub Copilot), with RAG over a corpus of examples validated in real deploys.
 **Prerequisite (besides Pro):** set one of these environment variables:
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...   # Anthropic Claude (takes priority)
-# or
+export ANTHROPIC_API_KEY=sk-ant-...   # Anthropic Claude (tested and supported)
+# or, experimental (not validated end to end):
 export GITHUB_TOKEN=ghp_...           # GitHub Copilot
 ```
 
@@ -563,7 +565,7 @@ See the complete example in `examples/plugin-exemplo/`.
 |---|---|---|
 | Phase 1 | Base CLI + constructs + AWS provider | Available |
 | Phase 2 | Azure, GCP, and Terraform providers | Available |
-| Phase 3 | `iacmp ai` — AI-generated stacks (Claude/Copilot) | Available |
+| Phase 3 | `iacmp ai` — AI-generated stacks (Claude; experimental OpenAI/Copilot) | Available |
 | Phase 4 | Plugin system, watch, dashboard, registry, CI/CD | Available |
 | Phase 5 | Integration tests, documentation, examples, npm publishing | Available |
 | Phase 6 | Templates in `init`, audits, architecture diagrams | Available |
