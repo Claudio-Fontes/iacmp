@@ -128,6 +128,10 @@ exemplos em que cada padrão foi validado em deploy real nas três nuvens,
 servido por RAG para a geração. O CLI aberto funciona 100% sem ele — os
 comandos Pro apenas indicam a ausência.
 
+## Arquitetura
+
+![Arquitetura e fluxo do iacmp](docs/assets/post/launch-architecture-pt.png)
+
 ## Documentação
 
 **[Site com guia passo a passo em português](https://claudio-fontes.github.io/iacmp/pt/)** · Docs do repositório (em inglês): [User guide](docs/user-guide.md) · [Constructs (tabela AWS ↔ Azure ↔ GCP)](docs/constructs.md) · [Providers](docs/providers.md) · [Arquitetura interna](docs/architecture.md) · [FAQ](docs/faq.md) · [Changelog](docs/changelog.md)

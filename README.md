@@ -118,6 +118,10 @@ The agent gets `write_stack`, `synth_project`, `deploy_project`, `destroy_projec
 
 AI generation (`iacmp ai`, `from-diagram`) and corpus search over MCP (`search_examples`/`list_examples`) are part of **iacmp Pro**: a corpus of examples where every pattern was validated by real deploys on the three clouds, served through RAG to the generator. The open CLI works 100% without it — Pro commands simply report the absence.
 
+## Architecture
+
+![iacmp architecture and system flow](docs/assets/post/launch-architecture-en.png)
+
 ## Documentation
 
 **[Site with step-by-step guide](https://claudio-fontes.github.io/iacmp)** · [User guide](docs/user-guide.md) · [Constructs (AWS ↔ Azure ↔ GCP table)](docs/constructs.md) · [Providers](docs/providers.md) · [Internal architecture](docs/architecture.md) · [FAQ](docs/faq.md) · [Changelog](docs/changelog.md)
