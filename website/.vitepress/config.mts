@@ -21,6 +21,7 @@ export default defineConfig({
             text: 'Guide',
             items: [
               { text: 'Getting started (5 min)', link: '/guide/getting-started' },
+              { text: 'Cloud accounts and CLIs', link: '/guide/cloud-setup' },
               { text: 'Using with Claude Code', link: '/guide/claude-code' },
               { text: 'Commands', link: '/guide/commands' },
             ],
@@ -52,6 +53,7 @@ export default defineConfig({
             text: 'Guia',
             items: [
               { text: 'Comece em 5 minutos', link: '/pt/guide/getting-started' },
+              { text: 'Contas de nuvem e CLIs', link: '/pt/guide/cloud-setup' },
               { text: 'Usando com Claude Code', link: '/pt/guide/claude-code' },
               { text: 'Comandos', link: '/pt/guide/commands' },
             ],

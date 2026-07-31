@@ -99,7 +99,7 @@ iacmp synth --provider gcp      # → Terraform (tf.json)
 
 ## 5. Faça o deploy (opcional, mas é a parte boa)
 
-Você precisa do CLI da nuvem-alvo configurado — para AWS:
+Você precisa do CLI da nuvem-alvo configurado. **Nunca usou nuvem?** Siga [Contas de nuvem e CLIs](/pt/guide/cloud-setup) — do zero da conta até a autenticação, passo a passo. Já tem conta na AWS? Então é só:
 
 ```bash
 aws configure        # access key, secret, região

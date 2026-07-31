@@ -99,7 +99,7 @@ iacmp synth --provider gcp      # → Terraform (tf.json)
 
 ## 5. Deploy (optional, but the fun part)
 
-You need the target cloud's CLI configured — for AWS:
+You need the target cloud's CLI configured. **Never used a cloud?** Follow [Cloud accounts and CLIs](/guide/cloud-setup) — it goes from creating the account to authenticating, step by step. Already have an AWS account? Then it's just:
 
 ```bash
 aws configure        # access key, secret, region
