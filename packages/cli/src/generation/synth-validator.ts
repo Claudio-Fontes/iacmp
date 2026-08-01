@@ -4,6 +4,7 @@ import * as cp from 'child_process';
 import ora from 'ora';
 import { requireAi } from '../pro';
 import { GeneratedFile } from './autocorrect';
+import { npmInstallUntrusted } from './npm-safe';
 
 interface TsResult {
   valid: boolean;
@@ -42,15 +43,24 @@ export function tryInstallMissingModules(errors: string[], cwd: string, iacProvi
   if (modulesToInstall.length === 0) return false;
   const installSpinner = ora({ text: `Instalando dependências: ${modulesToInstall.join(', ')}...`, spinner: 'dots', discardStdin: false }).start();
   try {
-    cp.execSync(`npm install ${modulesToInstall.join(' ')}`, { cwd, stdio: 'pipe' });
-    const typesPkgs = modulesToInstall
+    // Os nomes vêm de erros do tsc sobre código GERADO POR IA — entrada não
+    // confiável. npmInstallUntrusted filtra pela gramática de pacote npm e
+    // instala sem shell e sem lifecycle scripts (ver npm-safe.ts).
+    const installed = npmInstallUntrusted(modulesToInstall, cwd, {
+      onRejected: rejected => installSpinner.warn(`Ignorado (nome de pacote inválido): ${rejected.join(', ')}`),
+    });
+    if (installed.length === 0) {
+      installSpinner.fail('Nenhum pacote válido para instalar');
+      return false;
+    }
+    const typesPkgs = installed
       .filter(m => !m.startsWith('@'))
       .filter(m => !hasBundledTypes(cwd, m))
       .map(m => `@types/${m}`);
     for (const t of typesPkgs) {
-      try { cp.execSync(`npm install -D ${t}`, { cwd, stdio: 'pipe' }); } catch { /* sem @types — ignora */ }
+      try { npmInstallUntrusted([t], cwd, { dev: true }); } catch { /* sem @types — ignora */ }
     }
-    installSpinner.succeed(`Instalado: ${[...modulesToInstall, ...typesPkgs].join(', ')}`);
+    installSpinner.succeed(`Instalado: ${[...installed, ...typesPkgs].join(', ')}`);
     return true;
   } catch {
     installSpinner.fail(`Falha ao instalar ${modulesToInstall.join(', ')}`);

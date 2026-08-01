@@ -13,6 +13,19 @@ export function getRunAdminPassword(): string {
   return runAdminPassword;
 }
 
+// Valor inicial dos Secret.Vault do run: bytes aleatórios, gerados uma vez por
+// execução (todas as stacks do deploy recebem o mesmo). Substitui o antigo
+// uniqueString() do template, que era determinístico por resource group.
+let runSecretValue: string | null = null;
+export function getRunSecretValue(): string {
+  if (!runSecretValue) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const crypto = require('crypto') as typeof import('crypto');
+    runSecretValue = crypto.randomBytes(32).toString('base64url');
+  }
+  return runSecretValue;
+}
+
 export function getCrossStackParams(templatePath: string): string[] {
   let content: string;
   try {

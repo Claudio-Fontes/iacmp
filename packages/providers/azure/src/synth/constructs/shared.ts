@@ -296,6 +296,9 @@ export interface SynthContext {
   resources: BicepResource[];
   outputs: BicepOutput[];
   needsAdminPassword: { value: boolean };
+  // Secret.Vault: valor inicial do secret vem de parâmetro @secure() preenchido
+  // pelo deploy com bytes aleatórios — nunca de uniqueString (determinístico).
+  needsSecretValue: { value: boolean };
   crossParams: Map<string, string>;
   functionImageParams: Map<string, string>;
   sharedContainerEnvSym: string | null;

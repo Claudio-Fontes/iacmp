@@ -1,4 +1,4 @@
-import { execFileSync } from 'child_process';
+import { execFileSync, spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { runCli, makeProject, rmrf, CLI_BIN } from './helpers';
@@ -25,8 +25,50 @@ import { runCli, makeProject, rmrf, CLI_BIN } from './helpers';
  * env explícito sem essas variáveis.
  */
 
-/** Timeout do smoke de startup (ms): tempo que deixamos watch/dashboard vivos. */
-const STARTUP_TIMEOUT_MS = 3000;
+/**
+ * Teto do smoke de startup (ms). NÃO é o tempo de espera: runUntilOutput mata o
+ * processo assim que o banner aparece (tipicamente ~1s). O valor generoso existe
+ * só como rede de proteção — o timeout fixo de 3s anterior falhava quando o
+ * carregamento do CLI passava de 3s (máquina lenta ou suíte em paralelo), que
+ * era a fonte do flake histórico deste arquivo (achado P2-06 da auditoria).
+ */
+const STARTUP_MAX_MS = 30_000;
+
+/**
+ * Sobe o CLI e resolve assim que `marker` aparece na saída (matched=true), ou
+ * quando estoura `maxMs` (matched=false). Mata o processo nos dois casos —
+ * watch/dashboard nunca terminam sozinhos.
+ */
+function runUntilOutput(
+  args: string[],
+  opts: { cwd: string; marker: string; maxMs?: number },
+): Promise<{ matched: boolean; out: string }> {
+  return new Promise(resolve => {
+    const child = spawn('node', [CLI_BIN, ...args], {
+      cwd: opts.cwd,
+      env: { ...process.env, NODE_NO_WARNINGS: '1' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let out = '';
+    let settled = false;
+    const finish = (matched: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { child.kill('SIGTERM'); } catch { /* já morreu */ }
+      resolve({ matched, out });
+    };
+    const timer = setTimeout(() => finish(false), opts.maxMs ?? STARTUP_MAX_MS);
+    const onData = (d: Buffer) => {
+      out += d.toString();
+      if (out.includes(opts.marker)) finish(true);
+    };
+    child.stdout.on('data', onData);
+    child.stderr.on('data', onData);
+    child.on('error', () => finish(false));
+    child.on('exit', () => finish(out.includes(opts.marker)));
+  });
+}
 
 interface ProcResult {
   /** true quando o timeout matou o processo => ele "subiu" e ficou vivo. */
@@ -139,15 +181,11 @@ describe('watch — smoke de startup (fica vivo => timeout)', () => {
   let dir: string;
   afterEach(() => dir && rmrf(dir));
 
-  test('em projeto válido, sobe o watcher e fica vivo (banner + timeout)', () => {
+  test('em projeto válido, sobe o watcher e anuncia que está monitorando', async () => {
     dir = makeProject({ provider: 'aws' });
-    const r = runProc(['watch'], { cwd: dir, timeout: STARTUP_TIMEOUT_MS });
-
-    // Ficou vivo até o timeout => não saiu sozinho => "iniciou ok".
-    expect(r.timedOut).toBe(true);
-    // E imprimiu o banner de startup antes de ser morto.
-    expect(r.out).toContain('Monitorando stacks/');
-  });
+    const r = await runUntilOutput(['watch'], { cwd: dir, marker: 'Monitorando stacks/' });
+    expect(r.matched).toBe(true);
+  }, STARTUP_MAX_MS + 10_000);
 });
 
 // ---------------------------------------------------------------------------
@@ -178,20 +216,16 @@ describe('dashboard — smoke de startup (servidor vivo => timeout)', () => {
   let dir: string;
   afterEach(() => dir && rmrf(dir));
 
-  test('em projeto válido, sobe o servidor e anuncia a URL na porta escolhida', () => {
+  test('em projeto válido, sobe o servidor e anuncia a URL na porta escolhida', async () => {
     dir = makeProject({ provider: 'aws' });
     const port = freePort();
-    const r = runProc(['dashboard', '--port', String(port)], {
+    const r = await runUntilOutput(['dashboard', '--port', String(port)], {
       cwd: dir,
-      timeout: STARTUP_TIMEOUT_MS,
+      marker: `http://localhost:${port}`,
     });
-
-    // Servidor fica escutando => timeout => "iniciou ok".
-    expect(r.timedOut).toBe(true);
-    // Anunciou a URL com a porta que pedimos.
+    expect(r.matched).toBe(true);
     expect(r.out).toContain('Dashboard disponível em');
-    expect(r.out).toContain(`http://localhost:${port}`);
-  });
+  }, STARTUP_MAX_MS + 10_000);
 });
 
 // ---------------------------------------------------------------------------
@@ -252,12 +286,16 @@ describe('ai — sem API key (env limpo)', () => {
   test('ai --chat sem API key: imprime banner do chat e encerra (exit != 0)', () => {
     // O modo --chat é interceptado em bin/run.js e roda dist/chat.js com stdio
     // herdado. Sem chave, ele imprime o banner e a mensagem de configuração e
-    // sai — não fica preso esperando stdin. Damos um timeout de segurança.
+    // sai — não fica preso esperando stdin. O timeout é só rede de proteção
+    // contra travamento: generoso de propósito, porque a suíte em paralelo
+    // deixa o startup do CLI bem mais lento (fonte do flake histórico; o
+    // execFileSync retorna assim que o processo sai, então o teto não custa
+    // tempo no caminho feliz).
     dir = makeProject();
     const r = runProc(['ai', '--chat'], {
       cwd: dir,
       stripKeys: true,
-      timeout: 8000,
+      timeout: 60_000,
     });
     // Não deve travar: ou saiu sozinho (status != 0) ou, no pior caso, o timeout
     // o mataria — mas o esperado é término espontâneo.
@@ -269,7 +307,7 @@ describe('ai — sem API key (env limpo)', () => {
     } else {
       expect(r.out).toContain('iacmp Pro');
     }
-  });
+  }, 90_000);
 });
 
 // ---------------------------------------------------------------------------

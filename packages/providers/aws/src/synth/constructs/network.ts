@@ -199,10 +199,19 @@ export function synthNetwork(
             if (r.sourceSecurityGroupId) {
               return { ...base, SourceSecurityGroupId: resolveSecurityGroupId(r.sourceSecurityGroupId as string, ctx) };
             }
+            // Fail-closed: regra de ENTRADA sem origem declarada não vira
+            // 0.0.0.0/0 silenciosamente (o warning anterior passava batido e o
+            // recurso subia aberto para a internet — achado P1-06 da auditoria
+            // de segurança de 2026-07-31). Para expor de propósito, declare
+            // cidr: '0.0.0.0/0' explicitamente.
             if (r.cidr === undefined) {
-              console.warn(`[aws] Security group rule sem CIDR nem sourceSecurityGroupId; usando 0.0.0.0/0 (${construct.id} ingress[${i}])`);
+              throw new Error(
+                `Network.SecurityGroup "${construct.id}": ingressRules[${i}] não declara origem.\n` +
+                `Fix: informe 'cidr' (ex: '10.0.0.0/16') ou 'sourceSecurityGroupId'. ` +
+                `Para abrir para a internet de propósito, escreva cidr: '0.0.0.0/0' explicitamente.`,
+              );
             }
-            return { ...base, CidrIp: (r.cidr as string) ?? '0.0.0.0/0' };
+            return { ...base, CidrIp: r.cidr as string };
           }),
           SecurityGroupEgress: egress.length > 0
             ? egress.map(r => {

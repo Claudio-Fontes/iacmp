@@ -422,6 +422,10 @@ export function generateAzureMainBicep(ordered: TemplateRef[], containerBuildIma
   const exported = new Map<string, { sym: string; name: string; type: string }>();
   const lifted: string[] = [];
   let needsAdminPassword = false;
+  // secretValue (@secure): valor inicial dos Secret.Vault. Como o adminPassword,
+  // é injetado pelo deploy (aleatório por run) e propagado a todo módulo que o
+  // declara — nunca vem de output de outra stack.
+  let needsSecretValue = false;
   const moduleBlocks: string[] = [];
 
   for (const m of mods) {
@@ -430,6 +434,11 @@ export function generateAzureMainBicep(ordered: TemplateRef[], containerBuildIma
       if (/password$/i.test(p)) {
         needsAdminPassword = true;
         wired.push(`    ${p}: adminPassword`);
+        continue;
+      }
+      if (p === 'secretValue') {
+        needsSecretValue = true;
+        wired.push(`    ${p}: secretValue`);
         continue;
       }
       const src = exported.get(p.toLowerCase());
@@ -484,6 +493,7 @@ export function generateAzureMainBicep(ordered: TemplateRef[], containerBuildIma
   ];
   const params: string[] = [];
   if (needsAdminPassword) params.push('@secure()\nparam adminPassword string');
+  if (needsSecretValue) params.push('@secure()\nparam secretValue string');
   if (hasContainerBuilds) {
     for (const bp of AZURE_BUILD_SHARED_PARAMS) {
       params.push(

@@ -11,7 +11,7 @@ import {
   waitForStackTerminal,
   recoverFromAzCliCrash,
 } from './stack-api';
-import { getRunAdminPassword, getCrossStackParams, getSoftCrossStackParams, getStaticWebsiteOutputKeys, isSecretParam } from './params';
+import { getRunAdminPassword, getRunSecretValue, getCrossStackParams, getSoftCrossStackParams, getStaticWebsiteOutputKeys, isSecretParam } from './params';
 import { ensureBootstrapAcr, readBootstrapState, acrBootstrapName, getSubscriptionId } from './bootstrap-acr';
 import { buildAndPushContainerImage, AzureContainerBuildMeta } from './container-build';
 import { buildFunctionBundle, AzureFunctionMeta } from './function-bundle';
@@ -133,6 +133,10 @@ export const azureExecutor: DeployExecutor = {
       // Postgres/MySQL e as envs dos handlers (ref('AppDB','Password')) batem.
       if (crossParams.includes('adminPassword')) {
         paramValues.push(`adminPassword=${getRunAdminPassword()}`);
+      }
+      // secretValue (@secure): valor inicial dos Secret.Vault — aleatório por run.
+      if (crossParams.includes('secretValue')) {
+        paramValues.push(`secretValue=${getRunSecretValue()}`);
       }
       // Cross-params de senha (ex: AppDBPassword, vindos de ref('AppDB','Password')
       // em OUTRA stack): senha nunca é output (secure) — injeta a MESMA senha do

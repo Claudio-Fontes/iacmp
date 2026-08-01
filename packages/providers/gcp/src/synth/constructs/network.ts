@@ -129,8 +129,15 @@ export function synthNetwork(construct: BaseConstruct, ctx: TFOutput): boolean {
       }
 
       ingress.forEach((rule, i) => {
+        // Fail-closed: sem origem declarada o synth FALHA (antes virava
+        // 0.0.0.0/0 com um warning fácil de perder — achado P1-06 da auditoria
+        // de segurança de 2026-07-31). Mesma regra do provider aws.
         if (rule.cidr === undefined) {
-          console.warn(`[gcp] Security group rule sem CIDR; usando 0.0.0.0/0 — defina props.cidr explicitamente (${construct.id} ingress[${i}])`);
+          throw new Error(
+            `Network.SecurityGroup "${construct.id}": ingressRules[${i}] não declara 'cidr'.\n` +
+            `Fix: informe o range de origem (ex: '10.0.0.0/16'). Para abrir para a internet ` +
+            `de propósito, escreva cidr: '0.0.0.0/0' explicitamente.`,
+          );
         }
         const fwId = `${id}_ingress_${i}`;
         const protocol = (rule.protocol as string) === '-1' ? 'all' : rule.protocol as string;
@@ -146,7 +153,7 @@ export function synthNetwork(construct: BaseConstruct, ctx: TFOutput): boolean {
           direction: 'INGRESS',
           priority: 1000 + i,
           allow: [allow],
-          source_ranges: [(rule.cidr as string) ?? '0.0.0.0/0'],
+          source_ranges: [rule.cidr as string],
         });
       });
 

@@ -305,16 +305,24 @@ describe('AWSProvider', () => {
   });
 
   // ── SEC-04 + ARCH-06 ────────────────────────────────────────────────
-  test('SEC-04: SG ingress sem CIDR emite warn mas mantem default 0.0.0.0/0', () => {
-    const warnSpy = jest.spyOn(console, 'warn').mockImplementation();
+  // SEC-04 (revisto 2026-08-01, auditoria P1-06): FAIL-CLOSED. Antes, ingress sem
+  // origem virava 0.0.0.0/0 com um console.warn — o recurso subia aberto para a
+  // internet e o aviso passava batido no meio da saída do synth.
+  test('SEC-04: SG ingress sem CIDR nem sourceSecurityGroupId FALHA o synth', () => {
     new Network.SecurityGroup(stack, 'SG', {
       vpcId: 'vpc-1',
       ingressRules: [{ protocol: 'tcp', fromPort: 22, toPort: 22 } as any],
     });
+    expect(() => provider.synthesize(stack)).toThrow(/não declara origem/);
+  });
+
+  test('SEC-04: abrir para a internet exige cidr 0.0.0.0/0 explícito', () => {
+    new Network.SecurityGroup(stack, 'SG', {
+      vpcId: 'vpc-1',
+      ingressRules: [{ protocol: 'tcp', fromPort: 443, toPort: 443, cidr: '0.0.0.0/0' }],
+    });
     const tpl = provider.synthesize(stack) as any;
     expect(tpl.Resources.SG.Properties.SecurityGroupIngress[0].CidrIp).toBe('0.0.0.0/0');
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('sem CIDR'));
-    warnSpy.mockRestore();
   });
 
   test('SG ingress com sourceSecurityGroupId → SourceSecurityGroupId (não CidrIp)', () => {

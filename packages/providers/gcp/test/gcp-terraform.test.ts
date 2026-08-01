@@ -74,18 +74,25 @@ describe('GCPProvider (Terraform google_*)', () => {
     expect(net.auto_create_subnetworks).toBe(false);
   });
 
-  test('Network.SecurityGroup sem CIDR → warn e usa 0.0.0.0/0', () => {
-    const warnSpy = jest.spyOn(console, 'warn').mockImplementation();
+  // Fail-closed (auditoria P1-06, 2026-08-01): antes virava 0.0.0.0/0 com warning.
+  test('Network.SecurityGroup sem CIDR FALHA o synth', () => {
     const stack = new Stack('test');
     new Network.SecurityGroup(stack, 'SG', {
       vpcId: 'vpc-1',
       ingressRules: [{ protocol: 'tcp', fromPort: 22, toPort: 22 } as any],
     });
+    expect(() => synth(stack)).toThrow(/não declara 'cidr'/);
+  });
+
+  test('abrir para a internet exige cidr 0.0.0.0/0 explícito', () => {
+    const stack = new Stack('test');
+    new Network.SecurityGroup(stack, 'SG', {
+      vpcId: 'vpc-1',
+      ingressRules: [{ protocol: 'tcp', fromPort: 443, toPort: 443, cidr: '0.0.0.0/0' }],
+    });
     const r = resources(synth(stack));
     const fw: any = Object.values(r['google_compute_firewall'] ?? {})[0];
     expect(fw?.source_ranges).toContain('0.0.0.0/0');
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('sem CIDR'));
-    warnSpy.mockRestore();
   });
 
   test('Database.SQL mysql → google_sql_database_instance com MYSQL', () => {

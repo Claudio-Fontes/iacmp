@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 
 /**
  * Bootstrap automático de projeto para o fluxo `iacmp ai` numa pasta vazia.
@@ -116,7 +116,9 @@ export function ensureProjectInitialized(cwd: string, options: BootstrapOptions 
     // tsx como runtime de TypeScript (suporta TS5–7+, sem registrar ts-node).
     // typescript sem pin — o tsconfig gerado usa moduleResolution:bundler que é
     // válido para qualquer versão suportada. @types/node necessário com bundler.
-    execSync(`npm install ${coreSpec} tsx typescript @types/node`, {
+    // execFileSync (não execSync com string): coreSpec pode ser um caminho
+    // local (`file:../...`) no monorepo — sem shell no meio, nada é reinterpretado.
+    execFileSync('npm', ['install', coreSpec, 'tsx', 'typescript', '@types/node'], {
       cwd,
       stdio: 'pipe',
     });

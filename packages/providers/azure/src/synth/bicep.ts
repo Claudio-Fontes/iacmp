@@ -267,6 +267,7 @@ export function emitBicep(stack: Stack, opts?: {
   const resources: BicepResource[] = [];
   const outputs: BicepOutput[] = [];
   const needsAdminPassword = { value: false };
+  const needsSecretValue = { value: false };
   const crossParams = new Map<string, string>();
   const functionImageParams = new Map<string, string>();
   const cdnBucketRefs = new Set<string>();
@@ -443,6 +444,7 @@ export function emitBicep(stack: Stack, opts?: {
     resources,
     outputs,
     needsAdminPassword,
+    needsSecretValue,
     crossParams,
     functionImageParams,
     sharedContainerEnvSym,
@@ -581,6 +583,13 @@ export function emitBicep(stack: Stack, opts?: {
   if (needsAdminPassword.value || crossParams.get('adminPassword') === 'secureString') {
     params.push({ name: 'adminPassword', type: 'string', secure: true });
     crossParams.delete('adminPassword');
+  }
+  // secretValue (@secure, sem default): valor inicial dos Secret.Vault. O deploy
+  // injeta bytes aleatórios por execução — antes o valor saía de uniqueString(),
+  // que é DETERMINÍSTICO por resource group (qualquer um com o id do RG derivava
+  // o segredo). Achado P1-03 da auditoria de segurança de 2026-07-31.
+  if (needsSecretValue.value) {
+    params.push({ name: 'secretValue', type: 'string', secure: true });
   }
   for (const [name, defaultImage] of functionImageParams) {
     params.push({ name, type: 'string', default: defaultImage || 'node:20-alpine' });

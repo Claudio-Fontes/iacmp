@@ -288,12 +288,11 @@ function buildWebsocketCloudRun(
   ctx.outputs[`${construct.id}WebSocketUrl`] = { value: `\${google_cloud_run_v2_service.${id}.uri}` };
 }
 
-// Role usada quando nenhuma action do statement bate com um padrão conhecido
-// (serviço AWS sem tradução GCP mapeada, ou action já vazia/genérica) — a
-// MESMA que o comportamento antigo usava para TUDO. Mantém o synth "sensato
-// e sem erro" mesmo pra casos não cobertos, só documentando a lacuna aqui em
-// vez de escondê-la atrás de um fallback silencioso universal.
-const FALLBACK_ROLE = 'roles/viewer';
+// Sem fallback silencioso: action não mapeada FALHA o synth (ver
+// mapActionToRole). O antigo FALLBACK_ROLE='roles/viewer' concedia leitura no
+// PROJETO INTEIRO para qualquer action desconhecida — uma policy que o usuário
+// escreveu para ser restritiva virava permissão ampla sem aviso (achado P1-02
+// da auditoria de segurança de 2026-07-31).
 
 // Tradução best-effort de action IAM estilo AWS ('service:Verb', ver
 // PolicyStatement em packages/core/src/constructs/policy.ts) → role
@@ -303,12 +302,12 @@ const FALLBACK_ROLE = 'roles/viewer';
 // statement original pedia. Cobre os serviços mais comuns dos exemplos do
 // projeto (S3->Storage, DynamoDB->Firestore/Datastore, SQS/SNS->Pub/Sub, Secrets Manager->
 // Secret Manager, Logs/CloudWatch→Logging/Monitoring, Lambda invoke→Cloud
-// Functions invoker, KMS→Cloud KMS). `effect: 'Deny'` não tem equivalente
-// (IAM condicional do GCP é outro recurso, fora de escopo) — statements Deny
-// caem no mesmo mapeamento de role de leitura/escrita do serviço, sem negar
-// nada; isso é uma lacuna conhecida, não um bug silencioso: statements Deny
-// não são comuns nos exemplos do projeto (nenhum uso hoje). Action sem prefixo
-// reconhecido cai em FALLBACK_ROLE (roles/viewer).
+// Functions invoker, KMS→Cloud KMS). `effect: 'Deny'` não tem equivalente no
+// GCP (IAM Deny é outro recurso, fora de escopo): em vez de traduzir Deny para
+// uma role que CONCEDE — o oposto do que o usuário pediu — o synth FALHA com
+// mensagem explícita. Action sem prefixo reconhecido também falha: conceder
+// roles/viewer no projeto por não saber traduzir é ampliar privilégio em
+// silêncio.
 const ACTION_ROLE_PATTERNS: Array<{ pattern: RegExp; role: string }> = [
   // Storage (S3 → google_storage_bucket)
   { pattern: /^s3:(Get|List|Head)/i, role: 'roles/storage.objectViewer' },
@@ -349,12 +348,17 @@ const ACTION_ROLE_PATTERNS: Array<{ pattern: RegExp; role: string }> = [
  * formato GCP ('roles/...', passthrough explícito do usuário) são aceitas
  * como estão.
  */
-function mapActionToRole(action: string): string {
+function mapActionToRole(action: string, constructId: string): string {
   if (action.startsWith('roles/')) return action;
   for (const { pattern, role } of ACTION_ROLE_PATTERNS) {
     if (pattern.test(action)) return role;
   }
-  return FALLBACK_ROLE;
+  throw new Error(
+    `Policy.IAM "${constructId}": a action "${action}" não tem tradução conhecida para uma role do GCP.\n` +
+    `O synth NÃO concede uma role genérica no lugar (isso ampliaria o privilégio pedido).\n` +
+    `Fix: use a role do GCP diretamente em actions (ex: 'roles/storage.objectAdmin') ` +
+    `ou remova a action deste statement no provider gcp.`,
+  );
 }
 
 export function synthFunction(construct: BaseConstruct, ctx: TFOutput): boolean {
@@ -634,11 +638,26 @@ export function synthFunction(construct: BaseConstruct, ctx: TFOutput): boolean 
       // statements que mapeiam pro mesmo role.
       const roles = new Set<string>();
       for (const s of statements) {
+        // Deny não existe no modelo de roles do GCP: traduzir viraria CONCESSÃO.
+        if (typeof s.effect === 'string' && /^deny$/i.test(s.effect)) {
+          throw new Error(
+            `Policy.IAM "${construct.id}": statement com effect 'Deny' não é suportado no provider gcp ` +
+            `(o GCP concede por role; não há equivalente direto de Deny).\n` +
+            `Fix: modele a restrição removendo as permissões concedidas, ou use IAM Deny policies ` +
+            `fora do iacmp. O synth falha aqui de propósito — converter Deny em role concederia acesso.`,
+          );
+        }
         for (const action of (s.actions as string[]) ?? []) {
-          roles.add(mapActionToRole(action));
+          roles.add(mapActionToRole(action, construct.id));
         }
       }
-      if (roles.size === 0) roles.add(FALLBACK_ROLE);
+      // Sem actions traduzíveis → nenhum binding (antes: roles/viewer no projeto).
+      if (roles.size === 0) {
+        throw new Error(
+          `Policy.IAM "${construct.id}": nenhuma action utilizável para gerar bindings no GCP.\n` +
+          `Fix: declare actions (ex: 's3:GetObject') ou roles do GCP ('roles/storage.objectViewer').`,
+        );
+      }
       let i = 0;
       for (const role of roles) {
         addResource(r, 'google_project_iam_member', `${id}_member_${i}`, {
