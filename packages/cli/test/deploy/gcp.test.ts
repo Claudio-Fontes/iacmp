@@ -4,6 +4,8 @@ jest.mock('fs');
 import * as cp from 'child_process';
 import * as fs from 'fs';
 import * as vm from 'vm';
+import * as os from 'os';
+import * as path from 'path';
 import {
   gcpExecutor,
   resolveProjectId,
@@ -101,23 +103,68 @@ describe('ensureComputeServiceAccountRoles', () => {
       .filter((c) => (c[1] as string[]).includes('add-iam-policy-binding'))
       .map((c) => (c[1] as string[]).find((x) => x.startsWith('--role='))!.replace('--role=', ''));
 
-  test('concede só as roles faltantes, no member da compute SA (<número>-compute@)', () => {
+  /**
+   * Menor privilégio (auditoria P1-01, 2026-08-01): as roles saem dos RECURSOS
+   * que o artefato realmente cria, não de um superconjunto fixo. Um projeto só
+   * com function+bucket não recebe acesso a Pub/Sub, Secret Manager e Cloud SQL.
+   */
+  // `fs` é mockado neste arquivo (jest.mock('fs')): o helper escreve o artefato
+  // com o fs REAL e programa o mock para devolvê-lo ao preflight.
+  function synthDirWith(resourceTypes: string[]): string {
+    const realFs = jest.requireActual('fs') as typeof import('fs');
+    const realOs = jest.requireActual('os') as typeof import('os');
+    const realPath = jest.requireActual('path') as typeof import('path');
+    const dir = realFs.mkdtempSync(realPath.join(realOs.tmpdir(), 'iacmp-gcp-preflight-'));
+    const resource: Record<string, unknown> = {};
+    for (const t of resourceTypes) resource[t] = { x: {} };
+    const content = JSON.stringify({ resource });
+    realFs.writeFileSync(realPath.join(dir, 'stack.tf.json'), content);
+    (fs.readdirSync as unknown as jest.Mock).mockReturnValue(['stack.tf.json']);
+    (fs.readFileSync as unknown as jest.Mock).mockReturnValue(content);
+    return dir;
+  }
+
+  test('concede só as roles exigidas pelos recursos do artefato (menor privilégio)', () => {
     mockGcloud('123456', ['roles/cloudbuild.builds.builder', 'roles/logging.logWriter']);
-    ensureComputeServiceAccountRoles('meu-projeto');
+    const dir = synthDirWith(['google_cloudfunctions2_function', 'google_storage_bucket']);
+    ensureComputeServiceAccountRoles('meu-projeto', dir);
 
     const added = rolesAdicionadas();
     expect(added).not.toContain('roles/cloudbuild.builds.builder'); // já tinha
-    expect(added).toContain('roles/storage.objectAdmin');
-    expect(added).toContain('roles/datastore.user');
-    expect(added).toContain('roles/run.invoker');
-    expect(added).toHaveLength(8);
+    expect(added).toContain('roles/storage.objectAdmin');           // tem bucket
+    expect(added).toContain('roles/run.invoker');                   // tem function
+    // NÃO concede o que o projeto não usa:
+    expect(added).not.toContain('roles/pubsub.editor');
+    expect(added).not.toContain('roles/secretmanager.secretAccessor');
+    expect(added).not.toContain('roles/cloudsql.client');
+    expect(added).not.toContain('roles/datastore.user');
     const anyAdd = mockedCp.execFileSync.mock.calls.find((c) => (c[1] as string[]).includes('add-iam-policy-binding'));
     expect((anyAdd![1] as string[]).join(' ')).toContain('123456-compute@developer.gserviceaccount.com');
   });
 
+  test('artefato com Pub/Sub e Secret Manager ganha as roles correspondentes', () => {
+    mockGcloud('123456', []);
+    const dir = synthDirWith(['google_pubsub_topic', 'google_secret_manager_secret', 'google_sql_database_instance']);
+    ensureComputeServiceAccountRoles('meu-projeto', dir);
+    const added = rolesAdicionadas();
+    expect(added).toContain('roles/pubsub.editor');
+    expect(added).toContain('roles/secretmanager.secretAccessor');
+    expect(added).toContain('roles/cloudsql.client');
+    expect(added).not.toContain('roles/monitoring.editor'); // sem Monitoring no artefato
+  });
+
+  test('sem diretório de artefatos, concede só as roles base de build', () => {
+    mockGcloud('123456', []);
+    ensureComputeServiceAccountRoles('meu-projeto');
+    const added = rolesAdicionadas();
+    expect(added).toEqual(expect.arrayContaining(['roles/cloudbuild.builds.builder', 'roles/logging.logWriter', 'roles/artifactregistry.writer']));
+    expect(added).toHaveLength(3);
+  });
+
   test('não concede nada quando a SA já tem todas as roles (idempotente)', () => {
     mockGcloud('123456', ALL_ROLES);
-    ensureComputeServiceAccountRoles('meu-projeto');
+    const dir = synthDirWith(['google_cloudfunctions2_function', 'google_storage_bucket', 'google_pubsub_topic']);
+    ensureComputeServiceAccountRoles('meu-projeto', dir);
     expect(rolesAdicionadas()).toHaveLength(0);
   });
 

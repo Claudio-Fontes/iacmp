@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { applyTfBackend, warnIfLocalState } from './tf-backend';
 import { providerOutDir } from '../synth-out';
 import { DeployContext, DeployExecutor, DestroyContext, NativeCommand } from './types';
 
@@ -25,6 +26,10 @@ export const terraformExecutor: DeployExecutor = {
   async planDeploy(ctx: DeployContext): Promise<NativeCommand[]> {
     const dir = providerOutDir(ctx.cwd, 'terraform');
     removeLegacyProviderFile(dir);
+    // State remoto quando configurado; senão avisa que é local (sem lock e com
+    // dados sensíveis) — ver deploy/tf-backend.ts.
+    const hasRemote = applyTfBackend(dir, ctx.tfBackend);
+    warnIfLocalState(dir, hasRemote, s => process.stdout.write(s));
     const regionVar = `aws_region=${ctx.region}`;
     return [
       { bin: 'terraform', args: ['init', '-input=false'], cwd: dir },
@@ -35,6 +40,7 @@ export const terraformExecutor: DeployExecutor = {
   async planDestroy(ctx: DestroyContext): Promise<NativeCommand[]> {
     const dir = providerOutDir(ctx.cwd, 'terraform');
     removeLegacyProviderFile(dir);
+    applyTfBackend(dir, ctx.tfBackend);
     const regionVar = `aws_region=${ctx.region}`;
     return [
       { bin: 'terraform', args: ['init', '-input=false'], cwd: dir },

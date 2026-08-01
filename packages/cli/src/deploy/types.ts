@@ -42,6 +42,8 @@ export interface DeployContext {
   dryRun?: boolean;
   /** Outputs de stacks anteriores — usados para preencher parâmetros cross-stack (Azure Bicep). */
   outputParams?: Record<string, string>;
+  /** Backend remoto do Terraform (iacmp.json → tfBackend). Sem isto, state local. */
+  tfBackend?: { type: 's3' | 'gcs' | 'azurerm'; [key: string]: unknown };
 }
 
 export interface DestroyContext {
@@ -52,6 +54,8 @@ export interface DestroyContext {
   projectId?: string;
   /** Path do template sintetizado desta stack (Azure: usado para achar o `.iacmp-meta.json` sidecar — ex: limpar repositórios de ACR criados por `Compute.Container` com `build`). */
   templatePath?: string;
+  /** Backend remoto do Terraform (iacmp.json → tfBackend). */
+  tfBackend?: { type: 's3' | 'gcs' | 'azurerm'; [key: string]: unknown };
 }
 
 export interface StackStatus {

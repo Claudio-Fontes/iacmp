@@ -1,6 +1,7 @@
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import { applyTfBackend, warnIfLocalState } from '../tf-backend';
 import { providerOutDir } from '../../synth-out';
 import { DeployContext, DeployExecutor, DestroyContext, NativeCommand, StackStatus } from '../types';
 import { resolveProjectId, ensureRequiredApis, ensureComputeServiceAccountRoles } from './preflight';
@@ -104,12 +105,16 @@ export const gcpExecutor: DeployExecutor = {
     // as APIs primeiro dá tempo de propagarem enquanto os handlers buildam/sobem.
     if (!ctx.dryRun) {
       ensureRequiredApis(projectId);                 // APIs desligadas → SERVICE_DISABLED no apply
-      ensureComputeServiceAccountRoles(projectId);   // compute SA sem roles → build gen2 falha
+      ensureComputeServiceAccountRoles(projectId, dir);  // menor privilégio: roles derivadas dos recursos do artefato
     }
 
     // Build+upload de handlers: efeito local (esbuild/zip) + efeito remoto
     // (gcloud storage cp) — pulado em --dry-run, igual ao container build do
     // Azure (ver DeployContext.dryRun).
+    // State remoto (iacmp.json → tfBackend) ou aviso de state local.
+    const hasRemoteState = applyTfBackend(dir, ctx.tfBackend);
+    warnIfLocalState(dir, hasRemoteState, s => process.stdout.write(s));
+
     const uploadCmds = ctx.dryRun ? [] : buildAndUploadFunctions(ctx, projectId, region, dir);
 
     // Build+push de imagens de Compute.Container com props.build — gcloud builds
@@ -135,6 +140,7 @@ export const gcpExecutor: DeployExecutor = {
 
   async planDestroy(ctx: DestroyContext): Promise<NativeCommand[]> {
     const projectId = resolveProjectId(ctx.projectId);
+    applyTfBackend(providerOutDir(ctx.cwd, 'gcp'), ctx.tfBackend);
     const dir = providerOutDir(ctx.cwd, 'gcp');
     const region = ctx.region ?? 'us-central1';
     return [

@@ -1,6 +1,6 @@
 {
   "name": "@iacmp/core",
-  "version": "2.4.1",
+  "version": "2.5.0",
   "description": "Constructs agnósticos de provider para o iacmp — a API que os stacks do usuário importam",
   "keywords": [
     "iacmp",

@@ -124,6 +124,7 @@ export default class Deploy extends Command {
       resourceGroup: config.resourceGroup,
       projectId: config.projectId,
       dryRun,
+      tfBackend: config.tfBackend,
     };
 
     const flow: DeployFlowOptions = {

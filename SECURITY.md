@@ -36,11 +36,15 @@ iacmp runs locally with **your** cloud credentials, via the official CLIs (`aws`
 
 We prefer stating limitations to implying guarantees. As of the current release:
 
-- **Authentication semantics are not uniform across providers.** `Fn.ApiGateway`'s `authType` is implemented in different depths per cloud, and a backend function may be reachable directly (bypassing the gateway) depending on the provider. Treat generated auth as a starting point and verify the final template before exposing anything sensitive. Making auth explicit, validated and fail-closed in all three clouds is the top item on the security roadmap.
+- **Authentication is explicit and fail-closed** (since 2.7.0). Declare it with `auth: { type: 'jwt' | 'lambda' | 'iam' | 'none', … }`. If a provider cannot implement what you asked for, the synth **fails** — it never downgrades to a public endpoint. JWT is validated natively by the gateway on all three clouds (AWS HTTP API, Azure APIM `validate-jwt`, GCP API Gateway), and GCP backends behind a protected route no longer get `allUsers`, so the gateway cannot be bypassed. Remaining gap: on Azure, the Function App behind APIM still accepts anonymous calls on its own hostname — restrict it with access restrictions/private endpoint until we ship function-key wiring.
 - **IAM translation is lossy by design.** AWS-style actions map to broader GCP roles at project scope. Where the semantics cannot be preserved (`Deny` statements, unknown actions), the synth **fails** instead of guessing — but a successful synth still means "at least what you asked for", not "exactly what you asked for". Review generated policies.
-- **GCP deploy grants roles to the default compute service account** (idempotently, at pre-flight) so first deploys on new projects work. This is convenient and broader than least privilege; dedicated per-workload service accounts are on the roadmap.
-- **Terraform state is local by default** (`synth-out/…/terraform.tfstate`) and may contain sensitive values. For anything beyond experiments, configure a remote encrypted backend with locking.
-- **`iacmp audit-security` is a linter, not a compliance audit.** It checks a limited set of properties on a subset of constructs. A clean run is not certification.
+- **GCP deploy grants roles to the default compute service account** (idempotently, at pre-flight) so first deploys on new projects work. Since 2.7.0 the set is derived from the resources your artifact actually creates (a project without Pub/Sub gets no Pub/Sub role) and the plan is printed before anything is granted. Dedicated per-workload service accounts are still on the roadmap.
+- **Terraform state is local by default** (`synth-out/…/terraform.tfstate`) and may contain sensitive values. The deploy warns about it every run. For anything shared, configure a remote backend with locking in `iacmp.json`:
+  ```json
+  { "tfBackend": { "type": "s3", "bucket": "my-state", "key": "prod/app.tfstate", "region": "us-east-1", "dynamodb_table": "tf-locks" } }
+  ```
+  `gcs` and `azurerm` are supported with the same shape.
+- **`iacmp audit-security` is a linter, not a compliance audit.** Since 2.7.0 it also inspects the **synthesized artifacts** (CloudFormation/Bicep/Terraform) for wildcard IAM, `iam:PassRole` with `*`, admin/database ports open to the internet, unauthenticated routes, public buckets, `allUsers` invokers, secrets in outputs and storage without TLS — and reports `PASS`/`FAIL`/`NOT_APPLICABLE`/`NOT_CHECKED` instead of a blanket "OK". Still: a clean run is not certification.
 
 ## Hardening already in place
 
@@ -49,3 +53,5 @@ We prefer stating limitations to implying guarantees. As of the current release:
 - Azure secret material is generated with a CSPRNG at deploy time and passed as `@secure()` parameters — never derived deterministically in the template, never printed in logs or `--dry-run`.
 - Destructive commands ask for confirmation before any cloud call; `--dry-run` shows the exact commands.
 - The local dashboard binds to `127.0.0.1` and serves no routes beyond the root page.
+- Security groups with no declared source fail the synth instead of defaulting to `0.0.0.0/0`; on GCP, unmappable IAM actions and `Deny` statements fail instead of being translated into a broader grant.
+- CI pins every GitHub Action by commit SHA, runs `npm audit --omit=dev --audit-level=high` and CodeQL on every push and pull request.

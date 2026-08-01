@@ -179,6 +179,50 @@ APIM.
 
 ---
 
+### API authorization (`Fn.ApiGateway`)
+
+Authorization is **explicit and fail-closed**: you declare what you want, and if
+the target cloud cannot implement it, the synth fails — it never silently emits
+a public endpoint.
+
+```typescript
+new Fn.ApiGateway(stack, 'OrdersApi', {
+  name: 'orders-api',
+  type: 'HTTP',
+  // Validated by the gateway itself, on all three clouds:
+  auth: {
+    type: 'jwt',
+    issuer: 'https://your-idp.example/',
+    audiences: ['orders-api'],
+    jwksUri: 'https://your-idp.example/.well-known/jwks.json', // required on GCP
+  },
+  routes: [
+    { method: 'GET', path: '/orders', lambdaId: 'ListOrdersFn' },
+    // A public route inside a protected API must say so explicitly:
+    { method: 'GET', path: '/health', lambdaId: 'HealthFn', auth: { type: 'none' } },
+  ],
+});
+```
+
+| `auth.type` | What it does | AWS | Azure | GCP |
+|---|---|---|---|---|
+| `none` | Public on purpose | ✅ | ✅ | ✅ |
+| `jwt` | Gateway validates the token (issuer/audiences/JWKS) | ✅ `type: 'HTTP'` | ✅ APIM `validate-jwt` | ✅ needs `jwksUri` |
+| `lambda` | A `Fn.Lambda` authorizes each request | ✅ | ✅ | ❌ fails |
+| `iam` | Caller signs with SigV4 | ✅ | ❌ fails | ❌ fails |
+
+On GCP, a function that backs a protected route does **not** receive a public
+(`allUsers`) invoker binding — only the gateway's service account can call it,
+so the backend URL cannot be used to bypass the token check.
+
+> The older `authType: 'JWT' | 'AWS_IAM' | 'COGNITO'` + `authorizerLambdaId`
+> still works and is normalized to the contract above, with one deliberate
+> exception: `authType: 'JWT'` **without** an authorizer now fails, because it
+> carries no issuer/audiences — that combination used to produce an
+> unauthenticated API.
+
+---
+
 ### `iacmp ls`
 
 Lists the stacks available in the current project.

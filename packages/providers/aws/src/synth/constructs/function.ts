@@ -1,4 +1,4 @@
-import { BaseConstruct, isRef, type Ref } from '@iacmp/core';
+import { BaseConstruct, isRef, normalizeApiAuth, assertAuthSupported, type Ref, type ApiAuth } from '@iacmp/core';
 import { physicalName, type CloudFormationResource, type SynthContext } from '../types';
 import {
   resolveLambdaArnRef,
@@ -133,19 +133,67 @@ export function synthFunction(
       // REST (v1) só aceita nome de stage [a-zA-Z0-9_] — '$default' é exclusivo do
       // HTTP API (v2). Default por tipo pra não quebrar o deploy do REST.
       const stageName = (props.stageName as string) ?? (apigwType === 'REST' ? 'prod' : '$default');
-      const authorizerLambdaId = props.authorizerLambdaId as string | undefined;
+      // ── Autorização (contrato explícito; ver core/src/auth.ts) ────────────
+      // O que cada tipo de API do AWS realmente implementa. Pedir algo fora
+      // desta lista FALHA o synth em vez de emitir a API sem proteção.
+      const where = `Fn.ApiGateway "${construct.id}"`;
+      const supportedAuth: ReadonlyArray<ApiAuth['type']> =
+        apigwType === 'REST' ? ['none', 'lambda', 'iam']
+        : apigwType === 'WEBSOCKET' ? ['none', 'lambda']
+        : ['none', 'lambda', 'iam', 'jwt'];
+      const authHint =
+        apigwType === 'REST'
+          ? "REST API não valida JWT nativamente: use type: 'HTTP' (JWT nativo) ou auth: { type: 'lambda', authorizerLambdaId }."
+          : apigwType === 'WEBSOCKET'
+            ? "WebSocket API só aceita authorizer Lambda na rota $connect: use auth: { type: 'lambda', authorizerLambdaId }."
+            : undefined;
+      const gatewayAuth = normalizeApiAuth(props as Parameters<typeof normalizeApiAuth>[0], where);
+      assertAuthSupported(gatewayAuth, supportedAuth, where, authHint);
+      // Auth efetiva de cada rota: a da rota quando declarada, senão a do gateway.
+      const routeAuthOf = new Map<Record<string, unknown>, ApiAuth>();
+      for (const r of routes) {
+        const declared = r.auth || r.authType || r.authorizerLambdaId;
+        const rWhere = `${where} (rota ${String(r.method)} ${String(r.path)})`;
+        const ra = declared
+          ? normalizeApiAuth(r as Parameters<typeof normalizeApiAuth>[0], rWhere)
+          : gatewayAuth;
+        if (declared) assertAuthSupported(ra, supportedAuth, rWhere, authHint);
+        routeAuthOf.set(r, ra);
+      }
+      // Lambda authorizers (do gateway e das rotas) — o mecanismo legado, agora
+      // derivado do contrato normalizado.
+      const authorizerLambdaId = gatewayAuth.type === 'lambda' ? gatewayAuth.authorizerLambdaId : undefined;
       if (authorizerLambdaId) requireLambda(authorizerLambdaId, ctx);
-      for (const r of routes) if (r.authorizerLambdaId) requireLambda(r.authorizerLambdaId as string, ctx);
+      for (const ra of routeAuthOf.values()) {
+        if (ra.type === 'lambda') requireLambda(ra.authorizerLambdaId, ctx);
+      }
+      // Authorizer JWT nativo (HTTP API): um por configuração issuer+audiences.
+      const jwtAuthorizers = new Map<string, { logicalId: string; issuer: string; audiences: string[] }>();
+      const jwtKey = (a: Extract<ApiAuth, { type: 'jwt' }>) => `${a.issuer}|${a.audiences.join(',')}`;
+      const registerJwt = (a: ApiAuth) => {
+        if (a.type !== 'jwt') return;
+        const k = jwtKey(a);
+        if (!jwtAuthorizers.has(k)) {
+          jwtAuthorizers.set(k, {
+            logicalId: `${logicalId}JwtAuthorizer${jwtAuthorizers.size || ''}`,
+            issuer: a.issuer,
+            audiences: a.audiences,
+          });
+        }
+      };
+      registerJwt(gatewayAuth);
+      for (const ra of routeAuthOf.values()) registerJwt(ra);
       const authorizerId = authorizerLambdaId ? `${logicalId}Authorizer` : undefined;
       // Authorizer por rota (route.authorizerLambdaId) — cada Lambda authorizer
       // distinta vira um AWS::Gateway::Authorizer. Combinado com o do gateway.
       // Uma rota com authType 'NONE' fica pública mesmo se o gateway tem authorizer.
       const routeAuthorizerIds = new Map<string, string>(); // lambdaId → authorizerLogicalId
       if (authorizerLambdaId) routeAuthorizerIds.set(authorizerLambdaId, authorizerId!);
-      for (const r of routes) {
-        const ra = r.authorizerLambdaId as string | undefined;
-        if (ra && !routeAuthorizerIds.has(ra)) {
-          routeAuthorizerIds.set(ra, `${logicalId}${ra.replace(/[^a-zA-Z0-9]/g, '')}Authorizer`);
+      for (const ra of routeAuthOf.values()) {
+        if (ra.type !== 'lambda') continue;
+        const la = ra.authorizerLambdaId;
+        if (!routeAuthorizerIds.has(la)) {
+          routeAuthorizerIds.set(la, `${logicalId}${la.replace(/[^a-zA-Z0-9]/g, '')}Authorizer`);
         }
       }
       // Toda Lambda referenciada (rotas + authorizers) precisa de uma
@@ -220,11 +268,9 @@ export function synthFunction(
           const method = r.method as string;
           const resourceIdRef = resolveResourceRef(path);
           const methodLogicalId = `${logicalId}${method}${path.replace(/[^a-zA-Z0-9]/g, '')}Method`;
-          // Auth por rota (mesma lógica do HTTP): 'NONE' força pública.
-          const routeAuthLambda = (r.authType === 'NONE')
-            ? undefined
-            : (r.authorizerLambdaId as string | undefined) ?? authorizerLambdaId;
-          const routeAuthId = routeAuthLambda ? routeAuthorizerIds.get(routeAuthLambda) : undefined;
+          // Auth efetiva desta rota (contrato normalizado).
+          const rAuth = routeAuthOf.get(r) ?? gatewayAuth;
+          const routeAuthId = rAuth.type === 'lambda' ? routeAuthorizerIds.get(rAuth.authorizerLambdaId) : undefined;
 
           entries.push([methodLogicalId, {
             Type: 'AWS::ApiGateway::Method',
@@ -232,7 +278,8 @@ export function synthFunction(
               RestApiId: resourceRef(logicalId, 'Id'),
               ResourceId: resourceIdRef,
               HttpMethod: method,
-              AuthorizationType: routeAuthId ? 'CUSTOM' : 'NONE',
+              // AWS_IAM: o próprio API Gateway exige assinatura SigV4 do chamador.
+              AuthorizationType: rAuth.type === 'iam' ? 'AWS_IAM' : routeAuthId ? 'CUSTOM' : 'NONE',
               ...(routeAuthId ? { AuthorizerId: resourceRef(routeAuthId, 'Id') } : {}),
               ...(r.lambdaId ? {
                 Integration: {
@@ -356,6 +403,20 @@ export function synthFunction(
           },
         }]);
 
+        // Authorizers JWT nativos (AuthorizerType: 'JWT') — validação feita pelo
+        // próprio gateway com o JWKS do issuer.
+        for (const jwt of jwtAuthorizers.values()) {
+          entries.push([jwt.logicalId, {
+            Type: 'AWS::ApiGatewayV2::Authorizer',
+            Properties: {
+              ApiId: resourceRef(logicalId, 'Id'),
+              Name: `${jwt.logicalId}`,
+              AuthorizerType: 'JWT',
+              IdentitySource: ['$request.header.Authorization'],
+              JwtConfiguration: { Issuer: jwt.issuer, Audience: jwt.audiences },
+            },
+          }]);
+        }
         // Um AWS::ApiGatewayV2::Authorizer por Lambda authorizer distinta.
         for (const [la, authLogicalId] of routeAuthorizerIds) {
           entries.push([authLogicalId, {
@@ -374,12 +435,10 @@ export function synthFunction(
 
         for (const r of routes) {
           const routeId = `${logicalId}${(r.method as string)}${(r.path as string).replace(/[^a-zA-Z0-9]/g, '')}Route`;
-          // Auth por rota: authType 'NONE' força pública; senão usa o authorizer
-          // da rota (route.authorizerLambdaId) ou o do gateway como fallback.
-          const routeAuthLambda = (r.authType === 'NONE')
-            ? undefined
-            : (r.authorizerLambdaId as string | undefined) ?? authorizerLambdaId;
-          const routeAuthId = routeAuthLambda ? routeAuthorizerIds.get(routeAuthLambda) : undefined;
+          // Auth efetiva desta rota (contrato normalizado).
+          const rAuth = routeAuthOf.get(r) ?? gatewayAuth;
+          const routeAuthId = rAuth.type === 'lambda' ? routeAuthorizerIds.get(rAuth.authorizerLambdaId) : undefined;
+          const routeJwt = rAuth.type === 'jwt' ? jwtAuthorizers.get(`${rAuth.issuer}|${rAuth.audiences.join(',')}`) : undefined;
           entries.push([routeId, {
             Type: 'AWS::ApiGatewayV2::Route',
             Properties: {
@@ -389,6 +448,10 @@ export function synthFunction(
               RouteKey: apigwType === 'WEBSOCKET' ? (r.path as string) : `${r.method} ${r.path}`,
               ...(r.lambdaId ? { Target: { 'Fn::Sub': `integrations/\${${routeId}Integration}` } } : {}),
               ...(routeAuthId ? { AuthorizationType: 'CUSTOM', AuthorizerId: resourceRef(routeAuthId, 'Id') } : {}),
+              // JWT nativo do HTTP API (v2): o gateway valida issuer/audience
+              // contra o JWKS do provedor — sem Lambda no caminho.
+              ...(routeJwt ? { AuthorizationType: 'JWT', AuthorizerId: resourceRef(routeJwt.logicalId, 'Id') } : {}),
+              ...(rAuth.type === 'iam' ? { AuthorizationType: 'AWS_IAM' } : {}),
             },
           }]);
 

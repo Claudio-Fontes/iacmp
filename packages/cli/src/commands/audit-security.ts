@@ -1,6 +1,7 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import { t } from '../i18n';
+import { auditArtifacts } from '../audit/artifact';
 import { readConfig, loadStacks, saveReport, today } from '../audit';
 import { BaseConstruct } from '@iacmp/core';
 import { Stack } from '@iacmp/core';
@@ -180,6 +181,37 @@ export default class AuditSecurity extends Command {
       this.log(`${chalk.green('✓')} ${c.type} '${c.id}' — OK`);
     }
 
+    // ── Auditoria do ARTEFATO FINAL ────────────────────────────────────────
+    // O bloco acima analisou os constructs (o que o usuário escreveu). Aqui
+    // olhamos o que REALMENTE vai para a nuvem — é onde moram os achados de
+    // policy ampla, porta aberta e rota sem auth (auditoria P2-01, 2026-08-01).
+    const artifact = auditArtifacts(cwd, config.provider);
+    this.log('');
+    this.log(chalk.bold(t('Artefatos sintetizados', 'Synthesized artifacts')));
+    this.log('─'.repeat(40));
+    if (artifact.filesAnalyzed.length === 0) {
+      this.log(chalk.yellow(t(
+        'Nenhum artefato encontrado — rode `iacmp synth` para auditar o que será criado na nuvem.',
+        'No artifacts found — run `iacmp synth` to audit what will actually be created in the cloud.')));
+    } else {
+      this.log(t(`Arquivos analisados: ${artifact.filesAnalyzed.length}`, `Files analyzed: ${artifact.filesAnalyzed.length}`));
+      for (const f of artifact.findings) {
+        const tag = f.level === 'critical' ? chalk.red('✗ [CRITICAL]') : chalk.yellow('⚠ [WARNING]');
+        this.log(`${tag} ${f.detail} ${chalk.dim(`(${f.file})`)}`);
+      }
+      // Estados explícitos: PASS só quando o check teve alvo para analisar.
+      for (const c of artifact.checked) {
+        if (c.status === 'FAIL') continue;
+        const label = c.status === 'PASS' ? chalk.green('✓ PASS')
+          : c.status === 'NOT_APPLICABLE' ? chalk.dim('· N/A')
+          : chalk.yellow('? NOT CHECKED');
+        this.log(`${label} ${chalk.dim(c.check)}`);
+      }
+    }
+
+    const artifactCritical = artifact.findings.filter(f => f.level === 'critical');
+    const artifactWarnings = artifact.findings.filter(f => f.level === 'warning');
+
     let md = `# Security Audit Report — ${config.name}\n`;
     md += `Date: ${today()}\n`;
     md += `Provider: ${config.provider}\n\n`;
@@ -187,6 +219,19 @@ export default class AuditSecurity extends Command {
     md += `- Critical issues: ${critical.length}\n`;
     md += `- Warnings: ${warnings.length}\n`;
     md += `- OK: ${allOk.length}\n\n`;
+    md += `## Artifact checks (${artifact.filesAnalyzed.length} file(s) analyzed)\n`;
+    if (artifact.filesAnalyzed.length === 0) {
+      md += `- NOT CHECKED: no synthesized artifacts found (run \`iacmp synth\` first)\n\n`;
+    } else {
+      for (const c of artifact.checked) md += `- ${c.check}: ${c.status}\n`;
+      md += '\n';
+      for (const f of artifact.findings) {
+        md += `### [${f.level.toUpperCase()}] ${f.check}\n`;
+        md += `File: ${f.file}\n`;
+        md += `Detail: ${f.detail}\n\n`;
+      }
+    }
+
     md += `## Findings\n\n`;
 
     for (const f of allFindings) {
@@ -209,7 +254,7 @@ export default class AuditSecurity extends Command {
     const relPath = saveReport(cwd, 'security', md);
     this.log(`\nReport saved to ${relPath}`);
 
-    if (shouldFail(failOn, critical.length, warnings.length)) {
+    if (shouldFail(failOn, critical.length + artifactCritical.length, warnings.length + artifactWarnings.length)) {
       this.exit(1);
     }
   }

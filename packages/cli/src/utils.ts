@@ -36,6 +36,12 @@ export interface IacmpConfig {
   /** Região GCP (ex: us-central1). Separada de `region` (AWS) porque as nomenclaturas não são compatíveis — `us-east-1` (AWS) não existe no GCP (é `us-east1`). Sem isso, um deploy GCP herdaria a região AWS e falharia. */
   gcpRegion?: string;
   accountTier?: AccountTier;
+  /**
+   * Backend remoto do Terraform (state fora da máquina, com locking) — vale para
+   * os caminhos GCP e `--format tf`. Sem isto, o state é LOCAL: ok para
+   * experimento, inadequado para uso compartilhado (ver deploy/tf-backend.ts).
+   */
+  tfBackend?: { type: 's3' | 'gcs' | 'azurerm'; [key: string]: unknown };
   availabilityZones?: string[];
   projectId?: string;
   language?: string;

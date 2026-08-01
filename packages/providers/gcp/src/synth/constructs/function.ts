@@ -1,4 +1,4 @@
-import { BaseConstruct } from '@iacmp/core';
+import { BaseConstruct, normalizeApiAuth, assertAuthSupported, type ApiAuth } from '@iacmp/core';
 import { TFOutput, toTfId, addResource, gcpName, RUNTIME_MAP, vpcConnectorName, gcpEntryPoint, gcpFunctionZipObject } from './common.js';
 
 /**
@@ -6,42 +6,79 @@ import { TFOutput, toTfId, addResource, gcpName, RUNTIME_MAP, vpcConnectorName, 
  * — dedupe: rotas diferentes que usam o MESMO authorizer (ou o mesmo authType a nível
  * de gateway) caem na MESMA securityDefinition, uma vez só no documento.
  */
-function jwtSecurityDefinitionName(authType: string, authorizerLambdaId?: string): string {
-  const suffix = authorizerLambdaId ? toTfId(authorizerLambdaId) : authType.toLowerCase();
+function jwtSecurityDefinitionName(auth: Extract<ApiAuth, { type: 'jwt' }>): string {
+  const suffix = toTfId(`${auth.issuer}_${auth.audiences.join('_')}`).slice(0, 40);
   return `${suffix}_auth`;
 }
 
 /**
  * Google API Gateway valida JWT NATIVAMENTE via issuer/jwks_uri (extensões
- * `x-google-issuer`/`x-google-jwks_uri` no OpenAPI 2.0) — não existe o conceito de
- * "Lambda authorizer" arbitrário como no API Gateway da AWS (authorizerLambdaId).
- * `Fn.ApiGatewayProps` (packages/core/src/constructs/function.ts) é agnóstico e não
- * carrega issuer/jwksUri — por isso preenchemos um ESQUELETO com placeholders
- * documentados via x-iacmp-authorizer-lambda-id (metadado não-padrão, ignorado pela
- * API do Google, só para rastrear a origem do gap). Quem for de fato fazer o deploy
- * PRECISA sobrescrever x-google-issuer/x-google-jwks_uri com o provedor de identidade
- * real (Firebase Auth, Auth0, Cognito, etc.) — sem isso a validação de JWT no Gateway
- * não funciona. Mesma lacuna vale para authType AWS_IAM/COGNITO (sem equivalente
- * nativo no GCP): usamos o mesmo esqueleto, só documentando a intenção original.
+ * `x-google-issuer`/`x-google-jwks_uri` no OpenAPI 2.0) — não existe "Lambda
+ * authorizer" arbitrário como no API Gateway da AWS.
+ *
+ * Até 2026-08-01 o synth emitia um ESQUELETO com issuer/jwks PLACEHOLDER
+ * (`ISSUER_PLACEHOLDER.example.com`): o deploy subia e a API parecia protegida,
+ * mas a validação nunca funcionava de verdade (achado P0-01 da auditoria). Agora
+ * o contrato `auth: { type: 'jwt', issuer, audiences, jwksUri }` é obrigatório —
+ * sem dados reais, o synth FALHA.
  */
-function buildSecurityDefinition(
-  apiName: string,
-  authType: string,
-  authorizerLambdaId?: string,
-): Record<string, unknown> {
+function buildSecurityDefinition(auth: Extract<ApiAuth, { type: 'jwt' }>): Record<string, unknown> {
   return {
     authorizationUrl: '',
     flow: 'implicit',
     type: 'oauth2',
-    'x-google-issuer': 'https://ISSUER_PLACEHOLDER.example.com/',
-    'x-google-jwks_uri': 'https://ISSUER_PLACEHOLDER.example.com/.well-known/jwks.json',
-    'x-google-audiences': apiName,
-    ...(authorizerLambdaId ? { 'x-iacmp-authorizer-lambda-id': authorizerLambdaId } : {}),
-    ...(authType !== 'JWT' ? { 'x-iacmp-source-auth-type': authType } : {}),
+    'x-google-issuer': auth.issuer,
+    'x-google-jwks_uri': auth.jwksUri,
+    'x-google-audiences': auth.audiences.join(','),
   };
 }
 
 const ANY_METHODS = ['get', 'post', 'put', 'delete', 'patch'];
+
+/**
+ * A Function é backend de alguma rota de API Gateway PROTEGIDA?
+ *
+ * Se for, ela NÃO pode receber `allUsers` no run.invoker: o gateway já invoca
+ * com a service account dedicada (gw_invoker), e deixar allUsers permitiria
+ * chamar a URL do Cloud Run diretamente, pulando a validação de JWT do gateway
+ * (achado P0-01 da auditoria de segurança de 2026-07-31 — "bypass do gateway").
+ */
+function isProtectedApiBackend(lambdaId: string, ctx: TFOutput): boolean {
+  for (const c of ctx.registry.byId.values()) {
+    if (c.type !== 'Function.ApiGateway') continue;
+    const p = c.props as Record<string, unknown>;
+    const routes = (p.routes as Array<Record<string, unknown>>) ?? [];
+    let gwAuth: ApiAuth;
+    try {
+      gwAuth = normalizeApiAuth(p as Parameters<typeof normalizeApiAuth>[0], `Fn.ApiGateway "${c.id}"`);
+    } catch {
+      // Config inválida: o synth do próprio gateway falha com a mensagem certa.
+      // Aqui tratamos como protegida (fail-closed) para não abrir a function.
+      return true;
+    }
+    for (const route of routes) {
+      if (route.lambdaId !== lambdaId) continue;
+      const declared = route.auth || route.authType || route.authorizerLambdaId;
+      let rAuth: ApiAuth = gwAuth;
+      if (declared) {
+        try {
+          rAuth = normalizeApiAuth(route as Parameters<typeof normalizeApiAuth>[0], `Fn.ApiGateway "${c.id}" (rota)`);
+        } catch {
+          return true;
+        }
+      }
+      if (rAuth.type !== 'none') return true;
+    }
+  }
+  return false;
+}
+
+
+/** O que o API Gateway do GCP implementa de verdade (o resto falha o synth). */
+const GCP_SUPPORTED_AUTH: ReadonlyArray<ApiAuth['type']> = ['none', 'jwt'];
+const GCP_AUTH_HINT =
+  "O API Gateway do Google valida JWT nativamente (issuer/jwks) e não tem equivalente a " +
+  "Lambda authorizer nem a AWS_IAM. Use auth: { type: 'jwt', issuer, audiences, jwksUri }.";
 
 /**
  * Extrai os nomes de path param de um template de rota (ex: `/messages/{id}`
@@ -139,8 +176,8 @@ function toHclValue(v: unknown): string {
 function buildOpenApiPaths(
   routes: Array<Record<string, unknown>>,
   apiName: string,
-  gatewayAuthType: string | undefined,
-  gatewayAuthorizerLambdaId: string | undefined,
+  gatewayAuth: ApiAuth,
+  where: string,
   ctx: TFOutput,
 ): { paths: Record<string, Record<string, unknown>>; securityDefinitions: Record<string, unknown>; backendLambdaIds: Set<string> } {
   const paths: Record<string, Record<string, unknown>> = {};
@@ -163,15 +200,27 @@ function buildOpenApiPaths(
       : undefined;
     if (isLambdaBackend) backendLambdaIds.add(lambdaId!);
 
-    const routeAuthType = (route.authType as string | undefined) ?? gatewayAuthType;
-    const routeAuthorizerLambdaId = (route.authorizerLambdaId as string | undefined) ?? gatewayAuthorizerLambdaId;
-    const needsAuth = !!routeAuthType && routeAuthType !== 'NONE';
+    // Auth desta rota: a declarada na rota, senão a do gateway. O GCP só sabe
+    // fazer JWT nativo — 'lambda' e 'iam' falham em assertAuthSupported.
+    const declaredRouteAuth = route.auth || route.authType || route.authorizerLambdaId;
+    const rWhere = `${where} (rota ${String(route.method)} ${String(route.path)})`;
+    const routeAuth = declaredRouteAuth
+      ? normalizeApiAuth(route as Parameters<typeof normalizeApiAuth>[0], rWhere)
+      : gatewayAuth;
+    if (declaredRouteAuth) assertAuthSupported(routeAuth, GCP_SUPPORTED_AUTH, rWhere, GCP_AUTH_HINT);
+    if (routeAuth.type === 'jwt' && !routeAuth.jwksUri) {
+      throw new Error(
+        `${rWhere}: auth.type 'jwt' no GCP exige 'jwksUri' — o API Gateway do Google valida ` +
+        `o token buscando as chaves nesse endereço (ex: 'https://seu-idp/.well-known/jwks.json').`,
+      );
+    }
+    const needsAuth = routeAuth.type === 'jwt';
 
     let securityName: string | undefined;
-    if (needsAuth) {
-      securityName = jwtSecurityDefinitionName(routeAuthType!, routeAuthorizerLambdaId);
+    if (needsAuth && routeAuth.type === 'jwt') {
+      securityName = jwtSecurityDefinitionName(routeAuth);
       if (!securityDefinitions[securityName]) {
-        securityDefinitions[securityName] = buildSecurityDefinition(apiName, routeAuthType!, routeAuthorizerLambdaId);
+        securityDefinitions[securityName] = buildSecurityDefinition(routeAuth);
       }
     }
 
@@ -474,7 +523,10 @@ export function synthFunction(construct: BaseConstruct, ctx: TFOutput): boolean 
       // exige IAM auth por padrão (ingress ALLOW_ALL é só rede, não dispensa auth).
       // Functions event-triggered (Pub/Sub, eventSources) NÃO precisam: o Eventarc
       // invoca com sua própria SA, não via HTTP anônimo.
-      if (!eventTrigger) {
+      // Backend de gateway protegido NÃO ganha allUsers: quem invoca é a SA do
+      // gateway (run.invoker concedido lá). Sem isso, a URL direta da function
+      // continuaria pública e o JWT do gateway seria contornável.
+      if (!eventTrigger && !isProtectedApiBackend(construct.id, ctx)) {
         addResource(r, 'google_cloud_run_v2_service_iam_member', `${id}_public`, {
           project: '${var.project_id}',
           location: '${var.gcp_region}',
@@ -508,11 +560,14 @@ export function synthFunction(construct: BaseConstruct, ctx: TFOutput): boolean 
         display_name: apiName,
       });
       const routes = (props.routes as Array<Record<string, unknown>>) ?? [];
+      const apiWhere = `Fn.ApiGateway "${construct.id}"`;
+      const gatewayAuth = normalizeApiAuth(props as Parameters<typeof normalizeApiAuth>[0], apiWhere);
+      assertAuthSupported(gatewayAuth, GCP_SUPPORTED_AUTH, apiWhere, GCP_AUTH_HINT);
       const { paths, securityDefinitions, backendLambdaIds } = buildOpenApiPaths(
         routes,
         apiName,
-        props.authType as string | undefined,
-        props.authorizerLambdaId as string | undefined,
+        gatewayAuth,
+        apiWhere,
         ctx,
       );
       const openApiDoc = {

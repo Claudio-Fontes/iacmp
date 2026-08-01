@@ -87,6 +87,7 @@ export default class Destroy extends Command {
       region,
       resourceGroup: config.resourceGroup,
       projectId: config.projectId,
+      tfBackend: config.tfBackend,
     };
 
     const ui: DeployUI = {

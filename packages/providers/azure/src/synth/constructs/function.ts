@@ -1,4 +1,4 @@
-import { BaseConstruct, isRef } from '@iacmp/core';
+import { BaseConstruct, isRef, normalizeApiAuth, assertAuthSupported, type ApiAuth } from '@iacmp/core';
 import type { Ref } from '@iacmp/core';
 import { expr, tag, toSym, crossParamName, outputName, resolveValue, resolveRef, SynthContext } from './shared';
 
@@ -233,6 +233,29 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
       const routeAuthorizerIds = [...new Set(routes.filter(r => r.authorizerLambdaId).map(r => r.authorizerLambdaId as string))];
       const hasRouteAuthorizer = routeAuthorizerIds.length > 0;
       // top-level authorizer: aplica validate-jwt em toda a API (não por rota)
+      // ── Autorização (contrato explícito; core/src/auth.ts) ────────────────
+      // O APIM implementa: validate-jwt com openid-config (type 'jwt'), policy
+      // com signing key via Secret.Vault (type 'lambda', mecanismo legado) e
+      // API pública (type 'none'). 'iam' (SigV4) não tem equivalente → falha.
+      const apiWhere = `Fn.ApiGateway "${construct.id}"`;
+      const azureSupportedAuth: ReadonlyArray<ApiAuth['type']> = ['none', 'jwt', 'lambda'];
+      const gatewayAuth = normalizeApiAuth(props as Parameters<typeof normalizeApiAuth>[0], apiWhere);
+      assertAuthSupported(gatewayAuth, azureSupportedAuth, apiWhere,
+        "AWS_IAM (assinatura SigV4) não existe no Azure. Use auth: { type: 'jwt', issuer, audiences } (validação no APIM).");
+      for (const r of routes) {
+        if (!(r.auth || r.authType || r.authorizerLambdaId)) continue;
+        const rWhere = `${apiWhere} (rota ${String(r.method)} ${String(r.path)})`;
+        assertAuthSupported(
+          normalizeApiAuth(r as Parameters<typeof normalizeApiAuth>[0], rWhere),
+          azureSupportedAuth, rWhere,
+          "AWS_IAM não existe no Azure — use auth: { type: 'jwt', ... }.",
+        );
+      }
+      // JWT nativo do APIM: valida contra o OpenID Connect do issuer (JWKS),
+      // com audiences conferidas. É o caminho novo e correto.
+      const openIdJwt = gatewayAuth.type === 'jwt' ? gatewayAuth : undefined;
+      // Mecanismo legado (signing key compartilhada num Secret.Vault), preservado
+      // para quem já usa `authorizer`/`authorizerLambdaId`.
       const topLevelAuthorizer = props.authorizer as { type?: string; secretId?: string } | undefined;
       const hasTopLevelJwt = topLevelAuthorizer?.type === 'JWT' && !!topLevelAuthorizer?.secretId;
       const jwtTopLevelSecretId = topLevelAuthorizer?.secretId as string | undefined;
@@ -351,9 +374,22 @@ export function synthesizeFunction(construct: BaseConstruct, ctx: SynthContext):
         properties: { displayName: rawName, path: apiPath, protocols: ['https'], subscriptionRequired: false, serviceUrl: '' },
       });
 
-      if (props.cors) {
-        const corsXml = `<policies><inbound><base /><cors allow-credentials="false"><allowed-origins><origin>*</origin></allowed-origins><allowed-methods preflight-result-max-age="300"><method>*</method></allowed-methods><allowed-headers><header>*</header></allowed-headers></cors></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>`;
-        targetResources.push({ sym: `${sym}ApiPolicy`, type: 'Microsoft.ApiManagement/service/apis/policies', apiVersion: '2023-05-01-preview', parent: apiSym, name: 'policy', properties: { value: corsXml, format: 'xml' } });
+      // CORS e validate-jwt convivem na MESMA policy inbound (antes eram branches
+      // exclusivos: pedir cors:true silenciosamente descartava a validação de JWT
+      // — achado P0-01 da auditoria de 2026-08-01).
+      const corsFragment = props.cors
+        ? `<cors allow-credentials="false"><allowed-origins><origin>*</origin></allowed-origins><allowed-methods preflight-result-max-age="300"><method>*</method></allowed-methods><allowed-headers><header>*</header></allowed-headers></cors>`
+        : '';
+      const openIdFragment = openIdJwt
+        ? `<validate-jwt header-name="Authorization" failed-validation-httpcode="401" failed-validation-error-message="Unauthorized">` +
+          `<openid-config url="${openIdJwt.jwksUri ?? `${openIdJwt.issuer.replace(/\/$/, '')}/.well-known/openid-configuration`}" />` +
+          `<issuers><issuer>${openIdJwt.issuer}</issuer></issuers>` +
+          `<required-claims><claim name="aud" match="any">${openIdJwt.audiences.map(a => `<value>${a}</value>`).join('')}</claim></required-claims>` +
+          `</validate-jwt>`
+        : '';
+      if (corsFragment || openIdFragment) {
+        const xml = `<policies><inbound><base />${openIdFragment}${corsFragment}</inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>`;
+        targetResources.push({ sym: `${sym}ApiPolicy`, type: 'Microsoft.ApiManagement/service/apis/policies', apiVersion: '2023-05-01-preview', parent: apiSym, name: 'policy', properties: { value: xml, format: 'xml' } });
       } else if (hasTopLevelJwt && jwtKvSym && apimNamedValueSym) {
         // top-level JWT authorizer: aplica validate-jwt em todas as operações via API policy
         const jwtApiXml = `<policies><inbound><base /><validate-jwt header-name="Authorization" failed-validation-httpcode="401" failed-validation-error-message="Unauthorized" require-expiration-time="false"><issuer-signing-keys><key>{{${namePrefix}jwt-signing-key}}</key></issuer-signing-keys></validate-jwt></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>`;

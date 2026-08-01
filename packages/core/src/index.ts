@@ -12,6 +12,7 @@ export { Testing } from './testing';
 export type { TestableStack } from './testing';
 
 export { validateSemantics, prepareStacksForSynth, cidrContains } from './validate';
+export { normalizeApiAuth, validateApiAuth, assertAuthSupported } from './auth';
 export { applyEnvironmentDefaults } from './normalize';
 export { tsCompilerOptions, detectTypeScriptMajor } from './ts-compat';
 export {
@@ -75,6 +76,7 @@ export { Fn } from './constructs/function';
 export type {
   FunctionLambdaProps,
   FunctionApiGatewayProps,
+  ApiAuth,
   LambdaRefs,
 } from './constructs/function';
 

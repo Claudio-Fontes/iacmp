@@ -1,4 +1,6 @@
 import { execFileSync } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
 import { t } from '../../i18n';
 
 /**
@@ -30,18 +32,64 @@ export function resolveProjectId(configuredProjectId?: string): string {
  * a função não acessaria os recursos (blob/table/pubsub/secret/sql...). Concedemos
  * o conjunto que cobre a bateria e2e (build + runtime dos cenários) antes do apply.
  */
-const REQUIRED_COMPUTE_SA_ROLES = [
+const BASE_COMPUTE_SA_ROLES = [
   'roles/cloudbuild.builds.builder',    // build gen2 (Cloud Build)
   'roles/logging.logWriter',            // logs de build/runtime
   'roles/artifactregistry.writer',      // gen2 publica a imagem no Artifact Registry
-  'roles/storage.objectAdmin',          // blob(): Cloud Storage + bucket de artefatos
-  'roles/datastore.user',               // table(): Firestore
-  'roles/pubsub.editor',                // Messaging.Stream / Events / fan-out
-  'roles/secretmanager.secretAccessor', // Secrets
-  'roles/cloudsql.client',              // Database.SQL
-  'roles/monitoring.editor',            // Monitoring
-  'roles/run.invoker',                  // event_trigger Pub/Sub (Eventarc invoca o Cloud Run gen2)
 ] as const;
+
+/**
+ * Roles concedidas SOB DEMANDA — só quando o artefato que vai subir contém o
+ * recurso correspondente. Antes o conjunto inteiro era concedido a todo projeto
+ * (achado P1-01 da auditoria de 2026-07-31: "permissões excessivas na SA
+ * padrão"): um projeto que só tinha uma function HTTP recebia acesso a Storage,
+ * Pub/Sub, Secret Manager, Cloud SQL e Monitoring.
+ */
+const ROLE_BY_RESOURCE_PREFIX: Array<{ prefix: RegExp; role: string; why: string }> = [
+  { prefix: /^google_storage_bucket/, role: 'roles/storage.objectAdmin', why: 'blob(): Cloud Storage' },
+  { prefix: /^google_firestore_/, role: 'roles/datastore.user', why: 'table(): Firestore' },
+  { prefix: /^google_pubsub_/, role: 'roles/pubsub.editor', why: 'Messaging / Events' },
+  { prefix: /^google_secret_manager_/, role: 'roles/secretmanager.secretAccessor', why: 'Secret.Vault' },
+  { prefix: /^google_sql_/, role: 'roles/cloudsql.client', why: 'Database.SQL' },
+  { prefix: /^google_monitoring_/, role: 'roles/monitoring.editor', why: 'Monitoring.Alarm' },
+  // event_trigger (Eventarc) invoca o Cloud Run gen2 usando a compute SA.
+  { prefix: /^google_(cloudfunctions2_function|cloud_run_v2_service)$/, role: 'roles/run.invoker', why: 'invocação de Cloud Run/Functions' },
+];
+
+/**
+ * Deriva o conjunto MÍNIMO de roles a partir dos recursos realmente presentes
+ * nos artefatos `.tf.json` — em vez de conceder o superconjunto fixo. Sem
+ * artefatos legíveis, devolve só as roles base de build (fail-safe: o apply
+ * mostra o erro real se faltar alguma, e o usuário concede pontualmente).
+ */
+export function requiredComputeSaRoles(synthDir: string): { roles: string[]; reasons: Map<string, string> } {
+  const roles = new Set<string>(BASE_COMPUTE_SA_ROLES);
+  const reasons = new Map<string, string>();
+  for (const r of BASE_COMPUTE_SA_ROLES) reasons.set(r, 'build/deploy (sempre necessário)');
+  let files: string[] = [];
+  try {
+    files = fs.readdirSync(synthDir).filter(f => f.endsWith('.tf.json'));
+  } catch {
+    return { roles: [...roles], reasons };
+  }
+  for (const file of files) {
+    let doc: { resource?: Record<string, unknown> };
+    try {
+      doc = JSON.parse(fs.readFileSync(path.join(synthDir, file), 'utf-8')) as { resource?: Record<string, unknown> };
+    } catch {
+      continue;
+    }
+    for (const resourceType of Object.keys(doc.resource ?? {})) {
+      for (const { prefix, role, why } of ROLE_BY_RESOURCE_PREFIX) {
+        if (prefix.test(resourceType)) {
+          roles.add(role);
+          if (!reasons.has(role)) reasons.set(role, why);
+        }
+      }
+    }
+  }
+  return { roles: [...roles], reasons };
+}
 
 /**
  * APIs GCP que os construct types do iacmp podem exigir. Uma conta/projeto novo
@@ -134,7 +182,7 @@ function resolveProjectNumber(projectId: string): string | null {
  * policy ou conceder (permissão de IAM insuficiente), avisa com o comando manual
  * e segue — o apply mostra o erro real. Pulado em --dry-run pelo chamador.
  */
-export function ensureComputeServiceAccountRoles(projectId: string): void {
+export function ensureComputeServiceAccountRoles(projectId: string, synthDir?: string): void {
   const projectNumber = resolveProjectNumber(projectId);
   if (!projectNumber) {
     process.stdout.write(t('[iacmp] Não consegui resolver o número do projeto GCP — pulei a checagem de roles da compute SA.\n', '[iacmp] Could not resolve the GCP project number — skipped the compute SA role check.\n'));
@@ -159,10 +207,23 @@ export function ensureComputeServiceAccountRoles(projectId: string): void {
     /* não deu pra ler a policy — segue e tenta conceder tudo (add é idempotente) */
   }
 
-  const missing = REQUIRED_COMPUTE_SA_ROLES.filter((r) => !current.has(r));
+  // Só as roles exigidas pelos recursos que vão subir (menor privilégio).
+  const { roles: required, reasons } = synthDir
+    ? requiredComputeSaRoles(synthDir)
+    : { roles: [...BASE_COMPUTE_SA_ROLES] as string[], reasons: new Map<string, string>() };
+  const missing = required.filter((r) => !current.has(r));
   if (missing.length === 0) return;
 
-  process.stdout.write(t(`[iacmp] Compute SA sem ${missing.length} role(s) necessária(s) — concedendo: ${missing.join(', ')}\n`, `[iacmp] Compute SA missing ${missing.length} required role(s) — granting: ${missing.join(', ')}\n`));
+  // Plano explícito antes de mexer em IAM: o usuário vê o que será concedido e
+  // por quê (auditoria P1-01 pedia "nunca alterar IAM sem exibir um plano").
+  process.stdout.write(t(
+    `[iacmp] IAM: concedendo ${missing.length} role(s) à service account de compute (mínimo para este projeto):\n`,
+    `[iacmp] IAM: granting ${missing.length} role(s) to the compute service account (minimum for this project):\n`,
+  ));
+  for (const role of missing) {
+    const why = reasons.get(role);
+    process.stdout.write(`        · ${role}${why ? ` — ${why}` : ''}\n`);
+  }
   for (const role of missing) {
     try {
       execFileSync(

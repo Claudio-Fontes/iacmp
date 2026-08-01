@@ -272,14 +272,22 @@ describe('Golden Terraform (.tf.json) — GCP', () => {
       name: 'profile-api',
       type: 'HTTP',
       cors: true,
-      authType: 'JWT',
-      authorizerLambdaId: 'JwtAuthorizerFn',
+      // JWT nativo do API Gateway do Google com issuer/JWKS REAIS. O contrato
+      // antigo (authType: 'JWT' + authorizerLambdaId) gerava um esqueleto com
+      // ISSUER_PLACEHOLDER: a API subia "protegida" sem validar nada — hoje o
+      // synth falha nesse caso (auditoria P0-01, 2026-08-01).
+      auth: {
+        type: 'jwt',
+        issuer: 'https://securetoken.google.com/meu-projeto',
+        audiences: ['meu-projeto'],
+        jwksUri: 'https://www.googleapis.com/service_accounts/v1/metadata/x509/securetoken@system.gserviceaccount.com',
+      },
       routes: [
         { method: 'GET', path: '/profile', lambdaId: 'GetProfileFn' },
         { method: 'GET', path: '/profile/{id}', lambdaId: 'GetProfileFn' },
         { method: 'PUT', path: '/profile/{id}', lambdaId: 'GetProfileFn' },
         { method: 'DELETE', path: '/profile/{id}', lambdaId: 'GetProfileFn' },
-        { method: 'GET', path: '/health', lambdaId: 'PublicHealthFn', authType: 'NONE' },
+        { method: 'GET', path: '/health', lambdaId: 'PublicHealthFn', auth: { type: 'none' } },
       ],
     });
     assertGolden('api-gateway-jwt', provider.synthesize(stack, [stack]));

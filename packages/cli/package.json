@@ -1,6 +1,6 @@
 {
   "name": "iacmp",
-  "version": "2.6.1",
+  "version": "2.7.0",
   "description": "Multi-cloud IaC — one TypeScript codebase, CloudFormation (AWS), Bicep (Azure) and Terraform (GCP) out. Synth, deploy, diff, audits and diagrams in a single CLI.",
   "keywords": [
     "iac",
@@ -51,7 +51,7 @@
     "@google-cloud/firestore": "^7.11.0",
     "@google-cloud/secret-manager": "^5.0.0",
     "@google-cloud/storage": "^7.14.0",
-    "@iacmp/core": "2.4.1",
+    "@iacmp/core": "^2.5.0",
     "@iacmp/runtime": "0.4.1",
     "@oclif/core": "^4.0.0",
     "better-sqlite3": "12.11.1",
