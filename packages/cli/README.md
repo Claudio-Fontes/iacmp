@@ -20,7 +20,7 @@ iacmp setup          # register the MCP tools in Claude Code / Desktop
 
 - **Docs & source:** https://github.com/Claudio-Fontes/iacmp
 - **Requirements:** Node.js 20+ · the target cloud CLI (`aws`/`az`/`gcloud`) · `terraform` for the tf paths
-- **License:** Apache-2.0
+- **License:** FSL-1.1-ALv2 (Fair Source — free to use including commercially; converts to Apache-2.0 after two years)
 
 AI generation (`iacmp ai`) with a deploy-validated example corpus is part of **iacmp Pro**;
 the open CLI is fully functional without it.

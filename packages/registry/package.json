@@ -1,10 +1,13 @@
 {
   "name": "@iacmp/registry",
   "version": "2.2.1",
-  "license": "Apache-2.0",
+  "license": "FSL-1.1-ALv2",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist", "src/registry.json"],
+  "files": [
+    "dist",
+    "src/registry.json"
+  ],
   "scripts": {
     "build": "tsc && cp src/registry.json dist/registry.json",
     "dev": "tsc --watch",

@@ -136,4 +136,6 @@ Bugs and questions: [GitHub Issues](https://github.com/Claudio-Fontes/iacmp/issu
 
 ## License
 
-[Apache-2.0](LICENSE) — © 2026 [Claudio Melo](https://github.com/Claudio-Fontes), creator and maintainer.
+[FSL-1.1-ALv2](LICENSE) (Fair Source) — free to use for any purpose, **including commercially in your own business**. The one thing you may not do is offer iacmp itself (or a substantially similar product) as a competing commercial product or service. Each release automatically becomes **Apache-2.0 two years** after publication.
+
+© 2026 [Claudio Melo](https://github.com/Claudio-Fontes), creator and maintainer.

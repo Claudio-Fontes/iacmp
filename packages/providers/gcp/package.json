@@ -1,7 +1,7 @@
 {
   "name": "@iacmp/provider-gcp",
   "version": "2.2.1",
-  "license": "Apache-2.0",
+  "license": "FSL-1.1-ALv2",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
@@ -15,7 +15,7 @@
     "test": "jest"
   },
   "dependencies": {
-    "@iacmp/core": "^2.2.1"
+    "@iacmp/core": "2.4.1"
   },
   "devDependencies": {
     "@types/jest": "^29",

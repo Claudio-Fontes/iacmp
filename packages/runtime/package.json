@@ -1,7 +1,7 @@
 {
   "name": "@iacmp/runtime",
-  "version": "0.4.0",
-  "license": "Apache-2.0",
+  "version": "0.4.1",
+  "license": "FSL-1.1-ALv2",
   "description": "Interface neutra de runtime (Table/Blob) para handlers multi-cloud do iacmp — o adaptador de cada cloud é resolvido no bundle/deploy",
   "author": "Claudio Melo (https://github.com/Claudio-Fontes)",
   "repository": {

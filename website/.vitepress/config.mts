@@ -33,7 +33,7 @@ export default defineConfig({
           text: 'Edit this page on GitHub',
         },
         footer: {
-          message: 'Released under the Apache-2.0 License.',
+          message: 'Fair Source (FSL-1.1) — free to use, converts to Apache-2.0 after two years.',
           copyright: '© 2026 Claudio Melo — creator and maintainer',
         },
       },
@@ -66,7 +66,7 @@ export default defineConfig({
           text: 'Editar esta página no GitHub',
         },
         footer: {
-          message: 'Publicado sob a licença Apache-2.0.',
+          message: 'Fair Source (FSL-1.1) — livre para usar, vira Apache-2.0 após dois anos.',
           copyright: '© 2026 Claudio Melo — criador e mantenedor',
         },
         outline: { label: 'Nesta página' },

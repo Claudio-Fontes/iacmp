@@ -1,6 +1,6 @@
 {
   "name": "iacmp",
-  "version": "2.5.9",
+  "version": "2.6.0",
   "description": "Multi-cloud IaC — one TypeScript codebase, CloudFormation (AWS), Bicep (Azure) and Terraform (GCP) out. Synth, deploy, diff, audits and diagrams in a single CLI.",
   "keywords": [
     "iac",
@@ -15,7 +15,7 @@
     "cdk"
   ],
   "author": "Claudio Melo (https://github.com/Claudio-Fontes)",
-  "license": "Apache-2.0",
+  "license": "FSL-1.1-ALv2",
   "repository": {
     "type": "git",
     "url": "https://github.com/Claudio-Fontes/iacmp"
@@ -51,8 +51,8 @@
     "@google-cloud/firestore": "^7.11.0",
     "@google-cloud/secret-manager": "^5.0.0",
     "@google-cloud/storage": "^7.14.0",
-    "@iacmp/core": "^2.4.0",
-    "@iacmp/runtime": "^0.4.0",
+    "@iacmp/core": "2.4.1",
+    "@iacmp/runtime": "0.4.1",
     "@oclif/core": "^4.0.0",
     "better-sqlite3": "12.11.1",
     "chalk": "^4.1.2",

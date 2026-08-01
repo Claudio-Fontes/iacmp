@@ -1,6 +1,6 @@
 {
   "name": "@iacmp/core",
-  "version": "2.4.0",
+  "version": "2.4.1",
   "description": "Constructs agnósticos de provider para o iacmp — a API que os stacks do usuário importam",
   "keywords": [
     "iacmp",
@@ -9,7 +9,7 @@
     "cdk",
     "constructs"
   ],
-  "license": "Apache-2.0",
+  "license": "FSL-1.1-ALv2",
   "author": "Claudio Melo (https://github.com/Claudio-Fontes)",
   "repository": {
     "type": "git",
