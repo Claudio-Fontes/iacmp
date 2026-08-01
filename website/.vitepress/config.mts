@@ -14,6 +14,7 @@ export default defineConfig({
         nav: [
           { text: 'Guide', link: '/guide/getting-started' },
           { text: 'Claude Code', link: '/guide/claude-code' },
+          { text: 'Pro', link: '/pro' },
           { text: 'npm', link: 'https://www.npmjs.com/package/iacmp' },
         ],
         sidebar: [
@@ -46,6 +47,7 @@ export default defineConfig({
         nav: [
           { text: 'Guia', link: '/pt/guide/getting-started' },
           { text: 'Claude Code', link: '/pt/guide/claude-code' },
+          { text: 'Pro', link: '/pt/pro' },
           { text: 'npm', link: 'https://www.npmjs.com/package/iacmp' },
         ],
         sidebar: [
